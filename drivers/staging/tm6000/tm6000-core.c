@@ -39,9 +39,10 @@ int tm6000_read_write_usb(struct tm6000_core *dev, u8 req_type, u8 req,
 	unsigned int pipe;
 	u8	     *data = NULL;
 
+	mutex_lock(&dev->usb_lock);
+
 	if (len)
 		data = kzalloc(len, GFP_KERNEL);
-
 
 	if (req_type & USB_DIR_IN)
 		pipe = usb_rcvctrlpipe(dev->udev, 0);
@@ -62,7 +63,7 @@ int tm6000_read_write_usb(struct tm6000_core *dev, u8 req_type, u8 req,
 			printk(">>> ");
 			for (i = 0; i < len; i++)
 				printk(" %02x", buf[i]);
-		printk("\n");
+			printk("\n");
 		}
 	}
 
@@ -87,9 +88,9 @@ int tm6000_read_write_usb(struct tm6000_core *dev, u8 req_type, u8 req,
 	}
 
 	kfree(data);
-
 	msleep(5);
 
+	mutex_unlock(&dev->usb_lock);
 	return ret;
 }
 
@@ -188,11 +189,11 @@ void tm6000_set_fourcc_format(struct tm6000_core *dev)
 	if (dev->dev_type == TM6010) {
 		int val;
 
-		val = tm6000_get_reg(dev, TM6010_REQ07_RCC_ACTIVE_VIDEO_IF, 0) & 0xfc;
+		val = tm6000_get_reg(dev, TM6010_REQ07_RCC_ACTIVE_IF, 0) & 0xfc;
 		if (dev->fourcc == V4L2_PIX_FMT_UYVY)
-			tm6000_set_reg(dev, TM6010_REQ07_RCC_ACTIVE_VIDEO_IF, val);
+			tm6000_set_reg(dev, TM6010_REQ07_RCC_ACTIVE_IF, val);
 		else
-			tm6000_set_reg(dev, TM6010_REQ07_RCC_ACTIVE_VIDEO_IF, val | 1);
+			tm6000_set_reg(dev, TM6010_REQ07_RCC_ACTIVE_IF, val | 1);
 	} else {
 		if (dev->fourcc == V4L2_PIX_FMT_UYVY)
 			tm6000_set_reg(dev, TM6010_REQ07_RC1_TRESHOLD, 0xd0);
@@ -268,9 +269,14 @@ int tm6000_init_analog_mode(struct tm6000_core *dev)
 	struct v4l2_frequency f;
 
 	if (dev->dev_type == TM6010) {
+		u8 active = TM6010_REQ07_RCC_ACTIVE_IF_AUDIO_ENABLE;
+
+		if (!dev->radio)
+			active |= TM6010_REQ07_RCC_ACTIVE_IF_VIDEO_ENABLE;
+
 		/* Enable video and audio */
-		tm6000_set_reg_mask(dev, TM6010_REQ07_RCC_ACTIVE_VIDEO_IF,
-							0x60, 0x60);
+		tm6000_set_reg_mask(dev, TM6010_REQ07_RCC_ACTIVE_IF,
+							active, 0x60);
 		/* Disable TS input */
 		tm6000_set_reg_mask(dev, TM6010_REQ07_RC0_ACTIVE_VIDEO_SOURCE,
 							0x00, 0x40);
@@ -308,7 +314,7 @@ int tm6000_init_analog_mode(struct tm6000_core *dev)
 	 * FIXME: This is a hack! xc3028 "sleeps" when no channel is detected
 	 * for more than a few seconds. Not sure why, as this behavior does
 	 * not happen on other devices with xc3028. So, I suspect that it
-	 * is yet another bug at tm6000. After start sleeping, decoding 
+	 * is yet another bug at tm6000. After start sleeping, decoding
 	 * doesn't start automatically. Instead, it requires some
 	 * I2C commands to wake it up. As we want to have image at the
 	 * beginning, we needed to add this hack. The better would be to
@@ -335,7 +341,7 @@ int tm6000_init_digital_mode(struct tm6000_core *dev)
 {
 	if (dev->dev_type == TM6010) {
 		/* Disable video and audio */
-		tm6000_set_reg_mask(dev, TM6010_REQ07_RCC_ACTIVE_VIDEO_IF,
+		tm6000_set_reg_mask(dev, TM6010_REQ07_RCC_ACTIVE_IF,
 				0x00, 0x60);
 		/* Enable TS input */
 		tm6000_set_reg_mask(dev, TM6010_REQ07_RC0_ACTIVE_VIDEO_SOURCE,
@@ -390,7 +396,7 @@ struct reg_init {
 };
 
 /* The meaning of those initializations are unknown */
-struct reg_init tm6000_init_tab[] = {
+static struct reg_init tm6000_init_tab[] = {
 	/* REG  VALUE */
 	{ TM6000_REQ07_RDF_PWDOWN_ACLK, 0x1f },
 	{ TM6010_REQ07_RFF_SOFT_RESET, 0x08 },
@@ -458,12 +464,12 @@ struct reg_init tm6000_init_tab[] = {
 	{ TM6010_REQ05_R18_IMASK7, 0x00 },
 };
 
-struct reg_init tm6010_init_tab[] = {
+static struct reg_init tm6010_init_tab[] = {
 	{ TM6010_REQ07_RC0_ACTIVE_VIDEO_SOURCE, 0x00 },
 	{ TM6010_REQ07_RC4_HSTART0, 0xa0 },
 	{ TM6010_REQ07_RC6_HEND0, 0x40 },
 	{ TM6010_REQ07_RCA_VEND0, 0x31 },
-	{ TM6010_REQ07_RCC_ACTIVE_VIDEO_IF, 0xe1 },
+	{ TM6010_REQ07_RCC_ACTIVE_IF, 0xe1 },
 	{ TM6010_REQ07_RE0_DVIDEO_SOURCE, 0x03 },
 	{ TM6010_REQ07_RFE_POWER_DOWN, 0x7f },
 
@@ -593,6 +599,56 @@ int tm6000_init(struct tm6000_core *dev)
 	return rc;
 }
 
+int tm6000_reset(struct tm6000_core *dev)
+{
+	int pipe;
+	int err;
+
+	msleep(500);
+
+	err = usb_set_interface(dev->udev, dev->isoc_in.bInterfaceNumber, 0);
+	if (err < 0) {
+		tm6000_err("failed to select interface %d, alt. setting 0\n",
+				dev->isoc_in.bInterfaceNumber);
+		return err;
+	}
+
+	err = usb_reset_configuration(dev->udev);
+	if (err < 0) {
+		tm6000_err("failed to reset configuration\n");
+		return err;
+	}
+
+	if ((dev->quirks & TM6000_QUIRK_NO_USB_DELAY) == 0)
+		msleep(5);
+
+	/*
+	 * Not all devices have int_in defined
+	 */
+	if (!dev->int_in.endp)
+		return 0;
+
+	err = usb_set_interface(dev->udev, dev->isoc_in.bInterfaceNumber, 2);
+	if (err < 0) {
+		tm6000_err("failed to select interface %d, alt. setting 2\n",
+				dev->isoc_in.bInterfaceNumber);
+		return err;
+	}
+
+	msleep(5);
+
+	pipe = usb_rcvintpipe(dev->udev,
+			dev->int_in.endp->desc.bEndpointAddress & USB_ENDPOINT_NUMBER_MASK);
+
+	err = usb_clear_halt(dev->udev, pipe);
+	if (err < 0) {
+		tm6000_err("usb_clear_halt failed: %d\n", err);
+		return err;
+	}
+
+	return 0;
+}
+
 int tm6000_set_audio_bitrate(struct tm6000_core *dev, int bitrate)
 {
 	int val = 0;
@@ -687,7 +743,7 @@ int tm6000_set_audio_rinput(struct tm6000_core *dev)
 	return 0;
 }
 
-void tm6010_set_mute_sif(struct tm6000_core *dev, u8 mute)
+static void tm6010_set_mute_sif(struct tm6000_core *dev, u8 mute)
 {
 	u8 mute_reg = 0;
 
@@ -697,7 +753,7 @@ void tm6010_set_mute_sif(struct tm6000_core *dev, u8 mute)
 	tm6000_set_reg_mask(dev, TM6010_REQ08_R0A_A_I2S_MOD, mute_reg, 0x08);
 }
 
-void tm6010_set_mute_adc(struct tm6000_core *dev, u8 mute)
+static void tm6010_set_mute_adc(struct tm6000_core *dev, u8 mute)
 {
 	u8 mute_reg = 0;
 
@@ -749,7 +805,7 @@ int tm6000_tvaudio_set_mute(struct tm6000_core *dev, u8 mute)
 	return 0;
 }
 
-void tm6010_set_volume_sif(struct tm6000_core *dev, int vol)
+static void tm6010_set_volume_sif(struct tm6000_core *dev, int vol)
 {
 	u8 vol_reg;
 
@@ -762,7 +818,7 @@ void tm6010_set_volume_sif(struct tm6000_core *dev, int vol)
 	tm6000_set_reg(dev, TM6010_REQ08_R08_A_RIGHT_VOL, vol_reg);
 }
 
-void tm6010_set_volume_adc(struct tm6000_core *dev, int vol)
+static void tm6010_set_volume_adc(struct tm6000_core *dev, int vol)
 {
 	u8 vol_reg;
 

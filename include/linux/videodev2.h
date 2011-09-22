@@ -1082,6 +1082,7 @@ struct v4l2_querymenu {
 #define V4L2_CTRL_FLAG_INACTIVE 	0x0010
 #define V4L2_CTRL_FLAG_SLIDER 		0x0020
 #define V4L2_CTRL_FLAG_WRITE_ONLY 	0x0040
+#define V4L2_CTRL_FLAG_VOLATILE		0x0080
 
 /*  Query flag, to be ORed with the control ID */
 #define V4L2_CTRL_FLAG_NEXT_CTRL	0x80000000
@@ -2006,6 +2007,7 @@ struct v4l2_streamparm {
 #define V4L2_EVENT_VSYNC			1
 #define V4L2_EVENT_EOS				2
 #define V4L2_EVENT_CTRL				3
+#define V4L2_EVENT_FRAME_SYNC			4
 #define V4L2_EVENT_PRIVATE_START		0x08000000
 
 /* Payload for V4L2_EVENT_VSYNC */
@@ -2032,12 +2034,17 @@ struct v4l2_event_ctrl {
 	__s32 default_value;
 };
 
+struct v4l2_event_frame_sync {
+	__u32 frame_sequence;
+};
+
 struct v4l2_event {
 	__u32				type;
 	union {
-		struct v4l2_event_vsync vsync;
-		struct v4l2_event_ctrl	ctrl;
-		__u8			data[64];
+		struct v4l2_event_vsync		vsync;
+		struct v4l2_event_ctrl		ctrl;
+		struct v4l2_event_frame_sync	frame_sync;
+		__u8				data[64];
 	} u;
 	__u32				pending;
 	__u32				sequence;

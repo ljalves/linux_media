@@ -20,9 +20,6 @@
  *  Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  */
 
-/* Use the tm6000-hack, instead of the proper initialization code i*/
-/* #define HACK 1 */
-
 #include <linux/videodev2.h>
 #include <media/v4l2-common.h>
 #include <media/videobuf-vmalloc.h>
@@ -30,7 +27,7 @@
 #include <linux/i2c.h>
 #include <linux/mutex.h>
 #include <media/v4l2-device.h>
-#include <linux/version.h>
+
 #include <linux/dvb/frontend.h>
 #include "dvb_demux.h"
 #include "dvb_frontend.h"
@@ -172,6 +169,8 @@ struct tm6000_endpoint {
 	unsigned			maxsize;
 };
 
+#define TM6000_QUIRK_NO_USB_DELAY (1 << 0)
+
 struct tm6000_core {
 	/* generic device properties */
 	char				name[30];	/* name (including minor) of the device */
@@ -248,6 +247,7 @@ struct tm6000_core {
 
 	/* locks */
 	struct mutex			lock;
+	struct mutex			usb_lock;
 
 	/* usb transfer */
 	struct usb_device		*udev;		/* the usb device */
@@ -262,6 +262,8 @@ struct tm6000_core {
 	struct usb_isoc_ctl          isoc_ctl;
 
 	spinlock_t                   slock;
+
+	unsigned long quirks;
 };
 
 enum tm6000_ops_type {
@@ -313,6 +315,7 @@ int tm6000_set_reg_mask(struct tm6000_core *dev, u8 req, u16 value,
 						u16 index, u16 mask);
 int tm6000_i2c_reset(struct tm6000_core *dev, u16 tsleep);
 int tm6000_init(struct tm6000_core *dev);
+int tm6000_reset(struct tm6000_core *dev);
 
 int tm6000_init_analog_mode(struct tm6000_core *dev);
 int tm6000_init_digital_mode(struct tm6000_core *dev);

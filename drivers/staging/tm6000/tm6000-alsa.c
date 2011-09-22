@@ -80,7 +80,7 @@ static int _tm6000_start_audio_dma(struct snd_tm6000_card *chip)
 	dprintk(1, "Starting audio DMA\n");
 
 	/* Enables audio */
-	tm6000_set_reg_mask(core, TM6010_REQ07_RCC_ACTIVE_VIDEO_IF, 0x40, 0x40);
+	tm6000_set_reg_mask(core, TM6010_REQ07_RCC_ACTIVE_IF, 0x40, 0x40);
 
 	tm6000_set_audio_bitrate(core, 48000);
 
@@ -97,7 +97,7 @@ static int _tm6000_stop_audio_dma(struct snd_tm6000_card *chip)
 	dprintk(1, "Stopping audio DMA\n");
 
 	/* Disables audio */
-	tm6000_set_reg_mask(core, TM6010_REQ07_RCC_ACTIVE_VIDEO_IF, 0x00, 0x40);
+	tm6000_set_reg_mask(core, TM6010_REQ07_RCC_ACTIVE_IF, 0x00, 0x40);
 
 	return 0;
 }
@@ -304,6 +304,7 @@ static int snd_tm6000_hw_free(struct snd_pcm_substream *substream)
 		schedule_work(&core->wq_trigger);
 	}
 
+	dsp_buffer_free(substream);
 	return 0;
 }
 
@@ -397,7 +398,7 @@ static struct snd_pcm_ops snd_tm6000_pcm_ops = {
 /*
  * Alsa Constructor - Component probe
  */
-int tm6000_audio_init(struct tm6000_core *dev)
+static int tm6000_audio_init(struct tm6000_core *dev)
 {
 	struct snd_card		*card;
 	struct snd_tm6000_card	*chip;
@@ -490,7 +491,7 @@ static int tm6000_audio_fini(struct tm6000_core *dev)
 	return 0;
 }
 
-struct tm6000_ops audio_ops = {
+static struct tm6000_ops audio_ops = {
 	.type	= TM6000_AUDIO,
 	.name	= "TM6000 Audio Extension",
 	.init	= tm6000_audio_init,

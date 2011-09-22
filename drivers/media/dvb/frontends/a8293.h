@@ -1,5 +1,5 @@
 /*
- * NXP TDA18212HN silicon tuner driver
+ * Allegro A8293 SEC driver
  *
  * Copyright (C) 2011 Antti Palosaari <crope@iki.fi>
  *
@@ -18,27 +18,24 @@
  *    51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  */
 
-#ifndef TDA18212_PRIV_H
-#define TDA18212_PRIV_H
+#ifndef A8293_H
+#define A8293_H
 
-#include "tda18212.h"
-
-#define LOG_PREFIX "tda18212"
-
-#undef dbg
-#define dbg(f, arg...) \
-	if (debug) \
-		printk(KERN_INFO   LOG_PREFIX": " f "\n" , ## arg)
-#undef err
-#define err(f, arg...)  printk(KERN_ERR     LOG_PREFIX": " f "\n" , ## arg)
-#undef info
-#define info(f, arg...) printk(KERN_INFO    LOG_PREFIX": " f "\n" , ## arg)
-#undef warn
-#define warn(f, arg...) printk(KERN_WARNING LOG_PREFIX": " f "\n" , ## arg)
-
-struct tda18212_priv {
-	struct tda18212_config *cfg;
-	struct i2c_adapter *i2c;
+struct a8293_config {
+	u8 i2c_addr;
 };
 
+#if defined(CONFIG_DVB_A8293) || \
+	(defined(CONFIG_DVB_A8293_MODULE) && defined(MODULE))
+extern struct dvb_frontend *a8293_attach(struct dvb_frontend *fe,
+	struct i2c_adapter *i2c, const struct a8293_config *cfg);
+#else
+static inline struct dvb_frontend *a8293_attach(struct dvb_frontend *fe,
+	struct i2c_adapter *i2c, const struct a8293_config *cfg)
+{
+	printk(KERN_WARNING "%s: driver disabled by Kconfig\n", __func__);
+	return NULL;
+}
 #endif
+
+#endif /* A8293_H */
