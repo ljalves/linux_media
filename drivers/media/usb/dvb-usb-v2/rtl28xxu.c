@@ -24,6 +24,7 @@
 
 #include "rtl2830.h"
 #include "rtl2832.h"
+#include "rtl2832_sdr.h"
 
 #include "qt1010.h"
 #include "mt2060.h"
@@ -734,6 +735,9 @@ static int rtl2832u_frontend_attach(struct dvb_usb_adapter *adap)
 	struct dvb_usb_device *d = adap_to_d(adap);
 	struct rtl28xxu_priv *priv = d_to_priv(d);
 	struct rtl2832_config *rtl2832_config;
+	static const struct rtl2832_sdr_config rtl2832_sdr_config = {
+		.i2c_addr = 0x10,
+	};
 
 	dev_dbg(&d->udev->dev, "%s:\n", __func__);
 
@@ -774,6 +778,10 @@ static int rtl2832u_frontend_attach(struct dvb_usb_adapter *adap)
 
 	/* set fe callback */
 	adap->fe[0]->callback = rtl2832u_frontend_callback;
+
+	/* attach SDR */
+	dvb_attach(rtl2832_sdr_attach, adap->fe[0], &d->i2c_adap,
+			&rtl2832_sdr_config);
 
 	return 0;
 err:
