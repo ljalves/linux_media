@@ -33,16 +33,15 @@
 
 #include <linux/kconfig.h>
 
-struct rtl2832_sdr_config {
-	u8 i2c_addr;
-};
+/* for config struct */
+#include "rtl2832.h"
 
 #if IS_ENABLED(CONFIG_DVB_RTL2832_SDR)
 extern struct dvb_frontend *rtl2832_sdr_attach(struct dvb_frontend *fe,
-	struct i2c_adapter *i2c, const struct rtl2832_sdr_config *cfg);
+	struct i2c_adapter *i2c, const struct rtl2832_config *cfg);
 #else
 static inline struct dvb_frontend *rtl2832_sdr_attach(struct dvb_frontend *fe,
-	struct i2c_adapter *i2c, const struct rtl2832_sdr_config *cfg)
+	struct i2c_adapter *i2c, const struct rtl2832_config *cfg)
 {
 	dev_warn(&i2c->dev, "%s: driver disabled by Kconfig\n", __func__);
 	return NULL;

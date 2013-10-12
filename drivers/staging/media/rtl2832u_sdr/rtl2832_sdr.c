@@ -61,7 +61,7 @@ struct rtl2832_sdr_state {
 #define URB_BUF            (1 << 2)
 	unsigned long flags;
 
-	const struct rtl2832_sdr_config *cfg;
+	const struct rtl2832_config *cfg;
 	struct dvb_frontend *fe;
 	struct dvb_usb_device *d;
 	struct i2c_adapter *i2c;
@@ -1004,7 +1004,7 @@ static void rtl2832_sdr_video_release(struct v4l2_device *v)
 }
 
 struct dvb_frontend *rtl2832_sdr_attach(struct dvb_frontend *fe,
-		struct i2c_adapter *i2c, const struct rtl2832_sdr_config *cfg)
+		struct i2c_adapter *i2c, const struct rtl2832_config *cfg)
 {
 	int ret;
 	struct rtl2832_sdr_state *s;
