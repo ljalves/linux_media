@@ -753,7 +753,8 @@ static int rtl2832_sdr_set_adc(struct rtl2832_sdr_state *s)
 		ret = rtl2832_sdr_wr_regs(s, 0x104, "\xcc", 1);
 		ret = rtl2832_sdr_wr_regs(s, 0x105, "\xbe", 1);
 		ret = rtl2832_sdr_wr_regs(s, 0x1c8, "\x14", 1);
-	} else if (s->cfg->tuner == RTL2832_TUNER_FC0012) {
+	} else if (s->cfg->tuner == RTL2832_TUNER_FC0012 ||
+			s->cfg->tuner == RTL2832_TUNER_FC0013) {
 		ret = rtl2832_sdr_wr_regs(s, 0x103, "\x5a", 1);
 		ret = rtl2832_sdr_wr_regs(s, 0x1c7, "\x2c", 1);
 		ret = rtl2832_sdr_wr_regs(s, 0x104, "\xcc", 1);
@@ -788,7 +789,8 @@ static int rtl2832_sdr_set_adc(struct rtl2832_sdr_state *s)
 		ret = rtl2832_sdr_wr_regs(s, 0x019, "\x21", 1);
 		ret = rtl2832_sdr_wr_regs(s, 0x116, "\x00\x00", 2);
 		ret = rtl2832_sdr_wr_regs(s, 0x118, "\x00", 1);
-	} else if (s->cfg->tuner == RTL2832_TUNER_FC0012) {
+	} else if (s->cfg->tuner == RTL2832_TUNER_FC0012 ||
+			s->cfg->tuner == RTL2832_TUNER_FC0013) {
 		ret = rtl2832_sdr_wr_regs(s, 0x011, "\xe9\xbf", 2);
 		ret = rtl2832_sdr_wr_regs(s, 0x1e5, "\xf0", 1);
 		ret = rtl2832_sdr_wr_regs(s, 0x1d9, "\x00", 1);
