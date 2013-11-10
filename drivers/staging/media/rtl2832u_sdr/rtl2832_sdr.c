@@ -49,6 +49,8 @@
 #define RTL2832_SDR_CID_TUNER_IF            ((V4L2_CID_USER_BASE | 0xf000) + 12)
 #define RTL2832_SDR_CID_TUNER_GAIN          ((V4L2_CID_USER_BASE | 0xf000) + 13)
 
+#define V4L2_PIX_FMT_SDR_U8     v4l2_fourcc('D', 'U', '0', '8') /* unsigned 8-bit */
+
 #define MAX_BULK_BUFS            (8)
 #define BULK_BUFFER_SIZE         (8 * 512)
 
