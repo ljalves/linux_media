@@ -51,8 +51,8 @@
 
 #define V4L2_PIX_FMT_SDR_U8     v4l2_fourcc('D', 'U', '0', '8') /* unsigned 8-bit */
 
-#define MAX_BULK_BUFS            (8)
-#define BULK_BUFFER_SIZE         (8 * 512)
+#define MAX_BULK_BUFS            (10)
+#define BULK_BUFFER_SIZE         (128 * 512)
 
 /* intermediate buffers with raw data from the USB device */
 struct rtl2832_sdr_frame_buf {
