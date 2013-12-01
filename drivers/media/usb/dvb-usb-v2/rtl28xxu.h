@@ -58,6 +58,8 @@ struct rtl28xxu_priv {
 	struct i2c_adapter *demod_i2c_adapter;
 	bool rc_active;
 	struct i2c_client *client;
+	int (*init) (struct dvb_frontend *fe);
+	bool has_slave_demod;
 };
 
 enum rtl28xxu_chip_id {
