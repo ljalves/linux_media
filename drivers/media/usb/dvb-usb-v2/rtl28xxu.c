@@ -825,7 +825,7 @@ static int rtl2832u_frontend_attach(struct dvb_usb_adapter *adap)
 		struct dvb_frontend *fe;
 
 		/* attach demodulator */
-		fe = dvb_attach(mn88472_c_attach, &rtl28xxu_mn88472_config,
+		fe = dvb_attach(mn88472_attach_c, &rtl28xxu_mn88472_config,
 				priv->demod_i2c_adapter);
 		if (fe == NULL) {
 			dev_warn(&d->udev->dev, "%s: MN88472 attach failed\n",
