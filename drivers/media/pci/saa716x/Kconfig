@@ -1,0 +1,63 @@
+menuconfig SAA716X_SUPPORT
+	bool "Support for SAA716x family from NXP/Philips"
+	depends on PCI && I2C
+	help
+	  support for saa716x
+
+if SAA716X_SUPPORT
+config SAA716X_CORE
+	tristate "SAA7160/1/2 PCI Express bridge based devices"
+	depends on PCI && I2C
+
+	help
+	  Support for PCI cards based on the SAA7160/1/2 PCI Express bridge.
+
+	  Say Y if you own such a device and want to use it.
+
+config DVB_SAA716X_BUDGET
+	tristate "SAA7160/1/2 based Budget PCIe cards (DVB only)"
+	depends on SAA716X_CORE && DVB_CORE
+
+	help
+	  Support for the SAA7160/1/2 based Budget PCIe DVB cards
+	  Currently supported devices are:
+
+	  * KNC1 Dual S2 (DVB-S, DVB-S/S2)
+	  * Twinhan/Azurewave VP-1028 (DVB-S)
+	  * Twinhan/Azurewave VP-3071 (DVB-T x2)
+	  * Twinhan/Azurewave VP-6002 (DVB-S)
+
+	  Say Y if you own such a device and want to use it.
+
+config DVB_SAA716X_HYBRID
+	tristate "SAA7160/1/2 based Hybrid PCIe cards (DVB + Analog)"
+	depends on SAA716X_CORE && DVB_CORE
+
+	help
+	  Support for the SAA7160/1/2 based Hybrid PCIe DVB cards
+	  Currently supported devices are:
+
+	  * Avermedia H-788 (DVB-T)
+	  * Avermedia HC-82 (DVB-T)
+	  * NXP Reference (Atlantis) (DVB-T x2)
+	  * NXP Reference (Nemo) (DVB-T)
+	  * Twinhan/Azurewave VP-6090 (DVB-S x2, DVB-T x2)
+
+	  Say Y if you own such a device and want to use it.
+
+config DVB_SAA716X_FF
+	tristate "SAA7160/1/2 based Full Fledged PCIe cards"
+	depends on SAA716X_CORE && DVB_CORE
+	depends on INPUT # IR
+
+	help
+	  Support for the SAA7160/1/2 based  Full fledged PCIe DVB cards
+	  These cards do feature a hardware MPEG decoder and other
+	  peripherals. Also known as Premium cards.
+	  Currently supported devices are:
+
+	  * Technotrend S2 6400 Dual S2 HD (DVB-S/S2 x2)
+
+	  Say Y if you own such a device and want to use it.
+
+endif # SAA716X_SUPPORT

@@ -1,0 +1,74 @@
+#ifndef __SAA716x_FGPI_REG_H
+#define __SAA716x_FGPI_REG_H
+
+/* -------------- FGPI Registers -------------- */
+
+#define FGPI_CONTROL			0x000
+#define FGPI_CAPTURE_ENABLE_2		(0x00000001 << 13)
+#define FGPI_CAPTURE_ENABLE_1		(0x00000001 << 12)
+#define FGPI_MODE			(0x00000001 << 11)
+#define FGPI_SAMPLE_SIZE		(0x00000003 <<  8)
+#define FGPI_BUF_SYNC_MSG_STOP		(0x00000003 <<  5)
+#define FGPI_REC_START_MSG_START	(0x00000003 <<  2)
+#define FGPI_TSTAMP_SELECT		(0x00000001 <<  1)
+#define FGPI_VAR_LENGTH			(0x00000001 <<  0)
+
+#define FGPI_BASE_1			0x004
+#define FGPI_BASE_2			0x008
+#define FGPI_SIZE			0x00c
+#define FGPI_REC_SIZE			0x010
+#define FGPI_STRIDE			0x014
+#define FGPI_NUM_RECORD_1		0x018
+#define FGPI_NUM_RECORD_2		0x01c
+#define FGPI_THRESHOLD_1		0x020
+#define FGPI_THRESHOLD_2		0x024
+#define FGPI_D1_XY_START		0x028
+#define FGPI_D1_XY_END			0x02c
+
+#define INT_STATUS			0xfe0
+#define FGPI_BUF1_ACTIVE		(0x00000001 <<  7)
+#define FGPI_OVERFLOW			(0x00000001 <<  6)
+#define FGPI_MBE			(0x00000001 <<  5)
+#define FGPI_UNDERRUN			(0x00000001 <<  4)
+#define FGPI_THRESH2_REACHED		(0x00000001 <<  3)
+#define FGPI_THRESH1_REACHED		(0x00000001 <<  2)
+#define FGPI_BUF2_FULL			(0x00000001 <<  1)
+#define FGPI_BUF1_FULL			(0x00000001 <<  0)
+
+#define INT_ENABLE			0xfe4
+#define FGPI_OVERFLOW_ENA		(0x00000001 <<  6)
+#define FGPI_MBE_ENA			(0x00000001 <<  5)
+#define FGPI_UNDERRUN_ENA		(0x00000001 <<  4)
+#define FGPI_THRESH2_REACHED_ENA	(0x00000001 <<  3)
+#define FGPI_THRESH1_REACHED_ENA	(0x00000001 <<  2)
+#define FGPI_BUF2_FULL_ENA		(0x00000001 <<  1)
+#define FGPI_BUF1_FULL_ENA		(0x00000001 <<  0)
+
+#define INT_CLR_STATUS			0xfe8
+#define FGPI_OVERFLOW_ACK		(0x00000001 <<  6)
+#define FGPI_MBE_ACK			(0x00000001 <<  5)
+#define FGPI_UNDERRUN_ACK		(0x00000001 <<  4)
+#define FGPI_THRESH2_REACHED_ACK	(0x00000001 <<  3)
+#define FGPI_THRESH1_REACHED_ACK	(0x00000001 <<  2)
+#define FGPI_BUF2_DONE_ACK		(0x00000001 <<  1)
+#define FGPI_BUF1_DONE_ACK		(0x00000001 <<  0)
+
+#define INT_SET_STATUS			0xfec
+#define FGPI_OVERFLOW_SET		(0x00000001 <<  6)
+#define FGPI_MBE_SET			(0x00000001 <<  5)
+#define FGPI_UNDERRUN_SET		(0x00000001 <<  4)
+#define FGPI_THRESH2_REACHED_SET	(0x00000001 <<  3)
+#define FGPI_THRESH1_REACHED_SET	(0x00000001 <<  2)
+#define FGPI_BUF2_DONE_SET		(0x00000001 <<  1)
+#define FGPI_BUF1_DONE_SET		(0x00000001 <<  0)
+
+#define FGPI_SOFT_RESET			0xff0
+#define FGPI_SOFTWARE_RESET		(0x00000001 <<  0)
+
+#define FGPI_INTERFACE			0xff4
+#define FGPI_DISABLE_BUS_IF		(0x00000001 <<  0)
+
+#define FGPI_MOD_ID_EXT			0xff8
+#define FGPI_MODULE_ID			0xffc
+
+#endif /* __SAA716x_FGPI_REG_H */
