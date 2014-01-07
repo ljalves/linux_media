@@ -1,0 +1,201 @@
+#ifndef __SAA716x_DMA_REG_H
+#define __SAA716x_DMA_REG_H
+
+/* -------------- BAM Registers -------------- */
+
+#define BAM_VI0_0_DMA_BUF_MODE		0x000
+
+#define BAM_VI0_0_ADDR_OFFST_0		0x004
+#define BAM_VI0_0_ADDR_OFFST_1		0x008
+#define BAM_VI0_0_ADDR_OFFST_2		0x00c
+#define BAM_VI0_0_ADDR_OFFST_3		0x010
+#define BAM_VI0_0_ADDR_OFFST_4		0x014
+#define BAM_VI0_0_ADDR_OFFST_5		0x018
+#define BAM_VI0_0_ADDR_OFFST_6		0x01c
+#define BAM_VI0_0_ADDR_OFFST_7		0x020
+
+#define BAM_VI0_1_DMA_BUF_MODE		0x024
+#define BAM_VI0_1_ADDR_OFFST_0		0x028
+#define BAM_VI0_1_ADDR_OFFST_1		0x02c
+#define BAM_VI0_1_ADDR_OFFST_2		0x030
+#define BAM_VI0_1_ADDR_OFFST_3		0x034
+#define BAM_VI0_1_ADDR_OFFST_4		0x038
+#define BAM_VI0_1_ADDR_OFFST_5		0x03c
+#define BAM_VI0_1_ADDR_OFFST_6		0x040
+#define BAM_VI0_1_ADDR_OFFST_7		0x044
+
+#define BAM_VI0_2_DMA_BUF_MODE		0x048
+#define BAM_VI0_2_ADDR_OFFST_0		0x04c
+#define BAM_VI0_2_ADDR_OFFST_1		0x050
+#define BAM_VI0_2_ADDR_OFFST_2		0x054
+#define BAM_VI0_2_ADDR_OFFST_3		0x058
+#define BAM_VI0_2_ADDR_OFFST_4		0x05c
+#define BAM_VI0_2_ADDR_OFFST_5		0x060
+#define BAM_VI0_2_ADDR_OFFST_6		0x064
+#define BAM_VI0_2_ADDR_OFFST_7		0x068
+
+
+#define BAM_VI1_0_DMA_BUF_MODE		0x06c
+#define BAM_VI1_0_ADDR_OFFST_0		0x070
+#define BAM_VI1_0_ADDR_OFFST_1		0x074
+#define BAM_VI1_0_ADDR_OFFST_2		0x078
+#define BAM_VI1_0_ADDR_OFFST_3		0x07c
+#define BAM_VI1_0_ADDR_OFFST_4		0x080
+#define BAM_VI1_0_ADDR_OFFST_5		0x084
+#define BAM_VI1_0_ADDR_OFFST_6		0x088
+#define BAM_VI1_0_ADDR_OFFST_7		0x08c
+
+#define BAM_VI1_1_DMA_BUF_MODE		0x090
+#define BAM_VI1_1_ADDR_OFFST_0		0x094
+#define BAM_VI1_1_ADDR_OFFST_1		0x098
+#define BAM_VI1_1_ADDR_OFFST_2		0x09c
+#define BAM_VI1_1_ADDR_OFFST_3		0x0a0
+#define BAM_VI1_1_ADDR_OFFST_4		0x0a4
+#define BAM_VI1_1_ADDR_OFFST_5		0x0a8
+#define BAM_VI1_1_ADDR_OFFST_6		0x0ac
+#define BAM_VI1_1_ADDR_OFFST_7		0x0b0
+
+#define BAM_VI1_2_DMA_BUF_MODE		0x0b4
+#define BAM_VI1_2_ADDR_OFFST_0		0x0b8
+#define BAM_VI1_2_ADDR_OFFST_1		0x0bc
+#define BAM_VI1_2_ADDR_OFFST_2		0x0c0
+#define BAM_VI1_2_ADDR_OFFST_3		0x0c4
+#define BAM_VI1_2_ADDR_OFFST_4		0x0c8
+#define BAM_VI1_2_ADDR_OFFST_5		0x0cc
+#define BAM_VI1_2_ADDR_OFFST_6		0x0d0
+#define BAM_VI1_2_ADDR_OFFST_7		0x0d4
+
+
+#define BAM_FGPI0_DMA_BUF_MODE		0x0d8
+#define BAM_FGPI0_ADDR_OFFST_0		0x0dc
+#define BAM_FGPI0_ADDR_OFFST_1		0x0e0
+#define BAM_FGPI0_ADDR_OFFST_2		0x0e4
+#define BAM_FGPI0_ADDR_OFFST_3		0x0e8
+#define BAM_FGPI0_ADDR_OFFST_4		0x0ec
+#define BAM_FGPI0_ADDR_OFFST_5		0x0f0
+#define BAM_FGPI0_ADDR_OFFST_6		0x0f4
+#define BAM_FGPI0_ADDR_OFFST_7		0x0f8
+
+#define BAM_FGPI1_DMA_BUF_MODE		0x0fc
+#define BAM_FGPI1_ADDR_OFFST_0		0x100
+#define BAM_FGPI1_ADDR_OFFST_1		0x104
+#define BAM_FGPI1_ADDR_OFFST_2		0x108
+#define BAM_FGPI1_ADDR_OFFST_3		0x10c
+#define BAM_FGPI1_ADDR_OFFST_4		0x110
+#define BAM_FGPI1_ADDR_OFFST_5		0x114
+#define BAM_FGPI1_ADDR_OFFST_6		0x118
+#define BAM_FGPI1_ADDR_OFFST_7		0x11c
+
+#define BAM_FGPI2_DMA_BUF_MODE		0x120
+#define BAM_FGPI2_ADDR_OFFST_0		0x124
+#define BAM_FGPI2_ADDR_OFFST_1		0x128
+#define BAM_FGPI2_ADDR_OFFST_2		0x12c
+#define BAM_FGPI2_ADDR_OFFST_3		0x130
+#define BAM_FGPI2_ADDR_OFFST_4		0x134
+#define BAM_FGPI2_ADDR_OFFST_5		0x138
+#define BAM_FGPI2_ADDR_OFFST_6		0x13c
+#define BAM_FGPI2_ADDR_OFFST_7		0x140
+
+#define BAM_FGPI3_DMA_BUF_MODE		0x144
+#define BAM_FGPI3_ADDR_OFFST_0		0x148
+#define BAM_FGPI3_ADDR_OFFST_1		0x14c
+#define BAM_FGPI3_ADDR_OFFST_2		0x150
+#define BAM_FGPI3_ADDR_OFFST_3		0x154
+#define BAM_FGPI3_ADDR_OFFST_4		0x158
+#define BAM_FGPI3_ADDR_OFFST_5		0x15c
+#define BAM_FGPI3_ADDR_OFFST_6		0x160
+#define BAM_FGPI3_ADDR_OFFST_7		0x164
+
+
+#define BAM_AI0_DMA_BUF_MODE		0x168
+#define BAM_AI0_ADDR_OFFST_0		0x16c
+#define BAM_AI0_ADDR_OFFST_1		0x170
+#define BAM_AI0_ADDR_OFFST_2		0x174
+#define BAM_AI0_ADDR_OFFST_3		0x178
+#define BAM_AI0_ADDR_OFFST_4		0x17c
+#define BAM_AIO_ADDR_OFFST_5		0x180
+#define BAM_AI0_ADDR_OFFST_6		0x184
+#define BAM_AIO_ADDR_OFFST_7		0x188
+
+#define BAM_AI1_DMA_BUF_MODE		0x18c
+#define BAM_AI1_ADDR_OFFST_0		0x190
+#define BAM_AI1_ADDR_OFFST_1		0x194
+#define BAM_AI1_ADDR_OFFST_2		0x198
+#define BAM_AI1_ADDR_OFFST_3		0x19c
+#define BAM_AI1_ADDR_OFFST_4		0x1a0
+#define BAM_AI1_ADDR_OFFST_5		0x1a4
+#define BAM_AI1_ADDR_OFFST_6		0x1a8
+#define BAM_AI1_ADDR_OFFST_7		0x1ac
+
+#define BAM_SW_RST			0xff0
+#define BAM_SW_RESET			(0x00000001 <<  0)
+
+
+
+
+
+/* -------------- MMU Registers -------------- */
+
+#define MMU_MODE			0x000
+
+#define MMU_DMA_CONFIG0			0x004
+#define MMU_DMA_CONFIG1			0x008
+#define MMU_DMA_CONFIG2			0x00c
+#define MMU_DMA_CONFIG3			0x010
+#define MMU_DMA_CONFIG4			0x014
+#define MMU_DMA_CONFIG5			0x018
+#define MMU_DMA_CONFIG6			0x01c
+#define MMU_DMA_CONFIG7			0x020
+#define MMU_DMA_CONFIG8			0x024
+#define MMU_DMA_CONFIG9			0x028
+#define MMU_DMA_CONFIG10		0x02c
+#define MMU_DMA_CONFIG11		0x030
+#define MMU_DMA_CONFIG12		0x034
+#define MMU_DMA_CONFIG13		0x038
+#define MMU_DMA_CONFIG14		0x03c
+#define MMU_DMA_CONFIG15		0x040
+
+#define MMU_DMA_CONFIG(__ch)		(MMU_DMA_CONFIG0 + (4 * __ch))
+
+#define MMU_SW_RST			0xff0
+#define MMU_SW_RESET			(0x0001 <<  0)
+
+#define MMU_PTA_BASE0			0x044 /* DMA 0 */
+#define MMU_PTA_BASE1			0x084 /* DMA 1 */
+#define MMU_PTA_BASE2			0x0c4 /* DMA 2 */
+#define MMU_PTA_BASE3			0x104 /* DMA 3 */
+#define MMU_PTA_BASE4			0x144 /* DMA 4 */
+#define MMU_PTA_BASE5			0x184 /* DMA 5 */
+#define MMU_PTA_BASE6			0x1c4 /* DMA 6 */
+#define MMU_PTA_BASE7			0x204 /* DMA 7 */
+#define MMU_PTA_BASE8			0x244 /* DMA 8 */
+#define MMU_PTA_BASE9			0x284 /* DMA 9 */
+#define MMU_PTA_BASE10			0x2c4 /* DMA 10 */
+#define MMU_PTA_BASE11			0x304 /* DMA 11 */
+#define MMU_PTA_BASE12			0x344 /* DMA 12 */
+#define MMU_PTA_BASE13			0x384 /* DMA 13 */
+#define MMU_PTA_BASE14			0x3c4 /* DMA 14 */
+#define MMU_PTA_BASE15			0x404 /* DMA 15 */
+
+#define MMU_PTA_OFFSET			0x40
+
+#define MMU_PTA_BASE(__ch)		(MMU_PTA_BASE0 + (MMU_PTA_OFFSET * __ch))
+
+#define MMU_PTA0_LSB(__ch)		MMU_PTA_BASE(__ch) + 0x00
+#define MMU_PTA0_MSB(__ch)		MMU_PTA_BASE(__ch) + 0x04
+#define MMU_PTA1_LSB(__ch)		MMU_PTA_BASE(__ch) + 0x08
+#define MMU_PTA1_MSB(__ch)		MMU_PTA_BASE(__ch) + 0x0c
+#define MMU_PTA2_LSB(__ch)		MMU_PTA_BASE(__ch) + 0x10
+#define MMU_PTA2_MSB(__ch)		MMU_PTA_BASE(__ch) + 0x14
+#define MMU_PTA3_LSB(__ch)		MMU_PTA_BASE(__ch) + 0x18
+#define MMU_PTA3_MSB(__ch)		MMU_PTA_BASE(__ch) + 0x1c
+#define MMU_PTA4_LSB(__ch)		MMU_PTA_BASE(__ch) + 0x20
+#define MMU_PTA4_MSB(__ch)		MMU_PTA_BASE(__ch) + 0x24
+#define MMU_PTA5_LSB(__ch)		MMU_PTA_BASE(__ch) + 0x28
+#define MMU_PTA5_MSB(__ch)		MMU_PTA_BASE(__ch) + 0x2c
+#define MMU_PTA6_LSB(__ch)		MMU_PTA_BASE(__ch) + 0x30
+#define MMU_PTA6_MSB(__ch)		MMU_PTA_BASE(__ch) + 0x34
+#define MMU_PTA7_LSB(__ch)		MMU_PTA_BASE(__ch) + 0x38
+#define MMU_PTA7_MSB(__ch)		MMU_PTA_BASE(__ch) + 0x3c
+
+#endif /* __SAA716x_DMA_REG_H */
