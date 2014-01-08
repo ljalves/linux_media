@@ -30,6 +30,9 @@ struct tas2101_config {
 	/* tuner i2c address */
 	u8 tuner_address;
 
+	/* frontend id */
+	int id;
+
 	/* demod hard reset */
 	void (*reset_demod)(struct dvb_frontend *fe);
 };

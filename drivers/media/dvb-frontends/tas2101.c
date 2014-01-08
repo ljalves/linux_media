@@ -96,6 +96,35 @@ static int tas2101_rd(struct tas2101_priv *priv, u8 addr, u8 *data)
 	return tas2101_rdm(priv, addr, data, 1);
 }
 
+static int tas2101_regmask(struct tas2101_priv *priv,
+	u8 reg, u8 setmask, u8 clrmask)
+{
+	int ret;
+	u8 b;
+
+	ret = tas2101_rd(priv, reg, &b);
+	if (ret)
+		return ret;
+	return tas2101_wr(priv, reg, (b & ~clrmask) | setmask);
+}
+
+static int tas2101_wrtable(struct tas2101_priv *priv,
+	struct tas2101_regtable *regtable, int len)
+{
+	int ret, i;
+
+	for (i = 0; i < len; i++) {
+		ret = tas2101_regmask(priv, regtable[i].addr,
+			regtable[i].setmask, regtable[i].clrmask);
+		if (ret)
+			return ret;
+		if (regtable[i].sleep)
+			msleep(regtable[i].sleep);
+	}
+	return 0;
+}
+
+
 static void tas2101_release(struct dvb_frontend *fe)
 {
 	struct tas2101_priv *priv = fe->demodulator_priv;
@@ -147,6 +176,43 @@ err:
 }
 EXPORT_SYMBOL_GPL(tas2101_attach);
 
+static int tas2101_initfe(struct dvb_frontend *fe)
+{
+	struct tas2101_priv *priv = fe->demodulator_priv;
+	int ret;
+
+	dev_dbg(&priv->i2c->dev, "%s()\n", __func__);
+
+	ret = tas2101_wrtable(priv, tas2101_initfe0,
+		ARRAY_SIZE(tas2101_initfe0));
+	if (ret)
+		return ret;
+
+	switch (priv->cfg->id) {
+	case 0:
+		ret = tas2101_wrtable(priv, tas2101_initfe1a,
+			ARRAY_SIZE(tas2101_initfe1a));
+		break;
+	case 1:
+		ret = tas2101_wrtable(priv, tas2101_initfe1b,
+			ARRAY_SIZE(tas2101_initfe1b));
+		break;
+	default:
+		dev_warn(&priv->i2c->dev, "%s: no init for frontend id=%d\n",
+			__func__, priv->cfg->id);
+		ret = -EINVAL;
+		break;
+	}
+	if (ret)
+		return ret;
+
+	ret = tas2101_wrtable(priv, tas2101_initfe2,
+		ARRAY_SIZE(tas2101_initfe2));
+	if (ret)
+		return ret;
+
+	return 0;
+}
 
 static struct dvb_frontend_ops tas2101_ops = {
 	.delsys = { SYS_DVBS, SYS_DVBS2 },
@@ -166,8 +232,8 @@ static struct dvb_frontend_ops tas2101_ops = {
 			FE_CAN_QPSK | FE_CAN_RECOVER
 	},
 	.release = tas2101_release,
-/*	.init = tas2101_initfe,
-	.sleep = tas2101_sleep,
+	.init = tas2101_initfe,
+/*	.sleep = tas2101_sleep,
 	.read_status = tas2101_read_status,
 	.read_ber = tas2101_read_ber,
 	.read_signal_strength = tas2101_read_signal_strength,
