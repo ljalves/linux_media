@@ -201,6 +201,84 @@ static int tas2101_set_voltage(struct dvb_frontend *fe,
 	return ret;
 }
 
+static int tas2101_set_tone(struct dvb_frontend *fe,
+	fe_sec_tone_mode_t tone)
+{
+	struct tas2101_priv *priv = fe->demodulator_priv;
+	int ret = -EINVAL;
+
+	dev_dbg(&priv->i2c->dev, "%s() %s\n", __func__,
+		tone == SEC_TONE_ON ? "SEC_TONE_ON" : "SEC_TONE_OFF");
+
+	switch (tone) {
+	case SEC_TONE_ON:
+		ret = tas2101_regmask(priv, LNB_CTRL,
+			TONE_ON, DISEQC_CMD_MASK);
+		break;
+	case SEC_TONE_OFF:
+		ret = tas2101_regmask(priv, LNB_CTRL,
+			TONE_OFF, DISEQC_CMD_MASK);
+		break;
+	default:
+		dev_warn(&priv->i2c->dev, "%s() invalid tone (%d)\n",
+			__func__, tone);
+		break;
+	}
+	return ret;
+}
+
+static int tas2101_diseqc_send_burst(struct dvb_frontend *fe,
+	fe_sec_mini_cmd_t burst)
+{
+	struct tas2101_priv *priv = fe->demodulator_priv;
+	int ret, i;
+	u8 bck, r;
+
+	if ((burst != SEC_MINI_A) && (burst != SEC_MINI_B)) {
+		dev_err(&priv->i2c->dev, "%s() invalid burst(%d)\n",
+			__func__, burst);
+		return -EINVAL;
+	}
+
+	dev_dbg(&priv->i2c->dev, "%s() %s\n", __func__,
+		burst == SEC_MINI_A ? "SEC_MINI_A" : "SEC_MINI_B");
+
+	/* backup LNB tone state */
+	ret = tas2101_rd(priv, LNB_CTRL, &bck);
+	if (ret)
+		return ret;
+
+	ret = tas2101_regmask(priv, 0x34, 0, 0x40);
+	if (ret)
+		goto exit;
+
+	/* set tone burst cmd */
+	r = (bck & ~DISEQC_CMD_MASK) |
+		(burst == SEC_MINI_A) ? DISEQC_BURST_A : DISEQC_BURST_B;
+
+	ret = tas2101_wr(priv, LNB_CTRL, r);
+	if (ret)
+		goto exit;
+
+	/* spec = around 12.5 ms for the burst */
+	for (i = 0; i < 10; i++) {
+		tas2101_rd(priv, LNB_STATUS, &r);
+		if (r & DISEQC_BUSY)
+			goto exit;
+		msleep(20);
+	}
+
+	/* try to restore the tone setting but return a timeout error */
+	ret = tas2101_wr(priv, LNB_CTRL, bck);
+	dev_warn(&priv->i2c->dev, "%s() timeout sending burst\n", __func__);
+	return -ETIMEDOUT;
+exit:
+	/* restore tone setting */
+	return tas2101_wr(priv, LNB_CTRL, bck);
+}
+
+
+
 static void tas2101_release(struct dvb_frontend *fe)
 {
 	struct tas2101_priv *priv = fe->demodulator_priv;
@@ -327,10 +405,10 @@ static struct dvb_frontend_ops tas2101_ops = {
 	.read_signal_strength = tas2101_read_signal_strength,
 	.read_snr = tas2101_read_snr,
 	.read_ucblocks = tas2101_read_ucblocks,
-//	.set_tone = tas2101_set_tone,
+	.set_tone = tas2101_set_tone,
 	.set_voltage = tas2101_set_voltage,
 //	.diseqc_send_master_cmd = tas2101_send_diseqc_msg,
-//	.diseqc_send_burst = tas2101_diseqc_send_burst,
+	.diseqc_send_burst = tas2101_diseqc_send_burst,
 	.get_frontend_algo = tas2101_get_algo,
 //	.tune = tas2101_tune,
 //	.set_frontend = tas2101_set_frontend,
