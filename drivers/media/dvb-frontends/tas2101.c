@@ -124,6 +124,54 @@ static int tas2101_wrtable(struct tas2101_priv *priv,
 	return 0;
 }
 
+/* unimplemented */
+static int tas2101_read_status(struct dvb_frontend *fe, fe_status_t *status)
+{
+	struct tas2101_priv *priv = fe->demodulator_priv;
+	*status = 0;
+	dev_dbg(&priv->i2c->dev, "%s() status = 0x%02x\n", __func__, *status);
+	return 0;
+}
+
+/* unimplemented */
+static int tas2101_read_ber(struct dvb_frontend *fe, u32 *ber)
+{
+	struct tas2101_priv *priv = fe->demodulator_priv;
+	*ber = 0;
+	dev_dbg(&priv->i2c->dev, "%s() ber = %d\n", __func__, *ber);
+	return 0;
+}
+
+/* unimplemented */
+static int tas2101_read_signal_strength(struct dvb_frontend *fe,
+	u16 *signal_strength)
+{
+	struct tas2101_priv *priv = fe->demodulator_priv;
+	*signal_strength = 0xf000;
+	dev_dbg(&priv->i2c->dev, "%s() strength = 0x%04x\n",
+		__func__, *signal_strength);
+	return 0;
+}
+
+/* unimplemented */
+static int tas2101_read_snr(struct dvb_frontend *fe, u16 *snr)
+{
+	struct tas2101_priv *priv = fe->demodulator_priv;
+	*snr = 0;
+	dev_dbg(&priv->i2c->dev, "%s() snr = 0x%04x\n",
+		__func__, *snr);
+	return 0;
+}
+
+/* unimplemented */
+static int tas2101_read_ucblocks(struct dvb_frontend *fe, u32 *ucblocks)
+{
+	struct tas2101_priv *priv = fe->demodulator_priv;
+	dev_dbg(&priv->i2c->dev, "%s()\n", __func__);
+	*ucblocks = 0;
+	return 0;
+}
+
 
 static void tas2101_release(struct dvb_frontend *fe)
 {
@@ -214,6 +262,18 @@ static int tas2101_initfe(struct dvb_frontend *fe)
 	return 0;
 }
 
+static int tas2101_sleep(struct dvb_frontend *fe)
+{
+	struct tas2101_priv *priv = fe->demodulator_priv;
+	dev_dbg(&priv->i2c->dev, "%s()\n", __func__);
+	return 0;
+}
+
+static int tas2101_get_algo(struct dvb_frontend *fe)
+{
+	return DVBFE_ALGO_HW;
+}
+
 static struct dvb_frontend_ops tas2101_ops = {
 	.delsys = { SYS_DVBS, SYS_DVBS2 },
 	.info = {
@@ -233,20 +293,20 @@ static struct dvb_frontend_ops tas2101_ops = {
 	},
 	.release = tas2101_release,
 	.init = tas2101_initfe,
-/*	.sleep = tas2101_sleep,
+	.sleep = tas2101_sleep,
 	.read_status = tas2101_read_status,
 	.read_ber = tas2101_read_ber,
 	.read_signal_strength = tas2101_read_signal_strength,
 	.read_snr = tas2101_read_snr,
 	.read_ucblocks = tas2101_read_ucblocks,
-	.set_tone = tas2101_set_tone,
-	.set_voltage = tas2101_set_voltage,
-	.diseqc_send_master_cmd = tas2101_send_diseqc_msg,
-	.diseqc_send_burst = tas2101_diseqc_send_burst,
+//	.set_tone = tas2101_set_tone,
+//	.set_voltage = tas2101_set_voltage,
+//	.diseqc_send_master_cmd = tas2101_send_diseqc_msg,
+//	.diseqc_send_burst = tas2101_diseqc_send_burst,
 	.get_frontend_algo = tas2101_get_algo,
-	.tune = tas2101_tune,
-	.set_frontend = tas2101_set_frontend,
-	.get_frontend = tas2101_get_frontend,*/
+//	.tune = tas2101_tune,
+//	.set_frontend = tas2101_set_frontend,
+//	.get_frontend = tas2101_get_frontend,
 };
 
 MODULE_DESCRIPTION("DVB Frontend module for Tmax TAS2101");
