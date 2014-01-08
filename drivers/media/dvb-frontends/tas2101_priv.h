@@ -28,5 +28,11 @@ struct tas2101_priv {
 	const struct tas2101_config *cfg;
 };
 
+/* Known registers */
+enum tas2101_reg_addr {
+	ID_0		= 0x00,
+	ID_1		= 0x01,
+};
+
 #endif /* TAS2101_PRIV_H */
 
