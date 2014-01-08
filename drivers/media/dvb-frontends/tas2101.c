@@ -29,6 +29,13 @@
 #include "tas2101.h"
 #include "tas2101_priv.h"
 
+/* return i2c adapter from this frontend */
+struct i2c_adapter* tas2101_get_i2c_adapter(struct dvb_frontend *fe)
+{
+	struct tas2101_priv *priv = fe->demodulator_priv;
+	return priv->i2c;
+}
+EXPORT_SYMBOL_GPL(tas2101_get_i2c_adapter);
 
 /* write multiple (continuous) registers */
 /* the first value is the starting address */
@@ -80,12 +87,20 @@ static int tas2101_rdm(struct tas2101_priv *priv, u8 addr, u8 *buf, int len)
 			KBUILD_MODNAME, ret, addr, len);
 		return ret;
 	}
+	return 0;
 }
 
 /* read one register */
 static int tas2101_rd(struct tas2101_priv *priv, u8 addr, u8 *data)
 {
 	return tas2101_rdm(priv, addr, data, 1);
+}
+
+static void tas2101_release(struct dvb_frontend *fe)
+{
+	struct tas2101_priv *priv = fe->demodulator_priv;
+	dev_dbg(&priv->i2c->dev, "%s\n", __func__);
+	kfree(priv);
 }
 
 static struct dvb_frontend_ops tas2101_ops;
@@ -97,9 +112,7 @@ struct dvb_frontend *tas2101_attach(const struct tas2101_config *cfg,
 	int ret;
 	u8 id[2];
 
-	dev_info(&i2c->dev,
-		"%s: Attaching frontend\n",
-		KBUILD_MODNAME);
+	dev_dbg(&i2c->dev, "%s: Attaching frontend\n", KBUILD_MODNAME);
 
 	/* allocate memory for the priv data */
 	priv = kzalloc(sizeof(struct tas2101_priv), GFP_KERNEL);
@@ -107,26 +120,29 @@ struct dvb_frontend *tas2101_attach(const struct tas2101_config *cfg,
 		goto err;
 
 	priv->i2c = i2c;
-	priv->cfg = config;
-
-	/* Check if demod is alive */
-	ret = tas2101_rdm(priv, ID_0, &id, 2);
-	if (ret)
-		goto err1;
-	if ((id[0] != 0x44) || (id[1] != 0x4c))
-		goto err1;
+	priv->cfg = cfg;
 
 	/* create dvb_frontend */
 	memcpy(&priv->fe.ops, &tas2101_ops,
 		sizeof(struct dvb_frontend_ops));
 	priv->fe.demodulator_priv = priv;
+
+	/* reset demod */
+	cfg->reset_demod(&priv->fe);
+
+	/* check if demod is alive */
+	ret = tas2101_rdm(priv, ID_0, id, 2);
+	if (ret)
+		goto err1;
+	if ((id[0] != 0x44) || (id[1] != 0x4c))
+		goto err1;
+
 	return &priv->fe;
 
 err1:
 	kfree(priv);
 err:
-	dev_err(&i2c->dev, "%s: Error attaching frontend\n",
-		KBUILD_MODNAME);
+	dev_err(&i2c->dev, "%s: Error attaching frontend\n", KBUILD_MODNAME);
 	return NULL;
 }
 EXPORT_SYMBOL_GPL(tas2101_attach);
@@ -150,7 +166,7 @@ static struct dvb_frontend_ops tas2101_ops = {
 			FE_CAN_QPSK | FE_CAN_RECOVER
 	},
 	.release = tas2101_release,
-	.init = tas2101_initfe,
+/*	.init = tas2101_initfe,
 	.sleep = tas2101_sleep,
 	.read_status = tas2101_read_status,
 	.read_ber = tas2101_read_ber,
@@ -164,7 +180,7 @@ static struct dvb_frontend_ops tas2101_ops = {
 	.get_frontend_algo = tas2101_get_algo,
 	.tune = tas2101_tune,
 	.set_frontend = tas2101_set_frontend,
-	.get_frontend = tas2101_get_frontend,
+	.get_frontend = tas2101_get_frontend,*/
 };
 
 MODULE_DESCRIPTION("DVB Frontend module for Tmax TAS2101");
