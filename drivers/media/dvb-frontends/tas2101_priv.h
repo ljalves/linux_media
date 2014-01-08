@@ -110,10 +110,19 @@ static struct tas2101_regtable tas2101_initfe2[] = {
 };
 
 
+#define VSEL13_18	0x40
+
+
 /* Known registers */
 enum tas2101_reg_addr {
 	ID_0		= 0x00,
 	ID_1		= 0x01,
+	LNB_CTRL	= 0x10,
+};
+
+enum tas2101_lnb_power {
+	LNB_OFF = 0,
+	LNB_ON  = 1,
 };
 
 #endif /* TAS2101_PRIV_H */

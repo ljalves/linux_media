@@ -657,20 +657,45 @@ static void tbs6982se_reset_fe1(struct dvb_frontend *fe)
 	tbs6982se_reset_fe(fe, GPIO_17);
 }
 
+static void tbs6982se_lnb_power(struct dvb_frontend *fe,
+	int enpwr_pin, int onoff)
+{
+	struct i2c_adapter *adapter = tas2101_get_i2c_adapter(fe);
+        struct saa716x_i2c *i2c = i2c_get_adapdata(adapter);
+        struct saa716x_dev *dev = i2c->saa716x;
+
+	/* lnb power, active low */
+	saa716x_gpio_set_output(dev, enpwr_pin);
+	if (onoff)
+		saa716x_gpio_write(dev, enpwr_pin, 0);
+	else
+		saa716x_gpio_write(dev, enpwr_pin, 1);
+}
+
+static void tbs6982se_lnb0_power(struct dvb_frontend *fe, int onoff)
+{
+	tbs6982se_lnb_power(fe, GPIO_03, onoff);
+}
+
+static void tbs6982se_lnb1_power(struct dvb_frontend *fe, int onoff)
+{
+	tbs6982se_lnb_power(fe, GPIO_16, onoff);
+}
+
 static struct tas2101_config tbs6982se_cfg[] = {
 	{
+		.id            = 0,
 		.demod_address = 0x60,
 		.tuner_address = 0x63,
-		.id            = 0,
-
 		.reset_demod   = tbs6982se_reset_fe0,
+		.lnb_power     = tbs6982se_lnb0_power,
 	},
 	{
+                .id            = 1,
 		.demod_address = 0x68,
 		.tuner_address = 0x63,
-                .id            = 1,
-
 		.reset_demod   = tbs6982se_reset_fe1,
+		.lnb_power     = tbs6982se_lnb1_power,
 	}
 };
 
