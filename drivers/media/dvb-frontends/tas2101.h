@@ -35,6 +35,8 @@ struct tas2101_config {
 
 	/* demod hard reset */
 	void (*reset_demod)(struct dvb_frontend *fe);
+	/* lnb power */
+	void (*lnb_power)(struct dvb_frontend *fe, int onoff);
 };
 
 struct i2c_adapter *tas2101_get_i2c_adapter(struct dvb_frontend *fe);

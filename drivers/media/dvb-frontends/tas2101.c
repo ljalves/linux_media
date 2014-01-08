@@ -172,6 +172,34 @@ static int tas2101_read_ucblocks(struct dvb_frontend *fe, u32 *ucblocks)
 	return 0;
 }
 
+static int tas2101_set_voltage(struct dvb_frontend *fe,
+	fe_sec_voltage_t voltage)
+{
+	struct tas2101_priv *priv = fe->demodulator_priv;
+	int ret = 0;
+	
+	dev_dbg(&priv->i2c->dev, "%s() %s\n", __func__,
+		voltage == SEC_VOLTAGE_13 ? "SEC_VOLTAGE_13" :
+		voltage == SEC_VOLTAGE_18 ? "SEC_VOLTAGE_18" :
+		"SEC_VOLTAGE_OFF");
+
+	switch (voltage) {
+		case SEC_VOLTAGE_13:
+			priv->cfg->lnb_power(fe, LNB_ON);
+			ret = tas2101_regmask(priv, LNB_CTRL,
+				0, VSEL13_18);
+			break;
+		case SEC_VOLTAGE_18:
+			priv->cfg->lnb_power(fe, LNB_ON);
+			ret = tas2101_regmask(priv, LNB_CTRL,
+				VSEL13_18, 0);
+			break;
+		default: /* OFF */
+			priv->cfg->lnb_power(fe, LNB_OFF);
+			break;
+	}
+	return ret;
+}
 
 static void tas2101_release(struct dvb_frontend *fe)
 {
@@ -300,7 +328,7 @@ static struct dvb_frontend_ops tas2101_ops = {
 	.read_snr = tas2101_read_snr,
 	.read_ucblocks = tas2101_read_ucblocks,
 //	.set_tone = tas2101_set_tone,
-//	.set_voltage = tas2101_set_voltage,
+	.set_voltage = tas2101_set_voltage,
 //	.diseqc_send_master_cmd = tas2101_send_diseqc_msg,
 //	.diseqc_send_burst = tas2101_diseqc_send_burst,
 	.get_frontend_algo = tas2101_get_algo,
