@@ -111,13 +111,25 @@ static struct tas2101_regtable tas2101_initfe2[] = {
 
 
 #define VSEL13_18	0x40
+#define DISEQC_CMD_MASK	0x07
+
+enum tas2101_diseqc_cmd {
+	TONE_OFF	= 0x00,
+	TONE_ON		= 0x01,
+	DISEQC_BURST_A	= 0x02,
+	DISEQC_BURST_B	= 0x03,
+	DISEQC_SEND_MSG	= 0x04,
+};
+
+#define DISEQC_BUSY	0x10
 
 
-/* Known registers */
+/* demod registers */
 enum tas2101_reg_addr {
 	ID_0		= 0x00,
 	ID_1		= 0x01,
 	LNB_CTRL	= 0x10,
+	LNB_STATUS	= 0x16,
 };
 
 enum tas2101_lnb_power {
