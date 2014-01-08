@@ -88,7 +88,84 @@ static int tas2101_rd(struct tas2101_priv *priv, u8 addr, u8 *data)
 	return tas2101_rdm(priv, addr, data, 1);
 }
 
+static struct dvb_frontend_ops tas2101_ops;
 
+struct dvb_frontend *tas2101_attach(const struct tas2101_config *cfg,
+	struct i2c_adapter *i2c)
+{
+	struct tas2101_priv *priv = NULL;
+	int ret;
+	u8 id[2];
+
+	dev_info(&i2c->dev,
+		"%s: Attaching frontend\n",
+		KBUILD_MODNAME);
+
+	/* allocate memory for the priv data */
+	priv = kzalloc(sizeof(struct tas2101_priv), GFP_KERNEL);
+	if (priv == NULL)
+		goto err;
+
+	priv->i2c = i2c;
+	priv->cfg = config;
+
+	/* Check if demod is alive */
+	ret = tas2101_rdm(priv, ID_0, &id, 2);
+	if (ret)
+		goto err1;
+	if ((id[0] != 0x44) || (id[1] != 0x4c))
+		goto err1;
+
+	/* create dvb_frontend */
+	memcpy(&priv->fe.ops, &tas2101_ops,
+		sizeof(struct dvb_frontend_ops));
+	priv->fe.demodulator_priv = priv;
+	return &priv->fe;
+
+err1:
+	kfree(priv);
+err:
+	dev_err(&i2c->dev, "%s: Error attaching frontend\n",
+		KBUILD_MODNAME);
+	return NULL;
+}
+EXPORT_SYMBOL_GPL(tas2101_attach);
+
+
+static struct dvb_frontend_ops tas2101_ops = {
+	.delsys = { SYS_DVBS, SYS_DVBS2 },
+	.info = {
+		.name = "Tmax TAS2101",
+		.frequency_min = 950000,
+		.frequency_max = 2150000,
+		.frequency_stepsize = 1011, /* kHz for QPSK frontends */
+		.frequency_tolerance = 5000,
+		.symbol_rate_min = 1000000,
+		.symbol_rate_max = 45000000,
+		.caps = FE_CAN_INVERSION_AUTO |
+			FE_CAN_FEC_1_2 | FE_CAN_FEC_2_3 | FE_CAN_FEC_3_4 |
+			FE_CAN_FEC_4_5 | FE_CAN_FEC_5_6 | FE_CAN_FEC_6_7 |
+			FE_CAN_FEC_7_8 | FE_CAN_FEC_AUTO |
+			FE_CAN_2G_MODULATION |
+			FE_CAN_QPSK | FE_CAN_RECOVER
+	},
+	.release = tas2101_release,
+	.init = tas2101_initfe,
+	.sleep = tas2101_sleep,
+	.read_status = tas2101_read_status,
+	.read_ber = tas2101_read_ber,
+	.read_signal_strength = tas2101_read_signal_strength,
+	.read_snr = tas2101_read_snr,
+	.read_ucblocks = tas2101_read_ucblocks,
+	.set_tone = tas2101_set_tone,
+	.set_voltage = tas2101_set_voltage,
+	.diseqc_send_master_cmd = tas2101_send_diseqc_msg,
+	.diseqc_send_burst = tas2101_diseqc_send_burst,
+	.get_frontend_algo = tas2101_get_algo,
+	.tune = tas2101_tune,
+	.set_frontend = tas2101_set_frontend,
+	.get_frontend = tas2101_get_frontend,
+};
 
 MODULE_DESCRIPTION("DVB Frontend module for Tmax TAS2101");
 MODULE_AUTHOR("Luis Alves (ljalvs@gmail.com)");
