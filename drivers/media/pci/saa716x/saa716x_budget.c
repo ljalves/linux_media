@@ -661,12 +661,14 @@ static struct tas2101_config tbs6982se_cfg[] = {
 	{
 		.demod_address = 0x60,
 		.tuner_address = 0x63,
+		.id            = 0,
 
 		.reset_demod   = tbs6982se_reset_fe0,
 	},
 	{
 		.demod_address = 0x68,
 		.tuner_address = 0x63,
+                .id            = 1,
 
 		.reset_demod   = tbs6982se_reset_fe1,
 	}
