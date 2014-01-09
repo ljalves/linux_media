@@ -449,6 +449,34 @@ static int tas2101_sleep(struct dvb_frontend *fe)
 	return 0;
 }
 
+static int tas2101_set_frontend(struct dvb_frontend *fe)
+{
+	struct tas2101_priv *priv = fe->demodulator_priv;
+	return 0;
+}
+
+static int tas2101_get_frontend(struct dvb_frontend *fe)
+{
+	struct tas2101_priv *priv = fe->demodulator_priv;
+	return 0;
+}
+
+static int tas2101_tune(struct dvb_frontend *fe, bool re_tune,
+	unsigned int mode_flags, unsigned int *delay, fe_status_t *status)
+{
+	struct tas2101_priv *priv = fe->demodulator_priv;
+
+	dev_dbg(&priv->i2c->dev, "%s()\n", __func__);
+
+	*delay = HZ / 5;
+	if (re_tune) {
+		int ret = tas2101_set_frontend(fe);
+		if (ret)
+			return ret;
+	}
+	return tas2101_read_status(fe, status);
+}
+
 static int tas2101_get_algo(struct dvb_frontend *fe)
 {
 	return DVBFE_ALGO_HW;
@@ -484,9 +512,9 @@ static struct dvb_frontend_ops tas2101_ops = {
 	.diseqc_send_master_cmd = tas2101_send_diseqc_msg,
 	.diseqc_send_burst = tas2101_diseqc_send_burst,
 	.get_frontend_algo = tas2101_get_algo,
-//	.tune = tas2101_tune,
-//	.set_frontend = tas2101_set_frontend,
-//	.get_frontend = tas2101_get_frontend,
+	.tune = tas2101_tune,
+	.set_frontend = tas2101_set_frontend,
+	.get_frontend = tas2101_get_frontend,
 };
 
 MODULE_DESCRIPTION("DVB Frontend module for Tmax TAS2101");
