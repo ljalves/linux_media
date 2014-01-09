@@ -35,13 +35,17 @@ enum tas2101_reg_addr {
 	REG_04		= 0x04,
 	LNB_CTRL	= 0x10,
 	LNB_STATUS	= 0x16,
+	DISEQC_BUFFER	= 0x20,
 	DEMOD_STATUS	= 0x31,
 	REG_34		= 0x34,
 };
 
 
 #define VSEL13_18		0x40
+#define DISEQC_CMD_LEN_MASK	0x38
 #define DISEQC_CMD_MASK		0x07
+
+
 
 enum tas2101_diseqc_cmd {
 	TONE_OFF	= 0x00,
