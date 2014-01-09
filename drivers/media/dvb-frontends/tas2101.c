@@ -128,9 +128,29 @@ static int tas2101_wrtable(struct tas2101_priv *priv,
 static int tas2101_read_status(struct dvb_frontend *fe, fe_status_t *status)
 {
 	struct tas2101_priv *priv = fe->demodulator_priv;
+	int ret;
+	u8 reg;
+
 	*status = 0;
+
+	ret = tas2101_rd(priv, DEMOD_STATUS, &reg);
+	if (ret)
+		return ret;
+
+	reg &= DEMOD_STATUS_MASK;
+	if (reg == DEMOD_LOCKED) {
+		*status = FE_HAS_SIGNAL | FE_HAS_CARRIER |
+			FE_HAS_VITERBI | FE_HAS_SYNC | FE_HAS_LOCK;
+
+		ret = tas2101_rd(priv, REG_04, &reg);
+		if (ret)
+			return ret;
+		if (reg & 0x08)
+			ret = tas2101_wr(priv, REG_04, reg & ~0x08);
+	}
+
 	dev_dbg(&priv->i2c->dev, "%s() status = 0x%02x\n", __func__, *status);
-	return 0;
+	return ret;
 }
 
 /* unimplemented */
@@ -248,7 +268,7 @@ static int tas2101_diseqc_send_burst(struct dvb_frontend *fe,
 	if (ret)
 		return ret;
 
-	ret = tas2101_regmask(priv, 0x34, 0, 0x40);
+	ret = tas2101_regmask(priv, REG_34, 0, 0x40);
 	if (ret)
 		goto exit;
 
