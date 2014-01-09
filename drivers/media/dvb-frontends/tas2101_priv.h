@@ -28,6 +28,39 @@ struct tas2101_priv {
 	const struct tas2101_config *cfg;
 };
 
+/* demod registers */
+enum tas2101_reg_addr {
+	ID_0		= 0x00,
+	ID_1		= 0x01,
+	REG_04		= 0x04,
+	LNB_CTRL	= 0x10,
+	LNB_STATUS	= 0x16,
+	DEMOD_STATUS	= 0x31,
+	REG_34		= 0x34,
+};
+
+
+#define VSEL13_18		0x40
+#define DISEQC_CMD_MASK		0x07
+
+enum tas2101_diseqc_cmd {
+	TONE_OFF	= 0x00,
+	TONE_ON		= 0x01,
+	DISEQC_BURST_A	= 0x02,
+	DISEQC_BURST_B	= 0x03,
+	DISEQC_SEND_MSG	= 0x04,
+};
+
+#define DISEQC_BUSY		0x10
+
+#define DEMOD_STATUS_MASK	0x75
+#define DEMOD_LOCKED		0x75
+
+
+enum tas2101_lnb_power {
+	LNB_OFF = 0,
+	LNB_ON  = 1,
+};
 
 struct tas2101_regtable {
 	u8 addr;
@@ -82,7 +115,7 @@ static struct tas2101_regtable tas2101_initfe2[] = {
 	{0x36, 0x00, 0x40, 0},
 	{0x91, 0x00, 0xf0, 0},
 	{0x35, 0x75, 0xff, 0},
-	{0x04, 0x00, 0x80, 0},
+	{REG_04, 0x00, 0x80, 0},
 	{0x0d, 0x80, 0x00, 0},
 	{0x30, 0x01, 0x00, 0},
 	{0x05, 0x00, 0x80, 0},
@@ -92,7 +125,7 @@ static struct tas2101_regtable tas2101_initfe2[] = {
 	{0x11, 0x7f, 0xff, 0},
 	{0x12, 0x04, 0x07, 0},
 	{0x1f, 0x00, 0x01, 0},
-	{0x34, 0x00, 0x40, 0},
+	{REG_34, 0x00, 0x40, 0},
 	{0xd0, 0x05, 0x7f, 0},
 	{0xe3, 0x02, 0x03, 0},
 	{0x58, 0x60, 0xe0, 0},
@@ -109,33 +142,6 @@ static struct tas2101_regtable tas2101_initfe2[] = {
 	{0x40, 0x04, 0x07, 0},
 };
 
-
-#define VSEL13_18	0x40
-#define DISEQC_CMD_MASK	0x07
-
-enum tas2101_diseqc_cmd {
-	TONE_OFF	= 0x00,
-	TONE_ON		= 0x01,
-	DISEQC_BURST_A	= 0x02,
-	DISEQC_BURST_B	= 0x03,
-	DISEQC_SEND_MSG	= 0x04,
-};
-
-#define DISEQC_BUSY	0x10
-
-
-/* demod registers */
-enum tas2101_reg_addr {
-	ID_0		= 0x00,
-	ID_1		= 0x01,
-	LNB_CTRL	= 0x10,
-	LNB_STATUS	= 0x16,
-};
-
-enum tas2101_lnb_power {
-	LNB_OFF = 0,
-	LNB_ON  = 1,
-};
 
 #endif /* TAS2101_PRIV_H */
 
