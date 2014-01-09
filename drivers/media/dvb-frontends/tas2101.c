@@ -247,6 +247,62 @@ static int tas2101_set_tone(struct dvb_frontend *fe,
 	return ret;
 }
 
+static int tas2101_send_diseqc_msg(struct dvb_frontend *fe,
+	struct dvb_diseqc_master_cmd *d)
+{
+	struct tas2101_priv *priv = fe->demodulator_priv;
+	int ret, i;
+	u8 bck, buf[9];
+
+	/* dump DiSEqC message */
+	dev_dbg(&priv->i2c->dev, "%s() ( ", __func__);
+	for (i = 0; i < d->msg_len; i++)
+		dev_dbg(&priv->i2c->dev, "0x%02x ", d->msg[i]);
+	dev_dbg(&priv->i2c->dev, ")\n");
+
+	/* backup LNB tone state */
+	ret = tas2101_rd(priv, LNB_CTRL, &bck);
+	if (ret)
+		return ret;
+
+	ret = tas2101_regmask(priv, REG_34, 0, 0x40);
+	if (ret)
+		goto exit;
+
+	/* setup DISEqC message to demod */
+	buf[0] = DISEQC_BUFFER;
+	memcpy(&buf[1], d->msg, 8);
+	ret = tas2101_wrm(priv, buf, d->msg_len);
+	if (ret)
+		goto exit;
+
+	/* send DISEqC send command */
+	buf[0] = (bck & ~(DISEQC_CMD_LEN_MASK | DISEQC_CMD_MASK)) |
+		DISEQC_SEND_MSG | ((d->msg_len - 1) << 3);
+	ret = tas2101_wr(priv, LNB_CTRL, buf[0]);
+	if (ret)
+		goto exit;
+
+	/* wait at least diseqc typical tx time */
+	msleep(54);
+
+	/* Wait for busy flag to clear */
+	for (i = 0; i < 10; i++) {
+		ret = tas2101_rd(priv, LNB_STATUS, &buf[0]);
+		if ((buf[0] & DISEQC_BUSY) | ret)
+			goto exit;
+		msleep(20);
+	}
+
+	/* try to restore the tone setting but return a timeout error */
+	ret = tas2101_wr(priv, LNB_CTRL, bck);
+	dev_warn(&priv->i2c->dev, "%s() timeout sending burst\n", __func__);
+	return -ETIMEDOUT;
+exit:
+	/* restore tone setting */
+	return tas2101_wr(priv, LNB_CTRL, bck);
+}
+
 static int tas2101_diseqc_send_burst(struct dvb_frontend *fe,
 	fe_sec_mini_cmd_t burst)
 {
@@ -282,8 +338,8 @@ static int tas2101_diseqc_send_burst(struct dvb_frontend *fe,
 
 	/* spec = around 12.5 ms for the burst */
 	for (i = 0; i < 10; i++) {
-		tas2101_rd(priv, LNB_STATUS, &r);
-		if (r & DISEQC_BUSY)
+		ret = tas2101_rd(priv, LNB_STATUS, &r);
+		if ((r & DISEQC_BUSY) | ret)
 			goto exit;
 		msleep(20);
 	}
@@ -296,8 +352,6 @@ exit:
 	/* restore tone setting */
 	return tas2101_wr(priv, LNB_CTRL, bck);
 }
-
-
 
 static void tas2101_release(struct dvb_frontend *fe)
 {
@@ -427,7 +481,7 @@ static struct dvb_frontend_ops tas2101_ops = {
 	.read_ucblocks = tas2101_read_ucblocks,
 	.set_tone = tas2101_set_tone,
 	.set_voltage = tas2101_set_voltage,
-//	.diseqc_send_master_cmd = tas2101_send_diseqc_msg,
+	.diseqc_send_master_cmd = tas2101_send_diseqc_msg,
 	.diseqc_send_burst = tas2101_diseqc_send_burst,
 	.get_frontend_algo = tas2101_get_algo,
 //	.tune = tas2101_tune,
