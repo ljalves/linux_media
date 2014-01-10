@@ -212,7 +212,7 @@ static int saa716x_i2c_hwinit(struct saa716x_i2c *i2c, u32 I2C_DEV)
 		dprintk(SAA716x_DEBUG, 1, "Initializing Adapter %s @ 400k", adapter->name);
 		SAA716x_EPWR(I2C_DEV, I2C_CLOCK_DIVISOR_HIGH, 0x1a); /* 0.5 * 27MHz/400kHz */
 		SAA716x_EPWR(I2C_DEV, I2C_CLOCK_DIVISOR_LOW,  0x21); /* 0.5 * 27MHz/400kHz */
-		SAA716x_EPWR(I2C_DEV, I2C_SDA_HOLD, 0x19);
+		SAA716x_EPWR(I2C_DEV, I2C_SDA_HOLD, 0x10);
 		break;
 
 	case SAA716x_I2C_RATE_100:
@@ -597,7 +597,10 @@ retry:
 	}
 
 	mutex_unlock(&i2c->i2c_lock);
-	return num;
+	if (t < 3)
+		return num;
+	else
+		return -EIO;
 
 bail_out:
 	dprintk(SAA716x_ERROR, 1, "ERROR: Bailing out <%d>", err);
@@ -708,7 +711,7 @@ int saa716x_i2c_exit(struct saa716x_dev *saa716x)
 {
 	struct saa716x_i2c *i2c		= saa716x->i2c;
 	struct i2c_adapter *adapter	= NULL;
-	int i, err = 0;
+	int i;
 
 	dprintk(SAA716x_DEBUG, 1, "Removing SAA%02x I2C Core", saa716x->pdev->device);
 
@@ -721,18 +724,9 @@ int saa716x_i2c_exit(struct saa716x_dev *saa716x)
 		saa716x_i2c_hwdeinit(i2c, SAA716x_I2C_BUS(i));
 		dprintk(SAA716x_DEBUG, 1, "Removing adapter (%d) %s", i, adapter->name);
 
-		err = i2c_del_adapter(adapter);
-		if (err < 0) {
-			dprintk(SAA716x_ERROR, 1, "Adapter (%d) %s remove failed", i, adapter->name);
-			goto exit;
-		}
+		i2c_del_adapter(adapter);
 		i2c++;
 	}
-	dprintk(SAA716x_DEBUG, 1, "SAA%02x I2C Core succesfully removed", saa716x->pdev->device);
-
 	return 0;
-
-exit:
-	return err;
 }
 EXPORT_SYMBOL_GPL(saa716x_i2c_exit);
