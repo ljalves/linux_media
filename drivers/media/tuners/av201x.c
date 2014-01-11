@@ -169,7 +169,7 @@ static int av201x_set_params(struct dvb_frontend *fe)
 {
 	struct av201x_priv *priv = fe->tuner_priv;
 	struct dtv_frontend_properties *c = &fe->dtv_property_cache;
-	u32 f, n, bw, bf;
+	u32 n, bw, bf;
 	u8 buf[5];
 	int ret;
 
@@ -177,11 +177,17 @@ static int av201x_set_params(struct dvb_frontend *fe)
 			"symbol_rate=%d\n", __func__,
 			c->delivery_system, c->frequency, c->symbol_rate);
 
-	/* set vco pll divider */
+	/*
+	   ** PLL setup **
+	   RF = (pll_N * ref_freq) / pll_M
+	   pll_M = fixed 0x10000
+	   PLL output is divided by 2
+	   REG_FN = pll_M<24:0>
+	*/
 	buf[0] = REG_FN;
-	n = (c->frequency + priv->cfg->xtal_freq / 2) / priv->cfg->xtal_freq;
+	n = DIV_ROUND_CLOSEST(c->frequency, priv->cfg->xtal_freq);
 	buf[1] = (n > 0xff) ? 0xff : (u8) n;
-	n = ((c->frequency / 1000) << 17) / (priv->cfg->xtal_freq / 1000);
+	n = DIV_ROUND_CLOSEST((c->frequency / 1000) << 17, priv->cfg->xtal_freq / 1000);
 	buf[2] = (u8) (n >> 9);
 	buf[3] = (u8) (n >> 1);
 	buf[4] = (u8) ((n << 7) | 0x50);
@@ -205,7 +211,7 @@ static int av201x_set_params(struct dvb_frontend *fe)
 		bw = 4000;
 
 	/* bandwidth step = 211kHz */
-	bf = (bw * 127 + 21100 / 2) / 21100;
+	bf = DIV_ROUND_CLOSEST(bw * 127, 21100);
 	ret = av201x_wr(priv, REG_BWFILTER, (u8) bf);
 
 	/* enable fine tune agc */
