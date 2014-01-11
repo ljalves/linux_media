@@ -636,6 +636,144 @@ static struct saa716x_config skystar2_express_hd_config = {
 };
 
 
+#define SAA716x_MODEL_TURBOSIGHT_TBS6982 "TurboSight TBS 6982"
+#define SAA716x_DEV_TURBOSIGHT_TBS6982   "DVB-S/S2"
+
+static void tbs6982_reset_fe(struct dvb_frontend *fe, int reset_pin)
+{
+	struct i2c_adapter *adapter = tas2101_get_i2c_adapter(fe, 0);
+        struct saa716x_i2c *i2c = i2c_get_adapdata(adapter);
+        struct saa716x_dev *dev = i2c->saa716x;
+
+	/* reset frontend, active low */
+	saa716x_gpio_set_output(dev, reset_pin);
+	saa716x_gpio_write(dev, reset_pin, 0);
+	msleep(60);
+	saa716x_gpio_write(dev, reset_pin, 1);
+	msleep(120);
+}
+
+static void tbs6982_reset_fe0(struct dvb_frontend *fe)
+{
+	tbs6982_reset_fe(fe, 2);
+}
+
+static void tbs6982_reset_fe1(struct dvb_frontend *fe)
+{
+	tbs6982_reset_fe(fe, 17);
+}
+
+static void tbs6982_lnb_power(struct dvb_frontend *fe,
+	int enpwr_pin, int onoff)
+{
+	struct i2c_adapter *adapter = tas2101_get_i2c_adapter(fe, 0);
+        struct saa716x_i2c *i2c = i2c_get_adapdata(adapter);
+        struct saa716x_dev *dev = i2c->saa716x;
+
+	/* lnb power, active low */
+	saa716x_gpio_set_output(dev, enpwr_pin);
+	if (onoff)
+		saa716x_gpio_write(dev, enpwr_pin, 0);
+	else
+		saa716x_gpio_write(dev, enpwr_pin, 1);
+}
+
+static void tbs6982_lnb0_power(struct dvb_frontend *fe, int onoff)
+{
+	tbs6982_lnb_power(fe, 5, onoff);
+}
+
+static void tbs6982_lnb1_power(struct dvb_frontend *fe, int onoff)
+{
+	tbs6982_lnb_power(fe, 3, onoff);
+}
+
+static struct tas2101_config tbs6982_cfg[] = {
+	{
+		.id            = 0,
+		.i2c_address   = 0x68,
+		.reset_demod   = tbs6982_reset_fe0,
+		.lnb_power     = tbs6982_lnb0_power,
+	},
+	{
+                .id            = 1,
+		.i2c_address   = 0x68,
+		.reset_demod   = tbs6982_reset_fe1,
+		.lnb_power     = tbs6982_lnb1_power,
+	}
+};
+
+static struct av201x_config tbs6982_av201x_cfg = {
+	.i2c_address = 0x63,
+	.id          = ID_AV2012,
+	.xtal_freq   = 27000,		/* kHz */
+};
+
+static int saa716x_tbs6982_frontend_attach(
+	struct saa716x_adapter *adapter, int count)
+{
+	struct saa716x_dev *dev = adapter->saa716x;
+
+	dev_dbg(&dev->pdev->dev, "%s frontend %d attaching\n",
+		dev->config->model_name, count);
+	if (count > 1)
+		goto err;
+
+	saa716x_gpio_set_output(dev, 16);
+	saa716x_gpio_write(dev, 16, 0);
+	msleep(60);
+	saa716x_gpio_write(dev, 16, 1);
+	msleep(120);
+
+	adapter->fe = dvb_attach(tas2101_attach, &tbs6982_cfg[count],
+				&dev->i2c[1 - count].i2c_adapter);
+	if (adapter->fe == NULL)
+		goto err;
+
+	if (dvb_attach(av201x_attach, adapter->fe, &tbs6982_av201x_cfg,
+			tas2101_get_i2c_adapter(adapter->fe, 2)) == NULL) {
+		adapter->fe->ops.release(adapter->fe);
+		adapter->fe = NULL;
+		dev_dbg(&dev->pdev->dev,
+			"%s frontend %d tuner attach failed\n",
+			dev->config->model_name, count);
+		goto err;
+	}
+
+	dev_dbg(&dev->pdev->dev, "%s frontend %d attached\n",
+		dev->config->model_name, count);
+
+	return 0;
+err:
+	dev_err(&dev->pdev->dev, "%s frontend %d attach failed\n",
+		dev->config->model_name, count);
+	return -ENODEV;
+}
+
+static struct saa716x_config saa716x_tbs6982_config = {
+	.model_name		= SAA716x_MODEL_TURBOSIGHT_TBS6982,
+	.dev_type		= SAA716x_DEV_TURBOSIGHT_TBS6982,
+	.boot_mode		= SAA716x_EXT_BOOT,
+	.adapters		= 2,
+	.frontend_attach	= saa716x_tbs6982_frontend_attach,
+	.irq_handler		= saa716x_budget_pci_irq,
+	.i2c_rate		= SAA716x_I2C_RATE_400,
+	.i2c_mode		= SAA716x_I2C_MODE_POLLING,
+	.adap_config		= {
+		{
+			/* adapter 0 */
+			.ts_port = 3, /* using FGPI 3 */
+			.worker = demux_worker
+		},
+		{
+			/* adapter 1 */
+			.ts_port = 1, /* using FGPI 1 */
+			.worker = demux_worker
+		},
+	},
+};
+
+
 #define SAA716x_MODEL_TURBOSIGHT_TBS6982SE "TurboSight TBS 6982SE"
 #define SAA716x_DEV_TURBOSIGHT_TBS6982SE   "DVB-S/S2"
 
@@ -776,7 +914,8 @@ static struct pci_device_id saa716x_budget_pci_table[] = {
 	MAKE_ENTRY(TWINHAN_TECHNOLOGIES, TWINHAN_VP_6002, SAA7160, &saa716x_vp6002_config), /* VP-6002 */
 	MAKE_ENTRY(KNC_One, KNC_Dual_S2, SAA7160, &saa716x_knc1_duals2_config),
 	MAKE_ENTRY(TECHNISAT, SKYSTAR2_EXPRESS_HD, SAA7160, &skystar2_express_hd_config),
-	MAKE_ENTRY(TURBOSIGHT_TBS6982SE, TBS6982SE, SAA7160, &saa716x_tbs6982se_config),
+	MAKE_ENTRY(TURBOSIGHT_TBS6982, TBS6982,   SAA7160, &saa716x_tbs6982_config),
+	MAKE_ENTRY(TURBOSIGHT_TBS6982, TBS6982SE, SAA7160, &saa716x_tbs6982se_config),
 	{ }
 };
 MODULE_DEVICE_TABLE(pci, saa716x_budget_pci_table);
