@@ -26,9 +26,7 @@
 
 struct tas2101_config {
 	/* demodulator i2c address */
-	u8 demod_address;
-	/* tuner i2c address */
-	u8 tuner_address;
+	u8 i2c_address;
 
 	/* frontend id */
 	int id;
@@ -39,7 +37,7 @@ struct tas2101_config {
 	void (*lnb_power)(struct dvb_frontend *fe, int onoff);
 };
 
-struct i2c_adapter *tas2101_get_i2c_adapter(struct dvb_frontend *fe);
+struct i2c_adapter *tas2101_get_i2c_adapter(struct dvb_frontend *fe, int bus);
 
 #if IS_ENABLED(CONFIG_DVB_TAS2101)
 extern struct dvb_frontend *tas2101_attach(

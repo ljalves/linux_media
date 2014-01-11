@@ -1,5 +1,5 @@
 /*
-    Tmax TAS2101 - DVBS/S2 Satellite demod/tuner driver
+    Tmax TAS2101 - DVBS/S2 Satellite demodulator driver
 
     Copyright (C) 2014 Luis Alves <ljalvs@gmail.com>
 
@@ -23,17 +23,31 @@
 #include <linux/module.h>
 #include <linux/moduleparam.h>
 #include <linux/init.h>
+#include <linux/i2c-mux.h>
 
 #include "dvb_frontend.h"
 
 #include "tas2101.h"
 #include "tas2101_priv.h"
 
-/* return i2c adapter from this frontend */
-struct i2c_adapter* tas2101_get_i2c_adapter(struct dvb_frontend *fe)
+#define TAS2101_USE_I2C_MUX
+
+/* return i2c adapter */
+/* bus = 0   master   */
+/* bus = 1   demod    */
+/* bus = 2   tuner    */
+struct i2c_adapter *tas2101_get_i2c_adapter(struct dvb_frontend *fe, int bus)
 {
 	struct tas2101_priv *priv = fe->demodulator_priv;
-	return priv->i2c;
+	switch (bus) {
+	case 0:
+	default:
+		return priv->i2c;
+	case 1:
+		return priv->i2c_demod;
+	case 2:
+		return priv->i2c_tuner;
+	}
 }
 EXPORT_SYMBOL_GPL(tas2101_get_i2c_adapter);
 
@@ -43,13 +57,13 @@ static int tas2101_wrm(struct tas2101_priv *priv, u8 *buf, int len)
 {
 	int ret;
 	struct i2c_msg msg = {
-		.addr = priv->cfg->demod_address,
+		.addr = priv->cfg->i2c_address,
 		.flags = 0, .buf = buf, .len = len };
 
 	dev_dbg(&priv->i2c->dev, "%s() i2c wrm @0x%02x (len=%d)\n",
 		__func__, buf[0], len);
 
-	ret = i2c_transfer(priv->i2c, &msg, 1);
+	ret = i2c_transfer(priv->i2c_demod, &msg, 1);
 	if (ret < 0) {
 		dev_warn(&priv->i2c->dev,
 			"%s: i2c wrm err(%i) @0x%02x (len=%d)\n",
@@ -71,16 +85,16 @@ static int tas2101_rdm(struct tas2101_priv *priv, u8 addr, u8 *buf, int len)
 {
 	int ret;
 	struct i2c_msg msg[] = {
-		{ .addr = priv->cfg->demod_address, .flags = 0,
+		{ .addr = priv->cfg->i2c_address, .flags = 0,
 			.buf = &addr, .len = 1 },
-		{ .addr = priv->cfg->demod_address, .flags = I2C_M_RD,
+		{ .addr = priv->cfg->i2c_address, .flags = I2C_M_RD,
 			.buf = buf, .len = len }
 	};
 
 	dev_dbg(&priv->i2c->dev, "%s() i2c rdm @0x%02x (len=%d)\n",
-		__func__, buf[0], len);
+		__func__, addr, len);
 
-	ret = i2c_transfer(priv->i2c, msg, 2);
+	ret = i2c_transfer(priv->i2c_demod, msg, 2);
 	if (ret < 0) {
 		dev_warn(&priv->i2c->dev,
 			"%s: i2c rdm err(%i) @0x%02x (len=%d)\n",
@@ -100,12 +114,14 @@ static int tas2101_regmask(struct tas2101_priv *priv,
 	u8 reg, u8 setmask, u8 clrmask)
 {
 	int ret;
-	u8 b;
-
-	ret = tas2101_rd(priv, reg, &b);
-	if (ret)
-		return ret;
-	return tas2101_wr(priv, reg, (b & ~clrmask) | setmask);
+	u8 b = 0;
+	if (clrmask != 0xff) {
+		ret = tas2101_rd(priv, reg, &b);
+		if (ret)
+			return ret;
+		b &= ~clrmask;
+	}
+	return tas2101_wr(priv, reg, b | setmask);
 }
 
 static int tas2101_wrtable(struct tas2101_priv *priv,
@@ -124,7 +140,6 @@ static int tas2101_wrtable(struct tas2101_priv *priv,
 	return 0;
 }
 
-/* unimplemented */
 static int tas2101_read_status(struct dvb_frontend *fe, fe_status_t *status)
 {
 	struct tas2101_priv *priv = fe->demodulator_priv;
@@ -205,17 +220,20 @@ static int tas2101_set_voltage(struct dvb_frontend *fe,
 
 	switch (voltage) {
 		case SEC_VOLTAGE_13:
-			priv->cfg->lnb_power(fe, LNB_ON);
+			if (priv->cfg->lnb_power)
+				priv->cfg->lnb_power(fe, LNB_ON);
 			ret = tas2101_regmask(priv, LNB_CTRL,
 				0, VSEL13_18);
 			break;
 		case SEC_VOLTAGE_18:
-			priv->cfg->lnb_power(fe, LNB_ON);
+			if (priv->cfg->lnb_power)
+				priv->cfg->lnb_power(fe, LNB_ON);
 			ret = tas2101_regmask(priv, LNB_CTRL,
 				VSEL13_18, 0);
 			break;
 		default: /* OFF */
-			priv->cfg->lnb_power(fe, LNB_OFF);
+			if (priv->cfg->lnb_power)
+				priv->cfg->lnb_power(fe, LNB_OFF);
 			break;
 	}
 	return ret;
@@ -272,7 +290,7 @@ static int tas2101_send_diseqc_msg(struct dvb_frontend *fe,
 	/* setup DISEqC message to demod */
 	buf[0] = DISEQC_BUFFER;
 	memcpy(&buf[1], d->msg, 8);
-	ret = tas2101_wrm(priv, buf, d->msg_len);
+	ret = tas2101_wrm(priv, buf, d->msg_len + 1);
 	if (ret)
 		goto exit;
 
@@ -289,7 +307,9 @@ static int tas2101_send_diseqc_msg(struct dvb_frontend *fe,
 	/* Wait for busy flag to clear */
 	for (i = 0; i < 10; i++) {
 		ret = tas2101_rd(priv, LNB_STATUS, &buf[0]);
-		if ((buf[0] & DISEQC_BUSY) | ret)
+		if (ret)
+			break;
+		if (buf[0] & DISEQC_BUSY)
 			goto exit;
 		msleep(20);
 	}
@@ -339,7 +359,9 @@ static int tas2101_diseqc_send_burst(struct dvb_frontend *fe,
 	/* spec = around 12.5 ms for the burst */
 	for (i = 0; i < 10; i++) {
 		ret = tas2101_rd(priv, LNB_STATUS, &r);
-		if ((r & DISEQC_BUSY) | ret)
+		if (ret)
+			break;
+		if (r & DISEQC_BUSY)
 			goto exit;
 		msleep(20);
 	}
@@ -356,9 +378,62 @@ exit:
 static void tas2101_release(struct dvb_frontend *fe)
 {
 	struct tas2101_priv *priv = fe->demodulator_priv;
+
 	dev_dbg(&priv->i2c->dev, "%s\n", __func__);
+#ifdef TAS2101_USE_I2C_MUX
+	i2c_del_mux_adapter(priv->i2c_demod);
+	i2c_del_mux_adapter(priv->i2c_tuner);
+#endif
 	kfree(priv);
 }
+
+#ifdef TAS2101_USE_I2C_MUX
+/* channel 0: demod */
+/* channel 1: tuner */
+static int tas2101_i2c_select(struct i2c_adapter *adap,
+	void *mux_priv, u32 chan_id)
+{
+	struct tas2101_priv *priv = mux_priv;
+	int ret;
+	u8 buf[2];
+	struct i2c_msg msg_wr[] = {
+		{ .addr = priv->cfg->i2c_address, .flags = 0,
+			.buf = buf, .len = 2 }
+	};
+	struct i2c_msg msg_rd[] = {
+		{ .addr = priv->cfg->i2c_address, .flags = 0,
+			.buf = &buf[0], .len = 1 },
+		{ .addr = priv->cfg->i2c_address, .flags = I2C_M_RD,
+			.buf = &buf[1], .len = 1 }
+	};
+
+	dev_dbg(&priv->i2c->dev, "%s() ch=%d\n", __func__, chan_id);
+
+	if (priv->i2c_ch == chan_id)
+		return 0;
+
+	buf[0] = REG_06;
+	ret = __i2c_transfer(adap, msg_rd, 2);
+	if (ret != 2)
+		goto err;
+
+	if (chan_id == 0)
+		buf[1] &= ~I2C_GATE;
+	else
+		buf[1] |= I2C_GATE;
+
+	ret = __i2c_transfer(adap, msg_wr, 1);
+	if (ret != 1)
+		goto err;
+
+	priv->i2c_ch = chan_id;
+
+	return 0;
+err:
+	dev_dbg(&priv->i2c->dev, "%s() failed=%d\n", __func__, ret);
+	return -EREMOTEIO;
+}
+#endif
 
 static struct dvb_frontend_ops tas2101_ops;
 
@@ -376,8 +451,26 @@ struct dvb_frontend *tas2101_attach(const struct tas2101_config *cfg,
 	if (priv == NULL)
 		goto err;
 
-	priv->i2c = i2c;
 	priv->cfg = cfg;
+	priv->i2c = i2c;
+	priv->i2c_ch = 0;
+
+#ifdef TAS2101_USE_I2C_MUX
+	/* create muxed i2c adapter for the demod */
+	priv->i2c_demod = i2c_add_mux_adapter(i2c, &i2c->dev, priv, 0, 0, 0,
+		tas2101_i2c_select, NULL);
+	if (priv->i2c_demod == NULL)
+		goto err1;
+
+	/* create muxed i2c adapter for the tuner */
+	priv->i2c_tuner = i2c_add_mux_adapter(i2c, &i2c->dev, priv, 0, 1, 0,
+		tas2101_i2c_select, NULL);
+	if (priv->i2c_tuner == NULL)
+		goto err2;
+#else
+	priv->i2c_demod = i2c;
+	priv->i2c_tuner = i2c;
+#endif
 
 	/* create dvb_frontend */
 	memcpy(&priv->fe.ops, &tas2101_ops,
@@ -387,15 +480,23 @@ struct dvb_frontend *tas2101_attach(const struct tas2101_config *cfg,
 	/* reset demod */
 	cfg->reset_demod(&priv->fe);
 
+	msleep(100);
+
 	/* check if demod is alive */
 	ret = tas2101_rdm(priv, ID_0, id, 2);
-	if (ret)
-		goto err1;
 	if ((id[0] != 0x44) || (id[1] != 0x4c))
-		goto err1;
+		ret |= -EIO;
+	if (ret)
+		goto err3;
 
 	return &priv->fe;
 
+err3:
+#ifdef TAS2101_USE_I2C_MUX
+	i2c_del_mux_adapter(priv->i2c_tuner);
+err2:
+	i2c_del_mux_adapter(priv->i2c_demod);
+#endif
 err1:
 	kfree(priv);
 err:
@@ -452,12 +553,88 @@ static int tas2101_sleep(struct dvb_frontend *fe)
 static int tas2101_set_frontend(struct dvb_frontend *fe)
 {
 	struct tas2101_priv *priv = fe->demodulator_priv;
-	return 0;
+	struct dtv_frontend_properties *c = &fe->dtv_property_cache;
+	fe_status_t tunerstat;
+	int ret, i;
+	u32 s;
+	u8 buf[3];
+
+	dev_dbg(&priv->i2c->dev, "%s()\n", __func__);
+
+	/* do some basic parameter validation */
+	switch (c->delivery_system) {
+	case SYS_DVBS:
+		dev_dbg(&priv->i2c->dev, "%s() DVB-S\n", __func__);
+		/* Only QPSK is supported for DVB-S */
+		if (c->modulation != QPSK) {
+			dev_dbg(&priv->i2c->dev,
+				"%s() unsupported modulation (%d)\n",
+				__func__, c->modulation);
+			return -EINVAL;
+		}
+		break;
+	case SYS_DVBS2:
+		dev_dbg(&priv->i2c->dev, "%s() DVB-S2\n", __func__);
+		break;
+	default:
+		dev_warn(&priv->i2c->dev,
+			"%s() unsupported delivery system (%d)\n",
+			__func__, c->delivery_system);
+		return -EINVAL;
+	}
+
+	ret = tas2101_wrtable(priv, tas2101_setfe, ARRAY_SIZE(tas2101_setfe));
+	if (ret)
+		return ret;
+
+	/* set symbol rate */
+	s = c->symbol_rate / 1000;
+	buf[0] = SET_SRATE0;
+	buf[1] = (u8) s;
+	buf[2] = (u8) (s >> 8);
+	ret = tas2101_wrm(priv, buf, 3);
+	if (ret)
+		return ret;
+
+	/* clear freq offset */
+	buf[0] = FREQ_OS0;
+	buf[1] = 0;
+	buf[2] = 0;
+	ret = tas2101_wrm(priv, buf, 3);
+	if (ret)
+		return ret;
+
+	if (fe->ops.tuner_ops.set_params) {
+#ifndef TAS2101_USE_I2C_MUX
+		if (fe->ops.i2c_gate_ctrl)
+			fe->ops.i2c_gate_ctrl(fe, 1);
+#endif
+		fe->ops.tuner_ops.set_params(fe);
+#ifndef TAS2101_USE_I2C_MUX
+		if (fe->ops.i2c_gate_ctrl)
+			fe->ops.i2c_gate_ctrl(fe, 0);
+#endif
+	}
+
+	ret = tas2101_regmask(priv, REG_30, 0x01, 0);
+	if (ret)
+		return ret;
+
+	for (i = 0; i<15; i++) {
+		ret = tas2101_read_status(fe, &tunerstat);
+		if (tunerstat & FE_HAS_LOCK)
+			return 0;
+		msleep(20);
+	}
+	return -EINVAL;
 }
 
+/* unimplemented */
 static int tas2101_get_frontend(struct dvb_frontend *fe)
 {
 	struct tas2101_priv *priv = fe->demodulator_priv;
+	dev_dbg(&priv->i2c->dev, "%s()\n", __func__);
+
 	return 0;
 }
 
@@ -482,6 +659,21 @@ static int tas2101_get_algo(struct dvb_frontend *fe)
 	return DVBFE_ALGO_HW;
 }
 
+#ifndef TAS2101_USE_I2C_MUX
+static int tas2101_i2c_gate_ctrl(struct dvb_frontend* fe, int enable)
+{
+	struct tas2101_priv *priv = fe->demodulator_priv;
+	int ret;
+
+	if (enable)
+		ret = tas2101_regmask(priv, REG_06, I2C_GATE, 0);
+	else
+		ret = tas2101_regmask(priv, REG_06, 0, I2C_GATE);
+
+	return ret;
+}
+#endif
+
 static struct dvb_frontend_ops tas2101_ops = {
 	.delsys = { SYS_DVBS, SYS_DVBS2 },
 	.info = {
@@ -500,21 +692,28 @@ static struct dvb_frontend_ops tas2101_ops = {
 			FE_CAN_QPSK | FE_CAN_RECOVER
 	},
 	.release = tas2101_release,
+
 	.init = tas2101_initfe,
 	.sleep = tas2101_sleep,
+#ifndef TAS2101_USE_I2C_MUX
+	.i2c_gate_ctrl = tas2101_i2c_gate_ctrl,
+#endif
 	.read_status = tas2101_read_status,
 	.read_ber = tas2101_read_ber,
 	.read_signal_strength = tas2101_read_signal_strength,
 	.read_snr = tas2101_read_snr,
 	.read_ucblocks = tas2101_read_ucblocks,
+
 	.set_tone = tas2101_set_tone,
 	.set_voltage = tas2101_set_voltage,
 	.diseqc_send_master_cmd = tas2101_send_diseqc_msg,
 	.diseqc_send_burst = tas2101_diseqc_send_burst,
 	.get_frontend_algo = tas2101_get_algo,
 	.tune = tas2101_tune,
+
 	.set_frontend = tas2101_set_frontend,
 	.get_frontend = tas2101_get_frontend,
+
 };
 
 MODULE_DESCRIPTION("DVB Frontend module for Tmax TAS2101");

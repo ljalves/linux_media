@@ -37,6 +37,7 @@
 #include "stv6110x.h"
 #include "stv090x.h"
 #include "tas2101.h"
+#include "av201x.h"
 
 unsigned int verbose;
 module_param(verbose, int, 0644);
@@ -103,7 +104,7 @@ static int saa716x_budget_pci_probe(struct pci_dev *pdev, const struct pci_devic
 	}
 
 	saa716x_gpio_init(saa716x);
-
+#if 0
 	err = saa716x_dump_eeprom(saa716x);
 	if (err) {
 		dprintk(SAA716x_ERROR, 1, "SAA716x EEPROM dump failed");
@@ -118,6 +119,12 @@ static int saa716x_budget_pci_probe(struct pci_dev *pdev, const struct pci_devic
 	SAA716x_EPWR(GREG, GREG_VI_CTRL, 0x04080FA9);
 	/* enable FGPI3 and FGPI1 for TS input from Port 2 and 6 */
 	SAA716x_EPWR(GREG, GREG_FGPI_CTRL, 0x321);
+#endif
+
+	/* set default port mapping */
+	SAA716x_EPWR(GREG, GREG_VI_CTRL, 0x2C688F0A);
+	/* enable FGPI3, FGPI2, FGPI1 and FGPI0 for TS input from Port 2 and 6 */
+	SAA716x_EPWR(GREG, GREG_FGPI_CTRL, 0x322);
 
 	err = saa716x_dvb_init(saa716x);
 	if (err) {
@@ -634,7 +641,7 @@ static struct saa716x_config skystar2_express_hd_config = {
 
 static void tbs6982se_reset_fe(struct dvb_frontend *fe, int reset_pin)
 {
-	struct i2c_adapter *adapter = tas2101_get_i2c_adapter(fe);
+	struct i2c_adapter *adapter = tas2101_get_i2c_adapter(fe, 0);
         struct saa716x_i2c *i2c = i2c_get_adapdata(adapter);
         struct saa716x_dev *dev = i2c->saa716x;
 
@@ -649,18 +656,18 @@ static void tbs6982se_reset_fe(struct dvb_frontend *fe, int reset_pin)
 
 static void tbs6982se_reset_fe0(struct dvb_frontend *fe)
 {
-	tbs6982se_reset_fe(fe, GPIO_02);
+	tbs6982se_reset_fe(fe, 2);
 }
 
 static void tbs6982se_reset_fe1(struct dvb_frontend *fe)
 {
-	tbs6982se_reset_fe(fe, GPIO_17);
+	tbs6982se_reset_fe(fe, 17);
 }
 
 static void tbs6982se_lnb_power(struct dvb_frontend *fe,
 	int enpwr_pin, int onoff)
 {
-	struct i2c_adapter *adapter = tas2101_get_i2c_adapter(fe);
+	struct i2c_adapter *adapter = tas2101_get_i2c_adapter(fe, 0);
         struct saa716x_i2c *i2c = i2c_get_adapdata(adapter);
         struct saa716x_dev *dev = i2c->saa716x;
 
@@ -674,29 +681,33 @@ static void tbs6982se_lnb_power(struct dvb_frontend *fe,
 
 static void tbs6982se_lnb0_power(struct dvb_frontend *fe, int onoff)
 {
-	tbs6982se_lnb_power(fe, GPIO_03, onoff);
+	tbs6982se_lnb_power(fe, 3, onoff);
 }
 
 static void tbs6982se_lnb1_power(struct dvb_frontend *fe, int onoff)
 {
-	tbs6982se_lnb_power(fe, GPIO_16, onoff);
+	tbs6982se_lnb_power(fe, 16, onoff);
 }
 
 static struct tas2101_config tbs6982se_cfg[] = {
 	{
 		.id            = 0,
-		.demod_address = 0x60,
-		.tuner_address = 0x63,
+		.i2c_address   = 0x60,
 		.reset_demod   = tbs6982se_reset_fe0,
 		.lnb_power     = tbs6982se_lnb0_power,
 	},
 	{
                 .id            = 1,
-		.demod_address = 0x68,
-		.tuner_address = 0x63,
+		.i2c_address   = 0x68,
 		.reset_demod   = tbs6982se_reset_fe1,
 		.lnb_power     = tbs6982se_lnb1_power,
 	}
+};
+
+static struct av201x_config tbs6982se_av201x_cfg = {
+	.i2c_address = 0x63,
+	.id          = ID_AV2012,
+	.xtal_freq   = 27000,		/* kHz */
 };
 
 static int saa716x_tbs6982se_frontend_attach(
@@ -710,9 +721,20 @@ static int saa716x_tbs6982se_frontend_attach(
 		goto err;
 
 	adapter->fe = dvb_attach(tas2101_attach, &tbs6982se_cfg[count],
-		&dev->i2c[count].i2c_adapter);
+				&dev->i2c[count].i2c_adapter);
 	if (adapter->fe == NULL)
 		goto err;
+
+	if (dvb_attach(av201x_attach, adapter->fe, &tbs6982se_av201x_cfg,
+			tas2101_get_i2c_adapter(adapter->fe, 2)) == NULL) {
+		adapter->fe->ops.release(adapter->fe);
+		adapter->fe = NULL;
+		dev_dbg(&dev->pdev->dev,
+			"%s frontend %d tuner attach failed\n",
+			dev->config->model_name, count);
+		goto err;
+	}
+
 	dev_dbg(&dev->pdev->dev, "%s frontend %d attached\n",
 		dev->config->model_name, count);
 
