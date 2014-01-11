@@ -22,9 +22,16 @@
 #define TAS2101_PRIV_H
 
 struct tas2101_priv {
+	/* master i2c adapter */
 	struct i2c_adapter *i2c;
-	struct dvb_frontend fe;
+	/* muxed i2c adapter for the demod */
+	struct i2c_adapter *i2c_demod;
+	/* muxed i2c adapter for the tuner */
+	struct i2c_adapter *i2c_tuner;
 
+	int i2c_ch;
+
+	struct dvb_frontend fe;
 	const struct tas2101_config *cfg;
 };
 
@@ -33,13 +40,20 @@ enum tas2101_reg_addr {
 	ID_0		= 0x00,
 	ID_1		= 0x01,
 	REG_04		= 0x04,
+	REG_06		= 0x06,
 	LNB_CTRL	= 0x10,
 	LNB_STATUS	= 0x16,
 	DISEQC_BUFFER	= 0x20,
+	REG_30		= 0x30,
 	DEMOD_STATUS	= 0x31,
 	REG_34		= 0x34,
+	SET_SRATE0	= 0x73,
+	SET_SRATE1	= 0x74,
+	FREQ_OS0	= 0x75,
+	FREQ_OS1	= 0x76,
 };
 
+#define I2C_GATE		0x80
 
 #define VSEL13_18		0x40
 #define DISEQC_CMD_LEN_MASK	0x38
@@ -74,7 +88,7 @@ struct tas2101_regtable {
 };
 
 static struct tas2101_regtable tas2101_initfe0[] = {
-	{0x30, 0x02, 0x00, 0},
+	{REG_30, 0x02, 0x00, 0},
 	{0x56, 0x00, 0x02, 0},
 	{0x05, 0x04, 0x00, 0},
 	{0x05, 0x00, 0x04, 60},
@@ -123,7 +137,7 @@ static struct tas2101_regtable tas2101_initfe2[] = {
 	{0x0d, 0x80, 0x00, 0},
 	{0x30, 0x01, 0x00, 0},
 	{0x05, 0x00, 0x80, 0},
-	{0x06, 0x00, 0x80, 0},
+	{REG_06, 0, I2C_GATE, 0},
 	{0x41, 0x1c, 0x3f, 0},
 	{0x46, 0xdc, 0xff, 0},
 	{0x11, 0x7f, 0xff, 0},
@@ -141,10 +155,22 @@ static struct tas2101_regtable tas2101_initfe2[] = {
 	{0x90, 0x04, 0xff, 0},
 	{0x9d, 0x07, 0x00, 0},
 	{0x9e, 0x20, 0x3f, 0},
-	{0x06, 0x00, 0x1f, 0},
+	{REG_06, 0x00, 0x1f, 0},
 	{0x46, 0x18, 0x1f, 0},
 	{0x40, 0x04, 0x07, 0},
 };
+
+static struct tas2101_regtable tas2101_setfe[] = {
+	{REG_04, 0x08, 0x00, 0},
+	{0x36, 0x01, 0x00, 0},
+	{0x56, 0x01, 0x81, 0},
+	{0x05, 0x08, 0x00, 0},
+	{0x36, 0x40, 0x00, 0},
+	{0x58, 0x60, 0xe0, 0},
+};
+
+
+
 
 
 #endif /* TAS2101_PRIV_H */
