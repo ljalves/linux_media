@@ -699,6 +699,13 @@ config DVB_ISL6421
 	help
 	  An SEC control chip.
 
+config DVB_ISL6422
+	tristate "ISL6422[B] SEC controller"
+	depends on DVB_CORE && I2C
+	default m if !MEDIA_SUBDRV_AUTOSELECT
+	help
+	  A Dual SEC controller chip from Intersil
+
 config DVB_ISL6423
 	tristate "ISL6423 SEC controller"
 	depends on DVB_CORE && I2C
