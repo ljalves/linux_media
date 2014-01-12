@@ -229,10 +229,9 @@ static const struct dvb_tuner_ops av201x_tuner_ops = {
 	.info = {
 		.name           = "Airoha Technology AV201x",
 
-		/* let frontend provide freq info */
-		.frequency_min  = 0,
-		.frequency_max  = 0,
-		.frequency_step = 0,
+		.frequency_min  = 850000,
+		.frequency_max  = 2300000,
+		.frequency_step = 206,
 	},
 
 	.release = av201x_release,
