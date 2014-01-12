@@ -47,6 +47,8 @@ enum tas2101_reg_addr {
 	REG_30		= 0x30,
 	DEMOD_STATUS	= 0x31,
 	REG_34		= 0x34,
+	SIGSTR_0	= 0x42,
+	SIGSTR_1	= 0x43,
 	SET_SRATE0	= 0x73,
 	SET_SRATE1	= 0x74,
 	FREQ_OS0	= 0x75,

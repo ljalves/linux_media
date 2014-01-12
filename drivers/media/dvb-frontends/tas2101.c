@@ -177,12 +177,20 @@ static int tas2101_read_ber(struct dvb_frontend *fe, u32 *ber)
 	return 0;
 }
 
-/* unimplemented */
 static int tas2101_read_signal_strength(struct dvb_frontend *fe,
 	u16 *signal_strength)
 {
 	struct tas2101_priv *priv = fe->demodulator_priv;
-	*signal_strength = 0xf000;
+	int ret;
+	u8 buf[2];
+
+	ret = tas2101_rdm(priv, SIGSTR_0, buf, 2);
+	if (ret)
+		return ret;
+
+	/* return raw value - left justified */
+	*signal_strength = (buf[1] & 0xf0) | (buf[0] << 4);
+
 	dev_dbg(&priv->i2c->dev, "%s() strength = 0x%04x\n",
 		__func__, *signal_strength);
 	return 0;
