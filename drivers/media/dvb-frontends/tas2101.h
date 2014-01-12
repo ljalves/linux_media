@@ -28,13 +28,13 @@ struct tas2101_config {
 	/* demodulator i2c address */
 	u8 i2c_address;
 
-	/* frontend id */
-	int id;
-
 	/* demod hard reset */
 	void (*reset_demod)(struct dvb_frontend *fe);
 	/* lnb power */
 	void (*lnb_power)(struct dvb_frontend *fe, int onoff);
+
+	/* frontend gpio/tuner init */
+	u8 init[6];
 };
 
 struct i2c_adapter *tas2101_get_i2c_adapter(struct dvb_frontend *fe, int bus);
