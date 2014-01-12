@@ -38,6 +38,8 @@
 #include "stv090x.h"
 #include "tas2101.h"
 #include "av201x.h"
+#include "cx24117.h"
+#include "isl6422.h"
 
 unsigned int verbose;
 module_param(verbose, int, 0644);
@@ -907,8 +909,177 @@ static struct saa716x_config saa716x_tbs6982se_config = {
 };
 
 
-static struct pci_device_id saa716x_budget_pci_table[] = {
+#define SAA716x_MODEL_TURBOSIGHT_TBS6984 "TurboSight TBS 6984"
+#define SAA716x_DEV_TURBOSIGHT_TBS6984   "DVB-S2"
 
+static int saa716x_tbs6984_init(struct saa716x_dev *saa716x)
+{
+	int i;
+	const u8 buf[] = {
+		0xe0, 0x06, 0x66, 0x33, 0x65,
+		0x01, 0x17, 0x06, 0xde};
+
+#define TBS_CK 7
+#define TBS_CS 8
+#define TBS_DT 11
+
+	/* send init bitstream through a bitbanged spi */
+	/* set pins as output */
+	saa716x_gpio_set_output(saa716x, TBS_CK);
+	saa716x_gpio_set_output(saa716x, TBS_CS);
+	saa716x_gpio_set_output(saa716x, TBS_DT);
+
+	/* set all pins high */
+	saa716x_gpio_write(saa716x, TBS_CK, 1);
+	saa716x_gpio_write(saa716x, TBS_CS, 1);
+	saa716x_gpio_write(saa716x, TBS_DT, 1);
+	msleep(20);
+
+	/* CS low */
+	saa716x_gpio_write(saa716x, TBS_CS, 0);
+	msleep(20);
+	/* send bitstream */
+	for (i = 0; i < 9 * 8; i++) {
+		/* clock low */
+		saa716x_gpio_write(saa716x, TBS_CK, 0);
+		msleep(20);
+		/* set data pin */
+		saa716x_gpio_write(saa716x, TBS_DT, 
+			((buf[i >> 3] >> (7 - (i & 7))) & 1));
+		/* clock high */
+		saa716x_gpio_write(saa716x, TBS_CK, 1);
+		msleep(20);
+	}
+	/* raise cs, clk and data */
+	saa716x_gpio_write(saa716x, TBS_CS, 1);
+	saa716x_gpio_write(saa716x, TBS_CK, 1);
+	saa716x_gpio_write(saa716x, TBS_DT, 1);
+	
+	/* done */
+	return 0;
+}
+
+static struct cx24117_config tbs6984_cx24117_cfg[] = {
+	{
+		.demod_address = 0x55,
+	},
+	{
+		.demod_address = 0x05,
+	},
+};
+
+static struct isl6422_config tbs6984_isl6422_cfg[] = {
+	{
+		.current_max		= SEC_CURRENT_570m,
+		.curlim			= SEC_CURRENT_LIM_ON,
+		.mod_extern		= 1,
+		.addr			= 0x08,
+		.id			= 0,
+	},
+	{
+		.current_max		= SEC_CURRENT_570m,
+		.curlim			= SEC_CURRENT_LIM_ON,
+		.mod_extern		= 1,
+		.addr			= 0x08,
+		.id			= 1,
+	}
+
+};
+
+static int saa716x_tbs6984_frontend_attach(
+	struct saa716x_adapter *adapter, int count)
+{
+	struct saa716x_dev *dev = adapter->saa716x;
+
+	dev_dbg(&dev->pdev->dev, "%s frontend %d attaching\n",
+		dev->config->model_name, count);
+
+	saa716x_tbs6984_init(dev);
+
+	switch (count) {
+	case 0:
+	case 1:
+		/* first and second FE attaching */
+		adapter->fe = dvb_attach(cx24117_attach, &tbs6984_cx24117_cfg[0],
+				&dev->i2c[SAA716x_I2C_BUS_A].i2c_adapter);
+		if (adapter->fe == NULL)
+			goto err;
+		if (dvb_attach(isl6422_attach, adapter->fe,
+				&dev->i2c[SAA716x_I2C_BUS_A].i2c_adapter,
+				&tbs6984_isl6422_cfg[count]) == NULL) {
+			adapter->fe->ops.release(adapter->fe);
+			adapter->fe = NULL;
+			dev_dbg(&dev->pdev->dev,
+				"%s frontend %d SEC attach failed\n",
+				dev->config->model_name, count);
+			goto err;
+		}
+		break;
+	case 2:
+	case 3:
+		/* third and forth FE attaching */
+		adapter->fe = dvb_attach(cx24117_attach, &tbs6984_cx24117_cfg[1],
+				&dev->i2c[SAA716x_I2C_BUS_B].i2c_adapter);
+		if (adapter->fe == NULL)
+			goto err;
+		if (dvb_attach(isl6422_attach, adapter->fe,
+				&dev->i2c[SAA716x_I2C_BUS_B].i2c_adapter,
+				&tbs6984_isl6422_cfg[count - 2]) == NULL) {
+			adapter->fe->ops.release(adapter->fe);
+			adapter->fe = NULL;
+			dev_dbg(&dev->pdev->dev,
+				"%s frontend %d SEC attach failed\n",
+				dev->config->model_name, count);
+			goto err;
+		}
+		break;
+	default:
+		goto err;
+		break;
+	}
+
+	return 0;
+err:
+	dev_err(&dev->pdev->dev, "%s frontend %d attach failed\n",
+		dev->config->model_name, count);
+	return -ENODEV;
+}
+
+static struct saa716x_config saa716x_tbs6984_config = {
+	.model_name		= SAA716x_MODEL_TURBOSIGHT_TBS6984,
+	.dev_type		= SAA716x_DEV_TURBOSIGHT_TBS6984,
+	.boot_mode		= SAA716x_EXT_BOOT,
+	.adapters		= 4,
+	.frontend_attach	= saa716x_tbs6984_frontend_attach,
+	.irq_handler		= saa716x_budget_pci_irq,
+	.i2c_rate		= SAA716x_I2C_RATE_400,
+	.i2c_mode		= SAA716x_I2C_MODE_POLLING,
+	.adap_config		= {
+		{
+			/* adapter 0 */
+			.ts_port = 2,
+			.worker = demux_worker
+		},
+		{
+			/* adapter 1 */
+			.ts_port = 3,
+			.worker = demux_worker
+		},
+		{
+			/* adapter 2 */
+			.ts_port = 0,
+			.worker = demux_worker
+		},
+		{
+			/* adapter 3 */
+			.ts_port = 1,
+			.worker = demux_worker
+		},
+	},
+};
+
+
+static struct pci_device_id saa716x_budget_pci_table[] = {
 	MAKE_ENTRY(TWINHAN_TECHNOLOGIES, TWINHAN_VP_1028, SAA7160, &saa716x_vp1028_config), /* VP-1028 */
 	MAKE_ENTRY(TWINHAN_TECHNOLOGIES, TWINHAN_VP_3071, SAA7160, &saa716x_vp3071_config), /* VP-3071 */
 	MAKE_ENTRY(TWINHAN_TECHNOLOGIES, TWINHAN_VP_6002, SAA7160, &saa716x_vp6002_config), /* VP-6002 */
@@ -916,6 +1087,7 @@ static struct pci_device_id saa716x_budget_pci_table[] = {
 	MAKE_ENTRY(TECHNISAT, SKYSTAR2_EXPRESS_HD, SAA7160, &skystar2_express_hd_config),
 	MAKE_ENTRY(TURBOSIGHT_TBS6982, TBS6982,   SAA7160, &saa716x_tbs6982_config),
 	MAKE_ENTRY(TURBOSIGHT_TBS6982, TBS6982SE, SAA7160, &saa716x_tbs6982se_config),
+	MAKE_ENTRY(TURBOSIGHT_TBS6984, TBS6984,   SAA7160, &saa716x_tbs6984_config),
 	{ }
 };
 MODULE_DEVICE_TABLE(pci, saa716x_budget_pci_table);
