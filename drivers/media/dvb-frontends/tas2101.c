@@ -508,6 +508,7 @@ EXPORT_SYMBOL_GPL(tas2101_attach);
 static int tas2101_initfe(struct dvb_frontend *fe)
 {
 	struct tas2101_priv *priv = fe->demodulator_priv;
+	u8 buf[7];
 	int ret;
 
 	dev_dbg(&priv->i2c->dev, "%s()\n", __func__);
@@ -517,26 +518,14 @@ static int tas2101_initfe(struct dvb_frontend *fe)
 	if (ret)
 		return ret;
 
-	switch (priv->cfg->id) {
-	case 0:
-		ret = tas2101_wrtable(priv, tas2101_initfe1a,
-			ARRAY_SIZE(tas2101_initfe1a));
-		break;
-	case 1:
-		ret = tas2101_wrtable(priv, tas2101_initfe1b,
-			ARRAY_SIZE(tas2101_initfe1b));
-		break;
-	default:
-		dev_warn(&priv->i2c->dev, "%s: no init for frontend id=%d\n",
-			__func__, priv->cfg->id);
-		ret = -EINVAL;
-		break;
-	}
+	buf[0] = 0xe6;
+	memcpy(&buf[1], priv->cfg->init, 6);
+	ret = tas2101_wrm(priv, buf, 7);
 	if (ret)
 		return ret;
 
-	ret = tas2101_wrtable(priv, tas2101_initfe2,
-		ARRAY_SIZE(tas2101_initfe2));
+	ret = tas2101_wrtable(priv, tas2101_initfe1,
+		ARRAY_SIZE(tas2101_initfe1));
 	if (ret)
 		return ret;
 
