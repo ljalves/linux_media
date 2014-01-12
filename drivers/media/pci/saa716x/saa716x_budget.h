@@ -25,4 +25,7 @@
 #define TURBOSIGHT_TBS6984	0x6984
 #define TBS6984 		0x0013
 
+#define TURBOSIGHT_TBS6985	0x6985
+#define TBS6985			0x0001
+
 #endif /* __SAA716x_BUDGET_H */
