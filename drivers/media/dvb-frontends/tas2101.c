@@ -188,13 +188,28 @@ static int tas2101_read_signal_strength(struct dvb_frontend *fe,
 	return 0;
 }
 
-/* unimplemented */
 static int tas2101_read_snr(struct dvb_frontend *fe, u16 *snr)
 {
 	struct tas2101_priv *priv = fe->demodulator_priv;
-	*snr = 0;
+	int ret, i;
+	u16 snr_raw;
+	u8 buf[2];
+
+	ret = tas2101_rdm(priv, SNR_0, buf, 2);
+	if (ret)
+		return ret;
+
+	snr_raw = (buf[1] & 0x0f) | buf[0];
+
+	for (i = 0; i < ARRAY_SIZE(tas2101_snrtable) - 1; i++)
+		if (tas2101_snrtable[i].raw < snr_raw)
+			break;
+
+	*snr = tas2101_snrtable[i].snr;
+
 	dev_dbg(&priv->i2c->dev, "%s() snr = 0x%04x\n",
 		__func__, *snr);
+
 	return 0;
 }
 
