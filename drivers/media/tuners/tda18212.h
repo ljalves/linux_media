@@ -35,6 +35,8 @@ struct tda18212_config {
 	u16 if_dvbt2_7;
 	u16 if_dvbt2_8;
 	u16 if_dvbc;
+	u8 loop_through:1;
+	u8 xtout:1;
 };
 
 #if IS_ENABLED(CONFIG_MEDIA_TUNER_TDA18212)
