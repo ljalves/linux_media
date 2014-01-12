@@ -40,6 +40,8 @@
 #include "av201x.h"
 #include "cx24117.h"
 #include "isl6422.h"
+#include "stb6100.h"
+#include "stb6100_cfg.h"
 
 unsigned int verbose;
 module_param(verbose, int, 0644);
@@ -638,8 +640,141 @@ static struct saa716x_config skystar2_express_hd_config = {
 };
 
 
-#define SAA716x_MODEL_TURBOSIGHT_TBS6982 "TurboSight TBS 6982"
-#define SAA716x_DEV_TURBOSIGHT_TBS6982   "DVB-S/S2"
+#define SAA716x_MODEL_TBS6925		"TurboSight TBS 6925"
+#define SAA716x_DEV_TBS6925		"DVB-S/S2"
+
+static struct stv090x_config tbs6925_stv090x_cfg = {
+	.device			= STV0900,
+	.demod_mode		= STV090x_SINGLE,
+	.clk_mode		= STV090x_CLK_EXT,
+
+	.xtal			= 27000000,
+	.address		= 0x68,
+
+	.ts1_mode		= STV090x_TSMODE_PARALLEL_PUNCTURED,
+	.ts2_mode		= STV090x_TSMODE_PARALLEL_PUNCTURED,
+
+	.repeater_level		= STV090x_RPTLEVEL_16,
+	.adc1_range		= STV090x_ADC_1Vpp,
+	.tuner_bbgain		= 6,
+
+	.tuner_get_frequency	= stb6100_get_frequency,
+	.tuner_set_frequency	= stb6100_set_frequency,
+	.tuner_set_bandwidth	= stb6100_set_bandwidth,
+	.tuner_get_bandwidth	= stb6100_get_bandwidth,
+};
+
+static struct stb6100_config tbs6925_stb6100_cfg = {
+	.tuner_address	= 0x60,
+	.refclock	= 27000000
+};
+
+static int tbs6925_set_voltage(struct dvb_frontend *fe, enum fe_sec_voltage voltage)
+{
+	struct saa716x_adapter *adapter = fe->dvb->priv;
+	struct saa716x_dev *saa716x = adapter->saa716x;
+
+	saa716x_gpio_set_output(saa716x, 16);
+	msleep(1);
+	switch (voltage) {
+	case SEC_VOLTAGE_13:
+			dprintk(SAA716x_ERROR, 1, "Polarization=[13V]");
+			saa716x_gpio_write(saa716x, 16, 0);
+			break;
+	case SEC_VOLTAGE_18:
+			dprintk(SAA716x_ERROR, 1, "Polarization=[18V]");
+			saa716x_gpio_write(saa716x, 16, 1);
+			break;
+	case SEC_VOLTAGE_OFF:
+			dprintk(SAA716x_ERROR, 1, "Frontend (dummy) POWERDOWN");
+			break;
+	default:
+			dprintk(SAA716x_ERROR, 1, "Invalid = (%d)", (u32 ) voltage);
+			return -EINVAL;
+	}
+	msleep(100);
+
+	return 0;
+}
+
+static int tbs6925_frontend_attach(struct saa716x_adapter *adapter,
+					       int count)
+{
+	struct saa716x_dev *saa716x = adapter->saa716x;
+	struct saa716x_i2c *i2c = &saa716x->i2c[SAA716x_I2C_BUS_A];
+	struct stv6110x_devctl *ctl;
+
+	if (count > 0)
+		goto exit;
+
+	dprintk(SAA716x_DEBUG, 1,
+		"Adapter (%d) SAA716x frontend init Device ID=%02x",
+		count, saa716x->pdev->subsystem_device);
+
+	/* Reset the demodulator */
+	saa716x_gpio_set_output(saa716x, 2);
+	msleep(1);
+	saa716x_gpio_write(saa716x, 2, 0);
+	msleep(50);
+	saa716x_gpio_write(saa716x, 2, 1);
+	msleep(100);
+
+	adapter->fe = dvb_attach(stv090x_attach, &tbs6925_stv090x_cfg,
+				&i2c->i2c_adapter, STV090x_DEMODULATOR_0);
+	if (adapter->fe)
+		dprintk(SAA716x_NOTICE, 1, "found STV0900 @0x%02x",
+			tbs6925_stv090x_cfg.address);
+	else
+		goto exit;
+
+	adapter->fe->ops.set_voltage   = tbs6925_set_voltage;
+
+	ctl = dvb_attach(stb6100_attach, adapter->fe,
+			&tbs6925_stb6100_cfg, &i2c->i2c_adapter);
+	if (ctl) {
+		dprintk(SAA716x_NOTICE, 1, "found STB6100");
+		/* call the init function once to initialize
+		   tuner's clock output divider and demod's
+		   master clock */
+		if (adapter->fe->ops.init)
+			adapter->fe->ops.init(adapter->fe);
+	} else {
+		if (adapter->fe->ops.release)
+			adapter->fe->ops.release(adapter->fe);
+		adapter->fe = NULL;
+		goto exit;
+	}
+
+	dprintk(SAA716x_ERROR, 1, "Done!");
+	return 0;
+
+exit:
+	dprintk(SAA716x_ERROR, 1, "Frontend attach failed");
+	return -ENODEV;
+}
+
+static struct saa716x_config saa716x_tbs6925_config = {
+	.model_name		= SAA716x_MODEL_TBS6925,
+	.dev_type		= SAA716x_DEV_TBS6925,
+	.boot_mode		= SAA716x_EXT_BOOT,
+	.adapters		= 1,
+	.frontend_attach	= tbs6925_frontend_attach,
+	.irq_handler		= saa716x_budget_pci_irq,
+	.i2c_rate		= SAA716x_I2C_RATE_100,
+	.i2c_mode		= SAA716x_I2C_MODE_POLLING,
+	.adap_config		= {
+		{
+			/* Adapter 0 */
+			.ts_port = 3, /* using FGPI 1 */
+			.worker = demux_worker
+		}
+	}
+};
+
+
+
+#define SAA716x_MODEL_TBS6982		"TurboSight TBS 6982"
+#define SAA716x_DEV_TBS6982		"DVB-S/S2"
 
 static void tbs6982_reset_fe(struct dvb_frontend *fe, int reset_pin)
 {
@@ -753,8 +888,8 @@ err:
 }
 
 static struct saa716x_config saa716x_tbs6982_config = {
-	.model_name		= SAA716x_MODEL_TURBOSIGHT_TBS6982,
-	.dev_type		= SAA716x_DEV_TURBOSIGHT_TBS6982,
+	.model_name		= SAA716x_MODEL_TBS6982,
+	.dev_type		= SAA716x_DEV_TBS6982,
 	.boot_mode		= SAA716x_EXT_BOOT,
 	.adapters		= 2,
 	.frontend_attach	= saa716x_tbs6982_frontend_attach,
@@ -776,8 +911,8 @@ static struct saa716x_config saa716x_tbs6982_config = {
 };
 
 
-#define SAA716x_MODEL_TURBOSIGHT_TBS6982SE "TurboSight TBS 6982SE"
-#define SAA716x_DEV_TURBOSIGHT_TBS6982SE   "DVB-S/S2"
+#define SAA716x_MODEL_TBS6982SE		"TurboSight TBS 6982SE"
+#define SAA716x_DEV_TBS6982SE		"DVB-S/S2"
 
 static void tbs6982se_reset_fe(struct dvb_frontend *fe, int reset_pin)
 {
@@ -886,8 +1021,8 @@ err:
 }
 
 static struct saa716x_config saa716x_tbs6982se_config = {
-	.model_name		= SAA716x_MODEL_TURBOSIGHT_TBS6982SE,
-	.dev_type		= SAA716x_DEV_TURBOSIGHT_TBS6982SE,
+	.model_name		= SAA716x_MODEL_TBS6982SE,
+	.dev_type		= SAA716x_DEV_TBS6982SE,
 	.boot_mode		= SAA716x_EXT_BOOT,
 	.adapters		= 2,
 	.frontend_attach	= saa716x_tbs6982se_frontend_attach,
@@ -909,8 +1044,8 @@ static struct saa716x_config saa716x_tbs6982se_config = {
 };
 
 
-#define SAA716x_MODEL_TURBOSIGHT_TBS6984 "TurboSight TBS 6984"
-#define SAA716x_DEV_TURBOSIGHT_TBS6984   "DVB-S2"
+#define SAA716x_MODEL_TBS6984		"TurboSight TBS 6984"
+#define SAA716x_DEV_TBS6984		"DVB-S/S2"
 
 static int saa716x_tbs6984_init(struct saa716x_dev *saa716x)
 {
@@ -1046,8 +1181,8 @@ err:
 }
 
 static struct saa716x_config saa716x_tbs6984_config = {
-	.model_name		= SAA716x_MODEL_TURBOSIGHT_TBS6984,
-	.dev_type		= SAA716x_DEV_TURBOSIGHT_TBS6984,
+	.model_name		= SAA716x_MODEL_TBS6984,
+	.dev_type		= SAA716x_DEV_TBS6984,
 	.boot_mode		= SAA716x_EXT_BOOT,
 	.adapters		= 4,
 	.frontend_attach	= saa716x_tbs6984_frontend_attach,
@@ -1085,6 +1220,7 @@ static struct pci_device_id saa716x_budget_pci_table[] = {
 	MAKE_ENTRY(TWINHAN_TECHNOLOGIES, TWINHAN_VP_6002, SAA7160, &saa716x_vp6002_config), /* VP-6002 */
 	MAKE_ENTRY(KNC_One, KNC_Dual_S2, SAA7160, &saa716x_knc1_duals2_config),
 	MAKE_ENTRY(TECHNISAT, SKYSTAR2_EXPRESS_HD, SAA7160, &skystar2_express_hd_config),
+	MAKE_ENTRY(TURBOSIGHT_TBS6925, TBS6925,   SAA7160, &saa716x_tbs6925_config),
 	MAKE_ENTRY(TURBOSIGHT_TBS6982, TBS6982,   SAA7160, &saa716x_tbs6982_config),
 	MAKE_ENTRY(TURBOSIGHT_TBS6982, TBS6982SE, SAA7160, &saa716x_tbs6982se_config),
 	MAKE_ENTRY(TURBOSIGHT_TBS6984, TBS6984,   SAA7160, &saa716x_tbs6984_config),
