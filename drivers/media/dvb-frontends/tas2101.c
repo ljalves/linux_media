@@ -645,7 +645,43 @@ static int tas2101_set_frontend(struct dvb_frontend *fe)
 static int tas2101_get_frontend(struct dvb_frontend *fe)
 {
 	struct tas2101_priv *priv = fe->demodulator_priv;
+	struct dtv_frontend_properties *c = &fe->dtv_property_cache;
+	int ret;
+	u8 reg, buf[2];
+
 	dev_dbg(&priv->i2c->dev, "%s()\n", __func__);
+
+	ret = tas2101_rd(priv, MODFEC_0, &reg);
+	if (ret)
+		return ret;
+
+	if ((reg >> 6) == 0) {
+		/* DVB-S */
+		reg &= 0x07;
+	} else {
+		/* DVB-S2 */
+		ret = tas2101_rd(priv, MODFEC_1, &reg);
+		if (ret)
+			return ret;
+		reg += 5;
+	}
+
+	if (reg > 22) {
+		dev_dbg(&priv->i2c->dev, "%s() Unable to get current delivery"
+			" system and mode.\n", __func__);
+		reg = 0;
+	}
+
+	c->fec_inner = tas2101_modfec_modes[reg].fec;
+	c->modulation = tas2101_modfec_modes[reg].modulation;
+	c->delivery_system = tas2101_modfec_modes[reg].delivery_system;
+	c->inversion = INVERSION_AUTO;
+
+	/* symbol rate */
+	ret = tas2101_rdm(priv, GET_SRATE0, buf, 2);
+	if (ret)
+		return ret;
+	c->symbol_rate = ((buf[1] << 8) | buf[0]) * 1000;
 
 	return 0;
 }
