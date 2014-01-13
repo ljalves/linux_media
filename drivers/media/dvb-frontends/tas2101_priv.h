@@ -49,12 +49,16 @@ enum tas2101_reg_addr {
 	REG_34		= 0x34,
 	SIGSTR_0	= 0x42,
 	SIGSTR_1	= 0x43,
+	GET_SRATE0	= 0x5c,
+	GET_SRATE1	= 0x5d,
 	SET_SRATE0	= 0x73,
 	SET_SRATE1	= 0x74,
 	FREQ_OS0	= 0x75,
 	FREQ_OS1	= 0x76,
 	SNR_0		= 0x92,
 	SNR_1		= 0x93,
+	MODFEC_0	= 0xee,
+	MODFEC_1	= 0xef,
 };
 
 #define I2C_GATE		0x80
@@ -192,6 +196,42 @@ static struct tas2101_snrtable_pair tas2101_snrtable[] =  {
         {300, 0x2},
         {330, 0x1},
 	{0, 0}
+};
+
+/* modfec (modulation and FEC) lookup table */
+/* Check cx24116.c for a detailed description of each field */
+struct tas2101_modfec {
+	fe_delivery_system_t delivery_system;
+	fe_modulation_t modulation;
+	fe_code_rate_t fec;
+};
+
+static struct tas2101_modfec tas2101_modfec_modes[] = {
+	{ SYS_DVBS, QPSK, FEC_AUTO },
+	{ SYS_DVBS, QPSK, FEC_1_2 },
+	{ SYS_DVBS, QPSK, FEC_2_3 },
+	{ SYS_DVBS, QPSK, FEC_3_4 },
+	{ SYS_DVBS, QPSK, FEC_4_5 },
+	{ SYS_DVBS, QPSK, FEC_5_6 },
+	{ SYS_DVBS, QPSK, FEC_6_7 },
+	{ SYS_DVBS, QPSK, FEC_7_8 },
+	{ SYS_DVBS, QPSK, FEC_8_9 },
+
+	{ SYS_DVBS2, QPSK, FEC_1_2 },
+	{ SYS_DVBS2, QPSK, FEC_3_5 },
+	{ SYS_DVBS2, QPSK, FEC_2_3 },
+	{ SYS_DVBS2, QPSK, FEC_3_4 },
+	{ SYS_DVBS2, QPSK, FEC_4_5 },
+	{ SYS_DVBS2, QPSK, FEC_5_6 },
+	{ SYS_DVBS2, QPSK, FEC_8_9 },
+	{ SYS_DVBS2, QPSK, FEC_9_10 },
+
+	{ SYS_DVBS2, PSK_8, FEC_3_5 },
+	{ SYS_DVBS2, PSK_8, FEC_2_3 },
+	{ SYS_DVBS2, PSK_8, FEC_3_4 },
+	{ SYS_DVBS2, PSK_8, FEC_5_6 },
+	{ SYS_DVBS2, PSK_8, FEC_8_9 },
+	{ SYS_DVBS2, PSK_8, FEC_9_10 },
 };
 
 #endif /* TAS2101_PRIV_H */
