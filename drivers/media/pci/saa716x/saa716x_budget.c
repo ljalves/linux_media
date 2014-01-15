@@ -1221,7 +1221,19 @@ static int saa716x_tbs6984_init(struct saa716x_dev *saa716x)
 	saa716x_gpio_write(saa716x, TBS_CS, 1);
 	saa716x_gpio_write(saa716x, TBS_CK, 1);
 	saa716x_gpio_write(saa716x, TBS_DT, 1);
-	
+
+	/* power up LNB supply and control chips */
+	saa716x_gpio_set_output(saa716x, 19);	/* a0 */
+	saa716x_gpio_set_output(saa716x, 2);	/* a1 */
+	saa716x_gpio_set_output(saa716x, 5);	/* a2 */
+	saa716x_gpio_set_output(saa716x, 3);	/* a3 */
+
+	/* power on */
+	saa716x_gpio_write(saa716x, 19, 0); /* a0 */
+	saa716x_gpio_write(saa716x, 2, 0); /* a1 */
+	saa716x_gpio_write(saa716x, 5, 0); /* a2 */
+	saa716x_gpio_write(saa716x, 3, 0); /* a3 */
+
 	/* done */
 	return 0;
 }
