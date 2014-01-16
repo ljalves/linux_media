@@ -1273,10 +1273,9 @@ static int saa716x_tbs6984_frontend_attach(
 	dev_dbg(&dev->pdev->dev, "%s frontend %d attaching\n",
 		dev->config->model_name, count);
 
-	saa716x_tbs6984_init(dev);
-
 	switch (count) {
 	case 0:
+		saa716x_tbs6984_init(dev);
 	case 1:
 		/* first and second FE attaching */
 		adapter->fe = dvb_attach(cx24117_attach, &tbs6984_cx24117_cfg[0],
@@ -1331,7 +1330,7 @@ static struct saa716x_config saa716x_tbs6984_config = {
 	.adapters		= 4,
 	.frontend_attach	= saa716x_tbs6984_frontend_attach,
 	.irq_handler		= saa716x_budget_pci_irq,
-	.i2c_rate		= SAA716x_I2C_RATE_400,
+	.i2c_rate		= SAA716x_I2C_RATE_100,
 	.i2c_mode		= SAA716x_I2C_MODE_POLLING,
 	.adap_config		= {
 		{
