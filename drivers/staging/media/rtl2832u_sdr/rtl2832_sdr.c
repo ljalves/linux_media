@@ -881,6 +881,10 @@ static int rtl2832_sdr_set_tuner(struct rtl2832_sdr_state *s)
 	if (fe->ops.tuner_ops.init)
 		fe->ops.tuner_ops.init(fe);
 
+	/* user has not requested bandwidth so calculate automatically */
+	if (bandwidth == 0)
+		bandwidth = s->f_adc;
+
 	c->bandwidth_hz = bandwidth;
 	c->frequency = f_rf;
 
@@ -1254,9 +1258,9 @@ struct dvb_frontend *rtl2832_sdr_attach(struct dvb_frontend *fe,
 		.id     = RTL2832_SDR_CID_TUNER_BW,
 		.type   = V4L2_CTRL_TYPE_INTEGER,
 		.name   = "Tuner BW",
-		.min    =  200000,
-		.max    = 8000000,
-		.def    =  600000,
+		.min    = 0,
+		.max    = INT_MAX,
+		.def    = 0,
 		.step   = 1,
 	};
 	static const struct v4l2_ctrl_config ctrl_tuner_gain = {
