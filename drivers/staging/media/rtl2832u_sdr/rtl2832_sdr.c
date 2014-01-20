@@ -666,7 +666,7 @@ static int rtl2832_sdr_set_adc(struct rtl2832_sdr_state *s)
 	u64 u64tmp;
 	u32 u32tmp;
 
-	dev_dbg(&s->udev->dev, "%s:\n", __func__);
+	dev_dbg(&s->udev->dev, "%s: f_adc=%u\n", __func__, s->f_adc);
 
 	if (!test_bit(POWER_ON, &s->flags))
 		return 0;
@@ -1064,12 +1064,26 @@ static int rtl2832_sdr_s_frequency(struct file *file, void *priv,
 		const struct v4l2_frequency *f)
 {
 	struct rtl2832_sdr_state *s = video_drvdata(file);
-	int ret;
+	int ret, band;
 	dev_dbg(&s->udev->dev, "%s: tuner=%d type=%d frequency=%u\n",
 			__func__, f->tuner, f->type, f->frequency);
 
-	if (f->tuner == 0) {
-		s->f_adc = f->frequency;
+	/* ADC band midpoints */
+	#define BAND_ADC_0 ((bands_adc[0].rangehigh + bands_adc[1].rangelow) / 2)
+	#define BAND_ADC_1 ((bands_adc[1].rangehigh + bands_adc[2].rangelow) / 2)
+
+	if (f->tuner == 0 && f->type == V4L2_TUNER_ADC) {
+		if (f->frequency < BAND_ADC_0)
+			band = 0;
+		else if (f->frequency < BAND_ADC_1)
+			band = 1;
+		else
+			band = 2;
+
+		s->f_adc = clamp_t(unsigned int, f->frequency,
+				bands_adc[band].rangelow,
+				bands_adc[band].rangehigh);
+
 		dev_dbg(&s->udev->dev, "%s: ADC frequency=%u Hz\n",
 				__func__, s->f_adc);
 		ret = rtl2832_sdr_set_adc(s);
@@ -1287,6 +1301,8 @@ struct dvb_frontend *rtl2832_sdr_attach(struct dvb_frontend *fe,
 	s->udev = d->udev;
 	s->i2c = i2c;
 	s->cfg = cfg;
+	s->f_adc = bands_adc[0].rangelow;
+	s->pixelformat = V4L2_PIX_FMT_SDR_U8;
 
 	mutex_init(&s->v4l2_lock);
 	mutex_init(&s->vb_queue_lock);
