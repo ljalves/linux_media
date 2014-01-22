@@ -748,12 +748,12 @@ static int rtl2832_sdr_set_adc(struct rtl2832_sdr_state *s)
 	if (ret)
 		goto err;
 
-	/* mode */
 	ret = rtl2832_sdr_wr_regs(s, 0x017, "\x11\x10", 2);
 	if (ret)
 		goto err;
 
-	ret = rtl2832_sdr_wr_regs(s, 0x019, "\x21", 1);
+	/* mode */
+	ret = rtl2832_sdr_wr_regs(s, 0x019, "\x05", 1);
 	if (ret)
 		goto err;
 
