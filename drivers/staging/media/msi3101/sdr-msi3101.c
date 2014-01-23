@@ -1679,9 +1679,6 @@ static int msi3101_g_fmt_sdr_cap(struct file *file, void *priv,
 	struct msi3101_state *s = video_drvdata(file);
 	dev_dbg(&s->udev->dev, "%s:\n", __func__);
 
-	if (f->type != V4L2_BUF_TYPE_SDR_CAPTURE)
-		return -EINVAL;
-
 	f->fmt.sdr.pixelformat = s->pixelformat;
 
 	return 0;
@@ -1695,9 +1692,6 @@ static int msi3101_s_fmt_sdr_cap(struct file *file, void *priv,
 	int i;
 	dev_dbg(&s->udev->dev, "%s: pixelformat fourcc %4.4s\n", __func__,
 			(char *)&f->fmt.sdr.pixelformat);
-
-	if (f->type != V4L2_BUF_TYPE_SDR_CAPTURE)
-		return -EINVAL;
 
 	if (vb2_is_busy(q))
 		return -EBUSY;
@@ -1722,9 +1716,6 @@ static int msi3101_try_fmt_sdr_cap(struct file *file, void *priv,
 	int i;
 	dev_dbg(&s->udev->dev, "%s: pixelformat fourcc %4.4s\n", __func__,
 			(char *)&f->fmt.sdr.pixelformat);
-
-	if (f->type != V4L2_BUF_TYPE_SDR_CAPTURE)
-		return -EINVAL;
 
 	for (i = 0; i < NUM_FORMATS; i++) {
 		if (formats[i].pixelformat == f->fmt.sdr.pixelformat)
