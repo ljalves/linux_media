@@ -1247,38 +1247,35 @@ static int msi3101_set_usb_adc(struct msi3101_state *s)
 	f_sr = s->f_adc;
 
 	/* select stream format */
-	if (f_sr < 6000000) {
-		s->convert_stream = msi3101_convert_stream_252;
-		reg7 = 0x00009407;
-	} else if (f_sr < 8000000) {
-		s->convert_stream = msi3101_convert_stream_336;
-		reg7 = 0x00008507;
-	} else if (f_sr < 9000000) {
-		s->convert_stream = msi3101_convert_stream_384;
-		reg7 = 0x0000a507;
-	} else {
-		s->convert_stream = msi3101_convert_stream_504;
-		reg7 = 0x000c9407;
-	}
-
-	if (s->pixelformat == V4L2_PIX_FMT_SDR_U8) {
+	switch (s->pixelformat) {
+	case V4L2_PIX_FMT_SDR_U8:
 		s->convert_stream = msi3101_convert_stream_504_u8;
 		reg7 = 0x000c9407;
-	} else if (s->pixelformat == V4L2_PIX_FMT_SDR_U16LE) {
+		break;
+	case V4L2_PIX_FMT_SDR_U16LE:
 		s->convert_stream = msi3101_convert_stream_252_u16;
 		reg7 = 0x00009407;
-	} else if (s->pixelformat == V4L2_PIX_FMT_SDR_S8) {
+		break;
+	case V4L2_PIX_FMT_SDR_S8:
 		s->convert_stream = msi3101_convert_stream_504;
 		reg7 = 0x000c9407;
-	} else if (s->pixelformat == V4L2_PIX_FMT_SDR_MSI2500_384) {
+		break;
+	case V4L2_PIX_FMT_SDR_MSI2500_384:
 		s->convert_stream = msi3101_convert_stream_384;
 		reg7 = 0x0000a507;
-	} else if (s->pixelformat == V4L2_PIX_FMT_SDR_S12) {
+		break;
+	case V4L2_PIX_FMT_SDR_S12:
 		s->convert_stream = msi3101_convert_stream_336;
 		reg7 = 0x00008507;
-	} else if (s->pixelformat == V4L2_PIX_FMT_SDR_S14) {
+		break;
+	case V4L2_PIX_FMT_SDR_S14:
 		s->convert_stream = msi3101_convert_stream_252;
 		reg7 = 0x00009407;
+		break;
+	default:
+		s->convert_stream = msi3101_convert_stream_504_u8;
+		reg7 = 0x000c9407;
+		break;
 	}
 
 	/*
