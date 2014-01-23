@@ -1416,7 +1416,7 @@ static int msi3101_set_tuner(struct msi3101_state *s)
 		{5000000, 0x04}, /* 5 MHz */
 		{6000000, 0x05}, /* 6 MHz */
 		{7000000, 0x06}, /* 7 MHz */
-		{8000000, 0x07}, /* 8 MHz */
+		{    ~0U, 0x07}, /* 8 MHz */
 	};
 
 	unsigned int f_rf = s->f_tuner;
@@ -1473,8 +1473,12 @@ static int msi3101_set_tuner(struct msi3101_state *s)
 	if (i == ARRAY_SIZE(if_freq_lut))
 		goto err;
 
+	/* user has not requested bandwidth, set some reasonable */
+	if (bandwidth == 0)
+		bandwidth = s->f_adc;
+
 	for (i = 0; i < ARRAY_SIZE(bandwidth_lut); i++) {
-		if (bandwidth == bandwidth_lut[i].freq) {
+		if (bandwidth <= bandwidth_lut[i].freq) {
 			bandwidth = bandwidth_lut[i].val;
 			break;
 		}
@@ -1482,6 +1486,9 @@ static int msi3101_set_tuner(struct msi3101_state *s)
 
 	if (i == ARRAY_SIZE(bandwidth_lut))
 		goto err;
+
+	dev_dbg(&s->udev->dev, "%s: bandwidth selected=%d\n",
+			__func__, bandwidth_lut[i].freq);
 
 #define F_OUT_STEP 1
 #define R_REF 4
@@ -1925,9 +1932,9 @@ static int msi3101_probe(struct usb_interface *intf,
 		.id	= MSI3101_CID_TUNER_BW,
 		.type	= V4L2_CTRL_TYPE_INTEGER,
 		.name	= "Tuner Bandwidth",
-		.min	= 200000,
+		.min	= 0,
 		.max	= 8000000,
-		.def    = 600000,
+		.def    = 0,
 		.step	= 1,
 	};
 	static const struct v4l2_ctrl_config ctrl_tuner_gain = {
