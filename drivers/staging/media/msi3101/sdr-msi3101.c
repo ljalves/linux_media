@@ -1779,17 +1779,26 @@ static int msi3101_s_frequency(struct file *file, void *priv,
 		const struct v4l2_frequency *f)
 {
 	struct msi3101_state *s = video_drvdata(file);
-	int ret;
+	int ret, band;
 	dev_dbg(&s->udev->dev, "%s: tuner=%d type=%d frequency=%u\n",
 			__func__, f->tuner, f->type, f->frequency);
 
 	if (f->tuner == 0) {
-		s->f_adc = f->frequency;
+		s->f_adc = clamp_t(unsigned int, f->frequency,
+				bands_adc[0].rangelow,
+				bands_adc[0].rangehigh);
 		dev_dbg(&s->udev->dev, "%s: ADC frequency=%u Hz\n",
 				__func__, s->f_adc);
 		ret = msi3101_set_usb_adc(s);
 	} else if (f->tuner == 1) {
-		s->f_tuner = f->frequency;
+		#define BAND_RF_0 ((bands_rf[0].rangehigh + bands_rf[1].rangelow) / 2)
+		if (f->frequency < BAND_RF_0)
+			band = 0;
+		else
+			band = 1;
+		s->f_tuner = clamp_t(unsigned int, f->frequency,
+				bands_rf[band].rangelow,
+				bands_rf[band].rangehigh);
 		dev_dbg(&s->udev->dev, "%s: RF frequency=%u Hz\n",
 				__func__, f->frequency);
 		ret = msi3101_set_tuner(s);
