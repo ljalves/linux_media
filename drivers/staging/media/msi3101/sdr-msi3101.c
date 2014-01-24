@@ -416,6 +416,7 @@ static struct msi3101_format formats[] = {
 	}, {
 		.name		= "16-bit unsigned little endian",
 		.pixelformat	= V4L2_PIX_FMT_SDR_U16LE,
+#if 0
 	}, {
 		.name		= "8-bit signed",
 		.pixelformat	= V4L2_PIX_FMT_SDR_S8,
@@ -428,6 +429,7 @@ static struct msi3101_format formats[] = {
 	}, {
 		.name		= "14-bit signed",
 		.pixelformat	= V4L2_PIX_FMT_SDR_S14,
+#endif
 	},
 };
 
