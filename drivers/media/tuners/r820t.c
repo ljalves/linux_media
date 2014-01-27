@@ -1251,6 +1251,43 @@ static int r820t_set_gain_mode(struct r820t_priv *priv,
 }
 #endif
 
+static int r820t_set_config(struct dvb_frontend *fe, void *priv_cfg)
+{
+	struct r820t_priv *priv = fe->tuner_priv;
+	struct r820t_ctrl *ctrl = priv_cfg;
+	int rc;
+
+	if (fe->ops.i2c_gate_ctrl)
+		fe->ops.i2c_gate_ctrl(fe, 1);
+
+	if (ctrl->lna_gain == INT_MIN)
+		rc = r820t_write_reg_mask(priv, 0x05, 0x00, 0x10);
+	else
+		rc = r820t_write_reg_mask(priv, 0x05,
+				0x10 | ctrl->lna_gain, 0x1f);
+	if (rc < 0)
+		goto err;
+
+	if (ctrl->mixer_gain == INT_MIN)
+		rc = r820t_write_reg_mask(priv, 0x07, 0x10, 0x10);
+	else
+		rc = r820t_write_reg_mask(priv, 0x07,
+				0x00 | ctrl->mixer_gain, 0x1f);
+	if (rc < 0)
+		goto err;
+
+	if (ctrl->if_gain == INT_MIN)
+		rc = r820t_write_reg_mask(priv, 0x0c, 0x10, 0x10);
+	else
+		rc = r820t_write_reg_mask(priv, 0x0c,
+				0x00 | ctrl->if_gain, 0x1f);
+err:
+	if (fe->ops.i2c_gate_ctrl)
+		fe->ops.i2c_gate_ctrl(fe, 0);
+
+	return rc;
+}
+
 static int generic_set_freq(struct dvb_frontend *fe,
 			    u32 freq /* in HZ */,
 			    unsigned bw,
@@ -2275,6 +2312,7 @@ static const struct dvb_tuner_ops r820t_tuner_ops = {
 	.release = r820t_release,
 	.sleep = r820t_sleep,
 	.set_params = r820t_set_params,
+	.set_config = r820t_set_config,
 	.set_analog_params = r820t_set_analog_freq,
 	.get_if_frequency = r820t_get_if_frequency,
 	.get_rf_strength = r820t_signal,

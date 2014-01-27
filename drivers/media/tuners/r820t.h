@@ -42,6 +42,13 @@ struct r820t_config {
 	bool use_predetect;
 };
 
+/* set INT_MIN for automode */
+struct r820t_ctrl {
+	int lna_gain;
+	int mixer_gain;
+	int if_gain;
+};
+
 #if IS_ENABLED(CONFIG_MEDIA_TUNER_R820T)
 struct dvb_frontend *r820t_attach(struct dvb_frontend *fe,
 				  struct i2c_adapter *i2c,
