@@ -26,6 +26,7 @@
 #include "rtl2832_sdr.h"
 #include "dvb_usb.h"
 #include "e4000.h"
+#include "r820t.h"
 
 #include <media/v4l2-device.h>
 #include <media/v4l2-ioctl.h>
@@ -947,6 +948,30 @@ err:
 	return ret;
 };
 
+static int rtl2832_sdr_set_gain_r820t(struct rtl2832_sdr_state *s)
+{
+	int ret;
+	struct dvb_frontend *fe = s->fe;
+	struct r820t_ctrl ctrl;
+	dev_dbg(&s->udev->dev, "%s: lna=%d mixer=%d if=%d\n", __func__,
+			s->lna_gain->val, s->mixer_gain->val, s->if_gain->val);
+
+	ctrl.lna_gain = s->lna_gain_auto->val ? INT_MIN : s->lna_gain->val;
+	ctrl.mixer_gain = s->mixer_gain_auto->val ? INT_MIN : s->mixer_gain->val;
+	ctrl.if_gain = s->if_gain_auto->val ? INT_MIN : s->if_gain->val;
+
+	if (fe->ops.tuner_ops.set_config) {
+		ret = fe->ops.tuner_ops.set_config(fe, &ctrl);
+		if (ret)
+			goto err;
+	}
+
+	return 0;
+err:
+	dev_dbg(&s->udev->dev, "%s: failed %d\n", __func__, ret);
+	return ret;
+};
+
 static int rtl2832_sdr_set_gain(struct rtl2832_sdr_state *s)
 {
 	int ret;
@@ -954,6 +979,9 @@ static int rtl2832_sdr_set_gain(struct rtl2832_sdr_state *s)
 	switch (s->cfg->tuner) {
 	case RTL2832_TUNER_E4000:
 		ret = rtl2832_sdr_set_gain_e4000(s);
+		break;
+	case RTL2832_TUNER_R820T:
+		ret = rtl2832_sdr_set_gain_r820t(s);
 		break;
 	default:
 		ret = 0;
@@ -1441,6 +1469,19 @@ struct dvb_frontend *rtl2832_sdr_attach(struct dvb_frontend *fe,
 		s->if_gain_auto = v4l2_ctrl_new_std(&s->hdl, ops, V4L2_CID_IF_GAIN_AUTO, 0, 1, 1, 1);
 		s->if_gain = v4l2_ctrl_new_std(&s->hdl, ops, V4L2_CID_IF_GAIN, 0, 54, 1, 0);
 		v4l2_ctrl_auto_cluster(2, &s->if_gain_auto, 0, false);
+		break;
+	case RTL2832_TUNER_R820T:
+		v4l2_ctrl_handler_init(&s->hdl, 7);
+		s->lna_gain_auto = v4l2_ctrl_new_std(&s->hdl, ops, V4L2_CID_LNA_GAIN_AUTO, 0, 1, 1, 1);
+		s->lna_gain = v4l2_ctrl_new_std(&s->hdl, ops, V4L2_CID_LNA_GAIN, 0, 15, 1, 6);
+		v4l2_ctrl_auto_cluster(2, &s->lna_gain_auto, 0, false);
+		s->mixer_gain_auto = v4l2_ctrl_new_std(&s->hdl, ops, V4L2_CID_MIXER_GAIN_AUTO, 0, 1, 1, 1);
+		s->mixer_gain = v4l2_ctrl_new_std(&s->hdl, ops, V4L2_CID_MIXER_GAIN, 0, 15, 1, 5);
+		v4l2_ctrl_auto_cluster(2, &s->mixer_gain_auto, 0, false);
+		s->if_gain_auto = v4l2_ctrl_new_std(&s->hdl, ops, V4L2_CID_IF_GAIN_AUTO, 0, 1, 1, 1);
+		s->if_gain = v4l2_ctrl_new_std(&s->hdl, ops, V4L2_CID_IF_GAIN, 0, 15, 1, 4);
+		v4l2_ctrl_auto_cluster(2, &s->if_gain_auto, 0, false);
+		s->ctrl_tuner_bw = v4l2_ctrl_new_custom(&s->hdl, &ctrl_tuner_bw, NULL);
 		break;
 	default:
 		v4l2_ctrl_handler_init(&s->hdl, 1);
