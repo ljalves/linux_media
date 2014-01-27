@@ -40,4 +40,10 @@ struct e4000_config {
 	u32 clock;
 };
 
+struct e4000_ctrl {
+	int lna_gain;
+	int mixer_gain;
+	int if_gain;
+};
+
 #endif

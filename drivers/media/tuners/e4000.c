@@ -385,6 +385,73 @@ static int e4000_get_if_frequency(struct dvb_frontend *fe, u32 *frequency)
 	return 0;
 }
 
+static int e4000_set_config(struct dvb_frontend *fe, void *priv_cfg)
+{
+	struct e4000_priv *priv = fe->tuner_priv;
+	struct e4000_ctrl *ctrl = priv_cfg;
+	int ret;
+	u8 buf[2];
+	u8 u8tmp;
+	dev_dbg(&priv->client->dev, "%s: lna=%d mixer=%d if=%d\n", __func__,
+			ctrl->lna_gain, ctrl->mixer_gain, ctrl->if_gain);
+
+	if (fe->ops.i2c_gate_ctrl)
+		fe->ops.i2c_gate_ctrl(fe, 1);
+
+	if (ctrl->lna_gain == INT_MIN && ctrl->if_gain == INT_MIN)
+		u8tmp = 0x17;
+	else if (ctrl->lna_gain == INT_MIN)
+		u8tmp = 0x19;
+	else if (ctrl->if_gain == INT_MIN)
+		u8tmp = 0x16;
+	else
+		u8tmp = 0x10;
+
+	ret = e4000_wr_reg(priv, 0x1a, u8tmp);
+	if (ret)
+		goto err;
+
+	if (ctrl->mixer_gain == INT_MIN)
+		u8tmp = 0x15;
+	else
+		u8tmp = 0x14;
+
+	ret = e4000_wr_reg(priv, 0x20, u8tmp);
+	if (ret)
+		goto err;
+
+	if (ctrl->lna_gain != INT_MIN) {
+		ret = e4000_wr_reg(priv, 0x14, ctrl->lna_gain);
+		if (ret)
+			goto err;
+	}
+
+	if (ctrl->mixer_gain != INT_MIN) {
+		ret = e4000_wr_reg(priv, 0x15, ctrl->mixer_gain);
+		if (ret)
+			goto err;
+	}
+
+	if (ctrl->if_gain != INT_MIN) {
+		buf[0] = e4000_if_gain_lut[ctrl->if_gain].reg16_val;
+		buf[1] = e4000_if_gain_lut[ctrl->if_gain].reg17_val;
+		ret = e4000_wr_regs(priv, 0x16, buf, 2);
+		if (ret)
+			goto err;
+	}
+
+	if (fe->ops.i2c_gate_ctrl)
+		fe->ops.i2c_gate_ctrl(fe, 0);
+
+	return 0;
+err:
+	if (fe->ops.i2c_gate_ctrl)
+		fe->ops.i2c_gate_ctrl(fe, 0);
+
+	dev_dbg(&priv->client->dev, "%s: failed=%d\n", __func__, ret);
+	return ret;
+}
+
 static const struct dvb_tuner_ops e4000_tuner_ops = {
 	.info = {
 		.name           = "Elonics E4000",
@@ -395,6 +462,7 @@ static const struct dvb_tuner_ops e4000_tuner_ops = {
 	.init = e4000_init,
 	.sleep = e4000_sleep,
 	.set_params = e4000_set_params,
+	.set_config = e4000_set_config,
 
 	.get_if_frequency = e4000_get_if_frequency,
 };
