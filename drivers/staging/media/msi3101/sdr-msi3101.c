@@ -977,8 +977,8 @@ static int msi3101_set_usb_adc(struct msi3101_state *s)
 	 * Synthesizer config is just a educated guess...
 	 *
 	 * [7:0]   0x03, register address
-	 * [8]     1, always
-	 * [9]     ?
+	 * [8]     1, power control
+	 * [9]     ?, power control
 	 * [12:10] output divider
 	 * [13]    0 ?
 	 * [14]    0 ?
@@ -1320,6 +1320,12 @@ static int msi3101_stop_streaming(struct vb2_queue *vq)
 	/* according to tests, at least 700us delay is required  */
 	msleep(20);
 	msi3101_ctrl_msg(s, CMD_STOP_STREAMING, 0);
+
+	/* sleep USB IF / ADC */
+	msi3101_ctrl_msg(s, CMD_WREG, 0x01000003);
+
+	/* sleep tuner */
+	msi3101_tuner_write(s, 0x000000);
 
 	mutex_unlock(&s->v4l2_lock);
 
