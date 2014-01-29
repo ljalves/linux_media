@@ -1339,7 +1339,7 @@ static int msi3101_enum_fmt_sdr_cap(struct file *file, void *priv,
 		struct v4l2_fmtdesc *f)
 {
 	struct msi3101_state *s = video_drvdata(file);
-	dev_dbg(&s->udev->dev, "%s:\n", __func__);
+	dev_dbg(&s->udev->dev, "%s: index=%d\n", __func__, f->index);
 
 	if (f->index >= NUM_FORMATS)
 		return -EINVAL;
@@ -1354,7 +1354,8 @@ static int msi3101_g_fmt_sdr_cap(struct file *file, void *priv,
 		struct v4l2_format *f)
 {
 	struct msi3101_state *s = video_drvdata(file);
-	dev_dbg(&s->udev->dev, "%s:\n", __func__);
+	dev_dbg(&s->udev->dev, "%s: pixelformat fourcc %4.4s\n", __func__,
+			(char *)&s->pixelformat);
 
 	f->fmt.sdr.pixelformat = s->pixelformat;
 
@@ -1631,8 +1632,9 @@ static int msi3101_probe(struct usb_interface *intf,
 	mutex_init(&s->vb_queue_lock);
 	spin_lock_init(&s->queued_bufs_lock);
 	INIT_LIST_HEAD(&s->queued_bufs);
-
 	s->udev = udev;
+	s->f_adc = bands_adc[0].rangelow;
+	s->pixelformat = V4L2_PIX_FMT_SDR_U8;
 
 	/* Init videobuf2 queue structure */
 	s->vb_queue.type = V4L2_BUF_TYPE_SDR_CAPTURE;
