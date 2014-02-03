@@ -777,10 +777,6 @@ static int rtl2832u_frontend_attach(struct dvb_usb_adapter *adap)
 	/* set fe callback */
 	adap->fe[0]->callback = rtl2832u_frontend_callback;
 
-	/* attach SDR */
-	dvb_attach(rtl2832_sdr_attach, adap->fe[0], &d->i2c_adap,
-			rtl2832_config);
-
 	return 0;
 err:
 	dev_dbg(&d->udev->dev, "%s: failed=%d\n", __func__, ret);
@@ -906,6 +902,10 @@ static int rtl2832u_tuner_attach(struct dvb_usb_adapter *adap)
 		 * that to the tuner driver */
 		adap->fe[0]->ops.read_signal_strength =
 				adap->fe[0]->ops.tuner_ops.get_rf_strength;
+
+		/* attach SDR */
+		dvb_attach(rtl2832_sdr_attach, adap->fe[0], &d->i2c_adap,
+				&rtl28xxu_rtl2832_fc0012_config);
 		return 0;
 		break;
 	case TUNER_RTL2832_FC0013:
@@ -915,6 +915,10 @@ static int rtl2832u_tuner_attach(struct dvb_usb_adapter *adap)
 		/* fc0013 also supports signal strength reading */
 		adap->fe[0]->ops.read_signal_strength =
 				adap->fe[0]->ops.tuner_ops.get_rf_strength;
+
+		/* attach SDR */
+		dvb_attach(rtl2832_sdr_attach, adap->fe[0], &d->i2c_adap,
+				&rtl28xxu_rtl2832_fc0013_config);
 		return 0;
 	case TUNER_RTL2832_E4000: {
 			struct e4000_config e4000_config = {
@@ -928,6 +932,11 @@ static int rtl2832u_tuner_attach(struct dvb_usb_adapter *adap)
 
 			request_module("e4000");
 			priv->client = i2c_new_device(&d->i2c_adap, &info);
+
+			/* attach SDR */
+			dvb_attach(rtl2832_sdr_attach, adap->fe[0],
+					&d->i2c_adap,
+					&rtl28xxu_rtl2832_e4000_config);
 		}
 		break;
 	case TUNER_RTL2832_FC2580:
@@ -954,6 +963,10 @@ static int rtl2832u_tuner_attach(struct dvb_usb_adapter *adap)
 		/* Use tuner to get the signal strength */
 		adap->fe[0]->ops.read_signal_strength =
 				adap->fe[0]->ops.tuner_ops.get_rf_strength;
+
+		/* attach SDR */
+		dvb_attach(rtl2832_sdr_attach, adap->fe[0], &d->i2c_adap,
+				&rtl28xxu_rtl2832_r820t_config);
 		break;
 	case TUNER_RTL2832_R828D:
 		/* power off mn88472 demod on GPIO0 */
