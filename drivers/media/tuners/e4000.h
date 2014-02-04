@@ -40,12 +40,6 @@ struct e4000_config {
 	u32 clock;
 };
 
-struct e4000_ctrl {
-	int lna_gain;
-	int mixer_gain;
-	int if_gain;
-};
-
 #if IS_ENABLED(CONFIG_MEDIA_TUNER_E4000)
 extern struct v4l2_ctrl_handler *e4000_get_ctrl_handler(
 		struct dvb_frontend *fe
