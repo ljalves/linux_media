@@ -57,7 +57,7 @@
 #define V4L2_PIX_FMT_SDR_S14    v4l2_fourcc('D', 'S', '1', '4') /* signed 14-bit */
 #define V4L2_PIX_FMT_SDR_MSI2500_384 v4l2_fourcc('M', '3', '8', '4') /* Mirics MSi2500 format 384 */
 
-static const struct v4l2_frequency_band bands_adc[] = {
+static const struct v4l2_frequency_band bands[] = {
 	{
 		.tuner = 0,
 		.type = V4L2_TUNER_ADC,
@@ -65,24 +65,6 @@ static const struct v4l2_frequency_band bands_adc[] = {
 		.capability = V4L2_TUNER_CAP_1HZ | V4L2_TUNER_CAP_FREQ_BANDS,
 		.rangelow   =  1200000,
 		.rangehigh  = 15000000,
-	},
-};
-
-static const struct v4l2_frequency_band bands_rf[] = {
-	{
-		.tuner = 1,
-		.type = V4L2_TUNER_RF,
-		.index = 0,
-		.capability = V4L2_TUNER_CAP_1HZ | V4L2_TUNER_CAP_FREQ_BANDS,
-		.rangelow   =   49000000,
-		.rangehigh  =  263000000,
-	}, {
-		.tuner = 1,
-		.type = V4L2_TUNER_RF,
-		.index = 1,
-		.capability = V4L2_TUNER_CAP_1HZ | V4L2_TUNER_CAP_FREQ_BANDS,
-		.rangelow   =  390000000,
-		.rangehigh  =  960000000,
 	},
 };
 
@@ -1269,8 +1251,8 @@ static int msi3101_s_frequency(struct file *file, void *priv,
 
 	if (f->tuner == 0) {
 		s->f_adc = clamp_t(unsigned int, f->frequency,
-				bands_adc[0].rangelow,
-				bands_adc[0].rangehigh);
+				bands[0].rangelow,
+				bands[0].rangehigh);
 		dev_dbg(&s->udev->dev, "%s: ADC frequency=%u Hz\n",
 				__func__, s->f_adc);
 		ret = msi3101_set_usb_adc(s);
@@ -1287,25 +1269,25 @@ static int msi3101_enum_freq_bands(struct file *file, void *priv,
 		struct v4l2_frequency_band *band)
 {
 	struct msi3101_state *s = video_drvdata(file);
+	int ret;
 	dev_dbg(&s->udev->dev, "%s: tuner=%d type=%d index=%d\n",
 			__func__, band->tuner, band->type, band->index);
 
 	if (band->tuner == 0) {
-		if (band->index >= ARRAY_SIZE(bands_adc))
-			return -EINVAL;
-
-		*band = bands_adc[band->index];
+		if (band->index >= ARRAY_SIZE(bands)) {
+			ret = -EINVAL;
+		} else {
+			*band = bands[band->index];
+			ret = 0;
+		}
 	} else if (band->tuner == 1) {
-		/* TODO: add that to v4l2_subdev_tuner_ops */
-		if (band->index >= ARRAY_SIZE(bands_rf))
-			return -EINVAL;
-
-		*band = bands_rf[band->index];
+		ret = v4l2_subdev_call(s->v4l2_subdev, tuner,
+				enum_freq_bands, band);
 	} else {
-		return -EINVAL;
+		ret = -EINVAL;
 	}
 
-	return 0;
+	return ret;
 }
 
 static const struct v4l2_ioctl_ops msi3101_ioctl_ops = {
@@ -1414,7 +1396,7 @@ static int msi3101_probe(struct usb_interface *intf,
 	spin_lock_init(&s->queued_bufs_lock);
 	INIT_LIST_HEAD(&s->queued_bufs);
 	s->udev = udev;
-	s->f_adc = bands_adc[0].rangelow;
+	s->f_adc = bands[0].rangelow;
 	s->pixelformat = V4L2_SDR_FMT_CU8;
 
 	/* Init videobuf2 queue structure */
