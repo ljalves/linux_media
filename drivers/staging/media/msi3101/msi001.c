@@ -345,11 +345,29 @@ static int msi001_s_frequency(struct v4l2_subdev *sd,
 	return msi001_set_tuner(s);
 }
 
+static int msi001_enum_freq_bands(struct v4l2_subdev *sd,
+		struct v4l2_frequency_band *band)
+{
+	struct msi001 *s = sd_to_msi001(sd);
+	dev_dbg(&s->spi->dev, "%s: tuner=%d type=%d index=%d\n",
+			__func__, band->tuner, band->type, band->index);
+
+	if (band->index >= ARRAY_SIZE(bands))
+		return -EINVAL;
+
+	band->capability = bands[band->index].capability;
+	band->rangelow = bands[band->index].rangelow;
+	band->rangehigh = bands[band->index].rangehigh;
+
+	return 0;
+}
+
 static const struct v4l2_subdev_tuner_ops msi001_tuner_ops = {
 	.g_tuner                  = msi001_g_tuner,
 	.s_tuner                  = msi001_s_tuner,
 	.g_frequency              = msi001_g_frequency,
 	.s_frequency              = msi001_s_frequency,
+	.enum_freq_bands          = msi001_enum_freq_bands,
 };
 
 static const struct v4l2_subdev_ops msi001_ops = {
