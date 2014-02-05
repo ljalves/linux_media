@@ -52,8 +52,6 @@
 #define MAX_ISOC_ERRORS         20
 
 /* TODO: These should be moved to V4L2 API */
-#define V4L2_PIX_FMT_SDR_U8     v4l2_fourcc('D', 'U', '0', '8') /* unsigned 8-bit */
-#define V4L2_PIX_FMT_SDR_U16LE  v4l2_fourcc('D', 'U', '1', '6') /* unsigned 16-bit LE */
 #define V4L2_PIX_FMT_SDR_S8     v4l2_fourcc('D', 'S', '0', '8') /* signed 8-bit */
 #define V4L2_PIX_FMT_SDR_S12    v4l2_fourcc('D', 'S', '1', '2') /* signed 12-bit */
 #define V4L2_PIX_FMT_SDR_S14    v4l2_fourcc('D', 'S', '1', '4') /* signed 14-bit */
@@ -97,11 +95,11 @@ struct msi3101_format {
 /* format descriptions for capture and preview */
 static struct msi3101_format formats[] = {
 	{
-		.name		= "8-bit unsigned",
-		.pixelformat	= V4L2_PIX_FMT_SDR_U8,
+		.name		= "IQ U8",
+		.pixelformat	= V4L2_SDR_FMT_CU8,
 	}, {
-		.name		= "16-bit unsigned little endian",
-		.pixelformat	= V4L2_PIX_FMT_SDR_U16LE,
+		.name		= "IQ U16LE",
+		.pixelformat	=  V4L2_SDR_FMT_CU16LE,
 #if 0
 	}, {
 		.name		= "8-bit signed",
@@ -941,11 +939,11 @@ static int msi3101_set_usb_adc(struct msi3101_state *s)
 
 	/* select stream format */
 	switch (s->pixelformat) {
-	case V4L2_PIX_FMT_SDR_U8:
+	case V4L2_SDR_FMT_CU8:
 		s->convert_stream = msi3101_convert_stream_504_u8;
 		reg7 = 0x000c9407;
 		break;
-	case V4L2_PIX_FMT_SDR_U16LE:
+	case  V4L2_SDR_FMT_CU16LE:
 		s->convert_stream = msi3101_convert_stream_252_u16;
 		reg7 = 0x00009407;
 		break;
@@ -1417,7 +1415,7 @@ static int msi3101_probe(struct usb_interface *intf,
 	INIT_LIST_HEAD(&s->queued_bufs);
 	s->udev = udev;
 	s->f_adc = bands_adc[0].rangelow;
-	s->pixelformat = V4L2_PIX_FMT_SDR_U8;
+	s->pixelformat = V4L2_SDR_FMT_CU8;
 
 	/* Init videobuf2 queue structure */
 	s->vb_queue.type = V4L2_BUF_TYPE_SDR_CAPTURE;
