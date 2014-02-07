@@ -28,6 +28,7 @@ struct e4000_priv {
 	struct i2c_client *client;
 	u32 clock;
 	struct dvb_frontend *fe;
+	bool active;
 
 	/* Controls */
 	struct v4l2_ctrl_handler hdl;
@@ -39,6 +40,7 @@ struct e4000_priv {
 	struct v4l2_ctrl *mixer_gain;
 	struct v4l2_ctrl *if_gain_auto;
 	struct v4l2_ctrl *if_gain;
+	struct v4l2_ctrl *pll_lock;
 };
 
 struct e4000_pll {
