@@ -36,6 +36,7 @@
 #include <linux/mutex.h>
 #include <linux/slab.h>
 #include <linux/bitrev.h>
+#include <media/v4l2-ctrls.h>
 
 #include "tuner-i2c.h"
 #include "r820t.h"
@@ -80,6 +81,7 @@ struct r820t_sect_type {
 
 struct r820t_priv {
 	struct list_head		hybrid_tuner_instance_list;
+	struct dvb_frontend		*fe;
 	const struct r820t_config	*cfg;
 	struct tuner_i2c_props		i2c_props;
 	struct mutex			lock;
@@ -100,6 +102,15 @@ struct r820t_priv {
 	enum v4l2_tuner_type		type;
 	v4l2_std_id			std;
 	u32				bw;	/* in MHz */
+
+	/* Controls */
+	struct v4l2_ctrl_handler hdl;
+	struct v4l2_ctrl *lna_gain_auto;
+	struct v4l2_ctrl *lna_gain;
+	struct v4l2_ctrl *mixer_gain_auto;
+	struct v4l2_ctrl *mixer_gain;
+	struct v4l2_ctrl *if_gain_auto;
+	struct v4l2_ctrl *if_gain;
 };
 
 struct r820t_freq_range {
@@ -1251,43 +1262,6 @@ static int r820t_set_gain_mode(struct r820t_priv *priv,
 }
 #endif
 
-static int r820t_set_config(struct dvb_frontend *fe, void *priv_cfg)
-{
-	struct r820t_priv *priv = fe->tuner_priv;
-	struct r820t_ctrl *ctrl = priv_cfg;
-	int rc;
-
-	if (fe->ops.i2c_gate_ctrl)
-		fe->ops.i2c_gate_ctrl(fe, 1);
-
-	if (ctrl->lna_gain == INT_MIN)
-		rc = r820t_write_reg_mask(priv, 0x05, 0x00, 0x10);
-	else
-		rc = r820t_write_reg_mask(priv, 0x05,
-				0x10 | ctrl->lna_gain, 0x1f);
-	if (rc < 0)
-		goto err;
-
-	if (ctrl->mixer_gain == INT_MIN)
-		rc = r820t_write_reg_mask(priv, 0x07, 0x10, 0x10);
-	else
-		rc = r820t_write_reg_mask(priv, 0x07,
-				0x00 | ctrl->mixer_gain, 0x1f);
-	if (rc < 0)
-		goto err;
-
-	if (ctrl->if_gain == INT_MIN)
-		rc = r820t_write_reg_mask(priv, 0x0c, 0x10, 0x10);
-	else
-		rc = r820t_write_reg_mask(priv, 0x0c,
-				0x00 | ctrl->if_gain, 0x1f);
-err:
-	if (fe->ops.i2c_gate_ctrl)
-		fe->ops.i2c_gate_ctrl(fe, 0);
-
-	return rc;
-}
-
 static int generic_set_freq(struct dvb_frontend *fe,
 			    u32 freq /* in HZ */,
 			    unsigned bw,
@@ -2292,8 +2266,10 @@ static int r820t_release(struct dvb_frontend *fe)
 
 	mutex_lock(&r820t_list_mutex);
 
-	if (priv)
+	if (priv) {
+		v4l2_ctrl_handler_free(&priv->hdl);
 		hybrid_tuner_release_state(priv);
+	}
 
 	mutex_unlock(&r820t_list_mutex);
 
@@ -2301,6 +2277,96 @@ static int r820t_release(struct dvb_frontend *fe)
 
 	return 0;
 }
+
+static int r820t_set_lna_gain(struct r820t_priv *priv)
+{
+	struct dvb_frontend *fe = priv->fe;
+	int rc;
+
+	if (fe->ops.i2c_gate_ctrl)
+		fe->ops.i2c_gate_ctrl(fe, 1);
+
+	if (priv->lna_gain_auto->val)
+		rc = r820t_write_reg_mask(priv, 0x05, 0x00, 0x10);
+	else
+		rc = r820t_write_reg_mask(priv, 0x05,
+				0x10 | priv->lna_gain->val, 0x1f);
+
+	if (fe->ops.i2c_gate_ctrl)
+		fe->ops.i2c_gate_ctrl(fe, 0);
+
+	return rc;
+}
+
+static int r820t_set_mixer_gain(struct r820t_priv *priv)
+{
+	struct dvb_frontend *fe = priv->fe;
+	int rc;
+
+	if (fe->ops.i2c_gate_ctrl)
+		fe->ops.i2c_gate_ctrl(fe, 1);
+
+	if (priv->mixer_gain_auto->val)
+		rc = r820t_write_reg_mask(priv, 0x07, 0x10, 0x10);
+	else
+		rc = r820t_write_reg_mask(priv, 0x07,
+				0x00 | priv->mixer_gain->val, 0x1f);
+
+	if (fe->ops.i2c_gate_ctrl)
+		fe->ops.i2c_gate_ctrl(fe, 0);
+
+	return rc;
+}
+
+static int r820t_set_if_gain(struct r820t_priv *priv)
+{
+	struct dvb_frontend *fe = priv->fe;
+	int rc;
+
+	if (fe->ops.i2c_gate_ctrl)
+		fe->ops.i2c_gate_ctrl(fe, 1);
+
+	if (priv->if_gain_auto->val)
+		rc = r820t_write_reg_mask(priv, 0x0c, 0x10, 0x10);
+	else
+		rc = r820t_write_reg_mask(priv, 0x0c,
+				0x00 | priv->if_gain->val, 0x1f);
+
+	if (fe->ops.i2c_gate_ctrl)
+		fe->ops.i2c_gate_ctrl(fe, 0);
+
+	return rc;
+}
+
+static int r820t_s_ctrl(struct v4l2_ctrl *ctrl)
+{
+	struct r820t_priv *priv =
+			container_of(ctrl->handler, struct r820t_priv, hdl);
+	int rc;
+
+	switch (ctrl->id) {
+	case  V4L2_CID_LNA_GAIN_AUTO:
+	case  V4L2_CID_LNA_GAIN:
+		rc = r820t_set_lna_gain(priv);
+		break;
+	case  V4L2_CID_MIXER_GAIN_AUTO:
+	case  V4L2_CID_MIXER_GAIN:
+		rc = r820t_set_mixer_gain(priv);
+		break;
+	case  V4L2_CID_IF_GAIN_AUTO:
+	case  V4L2_CID_IF_GAIN:
+		rc = r820t_set_if_gain(priv);
+		break;
+	default:
+		rc = -EINVAL;
+	}
+
+	return rc;
+}
+
+static const struct v4l2_ctrl_ops r820t_ctrl_ops = {
+	.s_ctrl = r820t_s_ctrl,
+};
 
 static const struct dvb_tuner_ops r820t_tuner_ops = {
 	.info = {
@@ -2312,11 +2378,17 @@ static const struct dvb_tuner_ops r820t_tuner_ops = {
 	.release = r820t_release,
 	.sleep = r820t_sleep,
 	.set_params = r820t_set_params,
-	.set_config = r820t_set_config,
 	.set_analog_params = r820t_set_analog_freq,
 	.get_if_frequency = r820t_get_if_frequency,
 	.get_rf_strength = r820t_signal,
 };
+
+struct v4l2_ctrl_handler *r820t_get_ctrl_handler(struct dvb_frontend *fe)
+{
+	struct r820t_priv *priv = fe->tuner_priv;
+	return &priv->hdl;
+}
+EXPORT_SYMBOL(r820t_get_ctrl_handler);
 
 struct dvb_frontend *r820t_attach(struct dvb_frontend *fe,
 				  struct i2c_adapter *i2c,
@@ -2352,6 +2424,8 @@ struct dvb_frontend *r820t_attach(struct dvb_frontend *fe,
 		break;
 	}
 
+	priv->fe = fe;
+
 	if (fe->ops.i2c_gate_ctrl)
 		fe->ops.i2c_gate_ctrl(fe, 1);
 
@@ -2363,6 +2437,29 @@ struct dvb_frontend *r820t_attach(struct dvb_frontend *fe,
 	rc = r820t_sleep(fe);
 	if (rc < 0)
 		goto err;
+
+	/* Register controls */
+	v4l2_ctrl_handler_init(&priv->hdl, 6);
+	priv->lna_gain_auto = v4l2_ctrl_new_std(&priv->hdl, &r820t_ctrl_ops,
+			V4L2_CID_LNA_GAIN_AUTO, 0, 1, 1, 1);
+	priv->lna_gain = v4l2_ctrl_new_std(&priv->hdl, &r820t_ctrl_ops,
+			V4L2_CID_LNA_GAIN, 0, 15, 1, 6);
+	v4l2_ctrl_auto_cluster(2, &priv->lna_gain_auto, 0, false);
+	priv->mixer_gain_auto = v4l2_ctrl_new_std(&priv->hdl, &r820t_ctrl_ops,
+			V4L2_CID_MIXER_GAIN_AUTO, 0, 1, 1, 1);
+	priv->mixer_gain = v4l2_ctrl_new_std(&priv->hdl, &r820t_ctrl_ops,
+			V4L2_CID_MIXER_GAIN, 0, 15, 1, 5);
+	v4l2_ctrl_auto_cluster(2, &priv->mixer_gain_auto, 0, false);
+	priv->if_gain_auto = v4l2_ctrl_new_std(&priv->hdl, &r820t_ctrl_ops,
+			V4L2_CID_IF_GAIN_AUTO, 0, 1, 1, 1);
+	priv->if_gain = v4l2_ctrl_new_std(&priv->hdl, &r820t_ctrl_ops,
+			V4L2_CID_IF_GAIN, 0, 15, 1, 4);
+	v4l2_ctrl_auto_cluster(2, &priv->if_gain_auto, 0, false);
+	if (priv->hdl.error) {
+		rc = priv->hdl.error;
+		tuner_info("Could not initialize controls\n");
+		goto err;
+	}
 
 	tuner_info("Rafael Micro r820t successfully identified\n");
 

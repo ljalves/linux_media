@@ -145,12 +145,6 @@ struct rtl2832_sdr_state {
 	struct v4l2_ctrl_handler hdl;
 	struct v4l2_ctrl *bandwidth_auto;
 	struct v4l2_ctrl *bandwidth;
-	struct v4l2_ctrl *lna_gain_auto;
-	struct v4l2_ctrl *lna_gain;
-	struct v4l2_ctrl *mixer_gain_auto;
-	struct v4l2_ctrl *mixer_gain;
-	struct v4l2_ctrl *if_gain_auto;
-	struct v4l2_ctrl *if_gain;
 
 	/* for sample rate calc */
 	unsigned int sample;
@@ -918,51 +912,12 @@ err:
 	return;
 };
 
-static int rtl2832_sdr_set_gain_r820t(struct rtl2832_sdr_state *s)
-{
-	int ret;
-	struct dvb_frontend *fe = s->fe;
-	struct r820t_ctrl ctrl;
-	dev_dbg(&s->udev->dev, "%s: lna=%d mixer=%d if=%d\n", __func__,
-			s->lna_gain->val, s->mixer_gain->val, s->if_gain->val);
-
-	ctrl.lna_gain = s->lna_gain_auto->val ? INT_MIN : s->lna_gain->val;
-	ctrl.mixer_gain = s->mixer_gain_auto->val ? INT_MIN : s->mixer_gain->val;
-	ctrl.if_gain = s->if_gain_auto->val ? INT_MIN : s->if_gain->val;
-
-	if (fe->ops.tuner_ops.set_config) {
-		ret = fe->ops.tuner_ops.set_config(fe, &ctrl);
-		if (ret)
-			goto err;
-	}
-
-	return 0;
-err:
-	dev_dbg(&s->udev->dev, "%s: failed %d\n", __func__, ret);
-	return ret;
-};
-
-static int rtl2832_sdr_set_gain(struct rtl2832_sdr_state *s)
-{
-	int ret;
-
-	switch (s->cfg->tuner) {
-	case RTL2832_TUNER_R820T:
-		ret = rtl2832_sdr_set_gain_r820t(s);
-		break;
-	default:
-		ret = 0;
-	}
-	return ret;
-}
-
 static int rtl2832_sdr_set_tuner(struct rtl2832_sdr_state *s)
 {
 	struct dvb_frontend *fe = s->fe;
 	struct dtv_frontend_properties *c = &fe->dtv_property_cache;
 	struct v4l2_ctrl *bandwidth_auto;
 	struct v4l2_ctrl *bandwidth;
-	int ret;
 
 	/*
 	 * tuner RF (Hz)
@@ -996,8 +951,6 @@ static int rtl2832_sdr_set_tuner(struct rtl2832_sdr_state *s)
 
 	if (fe->ops.tuner_ops.set_params)
 		fe->ops.tuner_ops.set_params(fe);
-
-	ret = rtl2832_sdr_set_gain(s);
 
 	return 0;
 };
@@ -1202,7 +1155,7 @@ static int rtl2832_sdr_s_frequency(struct file *file, void *priv,
 				__func__, f->frequency);
 		ret = rtl2832_sdr_set_tuner(s);
 	} else {
-		return -EINVAL;
+		ret = -EINVAL;
 	}
 
 	return ret;
@@ -1353,15 +1306,6 @@ static int rtl2832_sdr_s_ctrl(struct v4l2_ctrl *ctrl)
 		else
 			ret = 0;
 		break;
-	case  V4L2_CID_LNA_GAIN_AUTO:
-	case  V4L2_CID_LNA_GAIN:
-	case  V4L2_CID_MIXER_GAIN_AUTO:
-	case  V4L2_CID_MIXER_GAIN:
-	case  V4L2_CID_IF_GAIN_AUTO:
-	case  V4L2_CID_IF_GAIN:
-		dev_dbg(&s->udev->dev, "%s: GAIN IOCTL\n", __func__);
-		ret = rtl2832_sdr_set_gain(s);
-		break;
 	default:
 		ret = -EINVAL;
 	}
@@ -1436,19 +1380,13 @@ struct dvb_frontend *rtl2832_sdr_attach(struct dvb_frontend *fe,
 			v4l2_ctrl_add_handler(&s->hdl, hdl, NULL);
 		break;
 	case RTL2832_TUNER_R820T:
-		v4l2_ctrl_handler_init(&s->hdl, 8);
+		v4l2_ctrl_handler_init(&s->hdl, 2);
 		s->bandwidth_auto = v4l2_ctrl_new_std(&s->hdl, ops, V4L2_CID_BANDWIDTH_AUTO, 0, 1, 1, 1);
 		s->bandwidth = v4l2_ctrl_new_std(&s->hdl, ops, V4L2_CID_BANDWIDTH, 0, 8000000, 100000, 0);
 		v4l2_ctrl_auto_cluster(2, &s->bandwidth_auto, 0, false);
-		s->lna_gain_auto = v4l2_ctrl_new_std(&s->hdl, ops, V4L2_CID_LNA_GAIN_AUTO, 0, 1, 1, 1);
-		s->lna_gain = v4l2_ctrl_new_std(&s->hdl, ops, V4L2_CID_LNA_GAIN, 0, 15, 1, 6);
-		v4l2_ctrl_auto_cluster(2, &s->lna_gain_auto, 0, false);
-		s->mixer_gain_auto = v4l2_ctrl_new_std(&s->hdl, ops, V4L2_CID_MIXER_GAIN_AUTO, 0, 1, 1, 1);
-		s->mixer_gain = v4l2_ctrl_new_std(&s->hdl, ops, V4L2_CID_MIXER_GAIN, 0, 15, 1, 5);
-		v4l2_ctrl_auto_cluster(2, &s->mixer_gain_auto, 0, false);
-		s->if_gain_auto = v4l2_ctrl_new_std(&s->hdl, ops, V4L2_CID_IF_GAIN_AUTO, 0, 1, 1, 1);
-		s->if_gain = v4l2_ctrl_new_std(&s->hdl, ops, V4L2_CID_IF_GAIN, 0, 15, 1, 4);
-		v4l2_ctrl_auto_cluster(2, &s->if_gain_auto, 0, false);
+		hdl = r820t_get_ctrl_handler(fe);
+		if (hdl)
+			v4l2_ctrl_add_handler(&s->hdl, hdl, NULL);
 		break;
 	case RTL2832_TUNER_FC0012:
 	case RTL2832_TUNER_FC0013:

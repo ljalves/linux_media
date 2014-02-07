@@ -42,21 +42,24 @@ struct r820t_config {
 	bool use_predetect;
 };
 
-/* set INT_MIN for automode */
-struct r820t_ctrl {
-	int lna_gain;
-	int mixer_gain;
-	int if_gain;
-};
-
 #if IS_ENABLED(CONFIG_MEDIA_TUNER_R820T)
 struct dvb_frontend *r820t_attach(struct dvb_frontend *fe,
 				  struct i2c_adapter *i2c,
 				  const struct r820t_config *cfg);
+
+extern struct v4l2_ctrl_handler *r820t_get_ctrl_handler(
+				struct dvb_frontend *fe);
 #else
 static inline struct dvb_frontend *r820t_attach(struct dvb_frontend *fe,
 						struct i2c_adapter *i2c,
 						const struct r820t_config *cfg)
+{
+	pr_warn("%s: driver disabled by Kconfig\n", __func__);
+	return NULL;
+}
+
+static inline struct v4l2_ctrl_handler *r820t_get_ctrl_handler(
+				struct dvb_frontend *fe)
 {
 	pr_warn("%s: driver disabled by Kconfig\n", __func__);
 	return NULL;
