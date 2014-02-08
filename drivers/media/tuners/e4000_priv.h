@@ -23,9 +23,11 @@
 
 #include "e4000.h"
 #include <media/v4l2-ctrls.h>
+#include <linux/regmap.h>
 
-struct e4000_priv {
+struct e4000 {
 	struct i2c_client *client;
+	struct regmap *regmap;
 	u32 clock;
 	struct dvb_frontend *fe;
 	bool active;
