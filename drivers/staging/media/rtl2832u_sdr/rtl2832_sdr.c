@@ -912,7 +912,7 @@ err:
 	return;
 };
 
-static int rtl2832_sdr_set_tuner(struct rtl2832_sdr_state *s)
+static int rtl2832_sdr_set_tuner_freq(struct rtl2832_sdr_state *s)
 {
 	struct dvb_frontend *fe = s->fe;
 	struct dtv_frontend_properties *c = &fe->dtv_property_cache;
@@ -946,11 +946,20 @@ static int rtl2832_sdr_set_tuner(struct rtl2832_sdr_state *s)
 	if (!test_bit(POWER_ON, &s->flags))
 		return 0;
 
-	if (fe->ops.tuner_ops.init)
-		fe->ops.tuner_ops.init(fe);
-
 	if (fe->ops.tuner_ops.set_params)
 		fe->ops.tuner_ops.set_params(fe);
+
+	return 0;
+};
+
+static int rtl2832_sdr_set_tuner(struct rtl2832_sdr_state *s)
+{
+	struct dvb_frontend *fe = s->fe;
+
+	dev_dbg(&s->udev->dev, "%s:\n", __func__);
+
+	if (fe->ops.tuner_ops.init)
+		fe->ops.tuner_ops.init(fe);
 
 	return 0;
 };
@@ -985,6 +994,10 @@ static int rtl2832_sdr_start_streaming(struct vb2_queue *vq, unsigned int count)
 	set_bit(POWER_ON, &s->flags);
 
 	ret = rtl2832_sdr_set_tuner(s);
+	if (ret)
+		goto err;
+
+	ret = rtl2832_sdr_set_tuner_freq(s);
 	if (ret)
 		goto err;
 
@@ -1127,6 +1140,7 @@ static int rtl2832_sdr_s_frequency(struct file *file, void *priv,
 {
 	struct rtl2832_sdr_state *s = video_drvdata(file);
 	int ret, band;
+
 	dev_dbg(&s->udev->dev, "%s: tuner=%d type=%d frequency=%u\n",
 			__func__, f->tuner, f->type, f->frequency);
 
@@ -1153,7 +1167,8 @@ static int rtl2832_sdr_s_frequency(struct file *file, void *priv,
 		s->f_tuner = f->frequency;
 		dev_dbg(&s->udev->dev, "%s: RF frequency=%u Hz\n",
 				__func__, f->frequency);
-		ret = rtl2832_sdr_set_tuner(s);
+
+		ret = rtl2832_sdr_set_tuner_freq(s);
 	} else {
 		ret = -EINVAL;
 	}
