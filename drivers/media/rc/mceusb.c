@@ -199,6 +199,7 @@ enum mceusb_model_type {
 	TIVO_KIT,
 	MCE_GEN2_NO_TX,
 	HAUPPAUGE_CX_HYBRID_TV,
+	CX231XX_TBS5280,
 };
 
 struct mceusb_model {
@@ -259,6 +260,10 @@ static const struct mceusb_model mceusb_model[] = {
 	[TIVO_KIT] = {
 		.mce_gen2 = 1,
 		.rc_map = RC_MAP_TIVO,
+	},
+	[CX231XX_TBS5280] = {
+		.rc_map = RC_MAP_RC6_MCE,
+		.name = "TurboSight TBS 5280 (cx231xx) MCE IR",
 	},
 };
 
