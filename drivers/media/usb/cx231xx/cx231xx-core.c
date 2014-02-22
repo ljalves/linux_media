@@ -553,6 +553,10 @@ int cx231xx_set_alt_setting(struct cx231xx *dev, u8 index, u8 alt)
 		usb_interface_index =
 		    dev->current_pcb_config.hs_config_info[0].interface_info.
 		    ts2_index + 1;
+		dev->ts2_mode.alt = alt;
+		if (dev->ts2_mode.alt_max_pkt_size != NULL)
+			max_pkt_size = dev->ts2_mode.max_pkt_size =
+			    dev->ts2_mode.alt_max_pkt_size[dev->ts2_mode.alt];
 		break;
 	case INDEX_AUDIO:
 		usb_interface_index =
@@ -747,6 +751,7 @@ int cx231xx_set_mode(struct cx231xx *dev, enum cx231xx_mode set_mode)
 		case CX231XX_BOARD_PV_PLAYTV_USB_HYBRID:
 		case CX231XX_BOARD_HAUPPAUGE_USB2_FM_PAL:
 		case CX231XX_BOARD_HAUPPAUGE_USB2_FM_NTSC:
+		case CX231XX_BOARD_TBS_5280:
 		errCode = cx231xx_set_agc_analog_digital_mux_select(dev, 0);
 			break;
 		default:
@@ -829,6 +834,47 @@ static void cx231xx_isoc_irq_callback(struct urb *urb)
 				urb->status);
 	}
 }
+
+static void cx231xx_isoc_irq_callback_ts2(struct urb *urb)
+{
+	struct cx231xx_dmaqueue *dma_q = urb->context;
+	struct cx231xx_video_mode *vmode =
+	    container_of(dma_q, struct cx231xx_video_mode, vidq);
+	struct cx231xx *dev = container_of(vmode, struct cx231xx, ts2_mode);
+	int i;
+
+	switch (urb->status) {
+	case 0:		/* success */
+	case -ETIMEDOUT:	/* NAK */
+		break;
+	case -ECONNRESET:	/* kill */
+	case -ENOENT:
+	case -ESHUTDOWN:
+		return;
+	default:		/* error */
+		cx231xx_isocdbg("urb completition error %d.\n", urb->status);
+		break;
+	}
+
+	/* Copy data from URB */
+	spin_lock(&dev->ts2_mode.slock);
+	dev->ts2_mode.isoc_ctl.isoc_copy(dev, urb);
+	spin_unlock(&dev->ts2_mode.slock);
+
+	/* Reset urb buffers */
+	for (i = 0; i < urb->number_of_packets; i++) {
+		urb->iso_frame_desc[i].status = 0;
+		urb->iso_frame_desc[i].actual_length = 0;
+	}
+	urb->status = 0;
+
+	urb->status = usb_submit_urb(urb, GFP_ATOMIC);
+	if (urb->status) {
+		cx231xx_isocdbg("urb resubmit failed (error=%i)\n",
+				urb->status);
+	}
+}
+
 /*****************************************************************
 *                URB Streaming functions                         *
 ******************************************************************/
@@ -918,6 +964,54 @@ void cx231xx_uninit_isoc(struct cx231xx *dev)
 
 }
 EXPORT_SYMBOL_GPL(cx231xx_uninit_isoc);
+
+void cx231xx_uninit_isoc_ts2(struct cx231xx *dev)
+{
+	struct cx231xx_dmaqueue *dma_q_ts2 = &dev->ts2_mode.vidq;
+	struct urb *urb;
+	int i;
+
+	cx231xx_isocdbg("cx231xx: called cx231xx_uninit_isoc_ts2\n");
+
+	dev->ts2_mode.isoc_ctl.nfields = -1;
+	for (i = 0; i < dev->ts2_mode.isoc_ctl.num_bufs; i++) {
+		urb = dev->ts2_mode.isoc_ctl.urb[i];
+		if (urb) {
+			if (!irqs_disabled())
+				usb_kill_urb(urb);
+			else
+				usb_unlink_urb(urb);
+
+			if (dev->ts2_mode.isoc_ctl.transfer_buffer[i]) {
+				usb_free_coherent(dev->udev,
+						  urb->transfer_buffer_length,
+						  dev->ts2_mode.isoc_ctl.
+						  transfer_buffer[i],
+						  urb->transfer_dma);
+			}
+			usb_free_urb(urb);
+			dev->ts2_mode.isoc_ctl.urb[i] = NULL;
+		}
+		dev->ts2_mode.isoc_ctl.transfer_buffer[i] = NULL;
+	}
+
+	kfree(dev->ts2_mode.isoc_ctl.urb);
+	kfree(dev->ts2_mode.isoc_ctl.transfer_buffer);
+	kfree(dma_q_ts2->p_left_data);
+
+	dev->ts2_mode.isoc_ctl.urb = NULL;
+	dev->ts2_mode.isoc_ctl.transfer_buffer = NULL;
+	dev->ts2_mode.isoc_ctl.num_bufs = 0;
+	dma_q_ts2->p_left_data = NULL;
+
+	if (dev->mode_tv == 0)
+		cx231xx_capture_start(dev, 0, Raw_Video);
+	else
+		cx231xx_capture_start(dev, 0, TS2);
+
+
+}
+EXPORT_SYMBOL_GPL(cx231xx_uninit_isoc_ts2);
 
 /*
  * Stop and Deallocate URBs
@@ -1103,6 +1197,140 @@ int cx231xx_init_isoc(struct cx231xx *dev, int max_packets,
 	return 0;
 }
 EXPORT_SYMBOL_GPL(cx231xx_init_isoc);
+
+int cx231xx_init_isoc_ts2(struct cx231xx *dev, int max_packets,
+		      int num_bufs, int max_pkt_size,
+		      int (*isoc_copy) (struct cx231xx *dev, struct urb *urb))
+{
+	struct cx231xx_dmaqueue *dma_q_ts2 = &dev->ts2_mode.vidq;
+	int i;
+	int sb_size, pipe;
+	struct urb *urb;
+	int j, k;
+	int rc;
+
+	/* De-allocates all pending stuff */
+	cx231xx_uninit_isoc_ts2(dev);
+
+	dma_q_ts2->p_left_data = kzalloc(4096, GFP_KERNEL);
+	if (dma_q_ts2->p_left_data == NULL) {
+		cx231xx_info("out of mem\n");
+		return -ENOMEM;
+	}
+
+
+
+	dev->ts2_mode.isoc_ctl.isoc_copy = isoc_copy;
+	dev->ts2_mode.isoc_ctl.num_bufs = num_bufs;
+	dma_q_ts2->pos = 0;
+	dma_q_ts2->is_partial_line = 0;
+	dma_q_ts2->last_sav = 0;
+	dma_q_ts2->current_field = -1;
+	dma_q_ts2->field1_done = 0;
+	dma_q_ts2->lines_per_field = dev->height / 2;
+	dma_q_ts2->bytes_left_in_line = dev->width << 1;
+	dma_q_ts2->lines_completed = 0;
+	dma_q_ts2->mpeg_buffer_done = 0;
+	dma_q_ts2->left_data_count = 0;
+	dma_q_ts2->mpeg_buffer_completed = 0;
+	dma_q_ts2->add_ps_package_head = CX231XX_NEED_ADD_PS_PACKAGE_HEAD;
+	dma_q_ts2->ps_head[0] = 0x00;
+	dma_q_ts2->ps_head[1] = 0x00;
+	dma_q_ts2->ps_head[2] = 0x01;
+	dma_q_ts2->ps_head[3] = 0xBA;
+	for (i = 0; i < 8; i++)
+		dma_q_ts2->partial_buf[i] = 0;
+
+	dev->ts2_mode.isoc_ctl.urb =
+	    kzalloc(sizeof(void *) * num_bufs, GFP_KERNEL);
+	if (!dev->ts2_mode.isoc_ctl.urb) {
+		cx231xx_errdev("cannot alloc memory for usb buffers\n");
+		return -ENOMEM;
+	}
+
+	dev->ts2_mode.isoc_ctl.transfer_buffer =
+	    kzalloc(sizeof(void *) * num_bufs, GFP_KERNEL);
+	if (!dev->ts2_mode.isoc_ctl.transfer_buffer) {
+		cx231xx_errdev("cannot allocate memory for usbtransfer\n");
+		kfree(dev->ts2_mode.isoc_ctl.urb);
+		return -ENOMEM;
+	}
+
+	dev->ts2_mode.isoc_ctl.max_pkt_size = max_pkt_size;
+	dev->ts2_mode.isoc_ctl.buf = NULL;
+
+	sb_size = max_packets * dev->ts2_mode.isoc_ctl.max_pkt_size;
+
+	if (dev->mode_tv == 1)
+		dev->ts2_mode.end_point_addr = 0x82;
+	else
+		dev->ts2_mode.end_point_addr = 0x84;
+
+
+	/* allocate urbs and transfer buffers */
+	for (i = 0; i < dev->ts2_mode.isoc_ctl.num_bufs; i++) {
+		urb = usb_alloc_urb(max_packets, GFP_KERNEL);
+		if (!urb) {
+			cx231xx_err("cannot alloc isoc_ctl.urb %i\n", i);
+			cx231xx_uninit_isoc_ts2(dev);
+			return -ENOMEM;
+		}
+		dev->ts2_mode.isoc_ctl.urb[i] = urb;
+
+		dev->ts2_mode.isoc_ctl.transfer_buffer[i] =
+		    usb_alloc_coherent(dev->udev, sb_size, GFP_KERNEL,
+				       &urb->transfer_dma);
+		if (!dev->ts2_mode.isoc_ctl.transfer_buffer[i]) {
+			cx231xx_err("unable to allocate %i bytes for transfer"
+				    " buffer %i%s\n",
+				    sb_size, i,
+				    in_interrupt() ? " while in int" : "");
+			cx231xx_uninit_isoc_ts2(dev);
+			return -ENOMEM;
+		}
+		memset(dev->ts2_mode.isoc_ctl.transfer_buffer[i], 0, sb_size);
+
+		pipe =
+		    usb_rcvisocpipe(dev->udev, dev->ts2_mode.end_point_addr);
+
+		usb_fill_int_urb(urb, dev->udev, pipe,
+				 dev->ts2_mode.isoc_ctl.transfer_buffer[i],
+				 sb_size, cx231xx_isoc_irq_callback_ts2, dma_q_ts2, 1);
+
+		urb->number_of_packets = max_packets;
+		urb->transfer_flags = URB_ISO_ASAP;
+
+		k = 0;
+		for (j = 0; j < max_packets; j++) {
+			urb->iso_frame_desc[j].offset = k;
+			urb->iso_frame_desc[j].length =
+			    dev->ts2_mode.isoc_ctl.max_pkt_size;
+			k += dev->ts2_mode.isoc_ctl.max_pkt_size;
+		}
+	}
+
+	init_waitqueue_head(&dma_q_ts2->wq);
+
+	/* submit urbs and enables IRQ */
+	for (i = 0; i < dev->ts2_mode.isoc_ctl.num_bufs; i++) {
+		rc = usb_submit_urb(dev->ts2_mode.isoc_ctl.urb[i],
+				    GFP_ATOMIC);
+		if (rc) {
+			cx231xx_err("submit of urb %i failed (error=%i)\n", i,
+				    rc);
+			cx231xx_uninit_isoc_ts2(dev);
+			return rc;
+		}
+	}
+
+	if (dev->mode_tv == 0)
+		cx231xx_capture_start(dev, 1, Raw_Video);
+	else
+		cx231xx_capture_start(dev, 1, TS2);
+
+	return 0;
+}
+EXPORT_SYMBOL_GPL(cx231xx_init_isoc_ts2);
 
 /*
  * Allocate URBs and start IRQ
@@ -1382,6 +1610,7 @@ int cx231xx_dev_init(struct cx231xx *dev)
 	case CX231XX_BOARD_PV_PLAYTV_USB_HYBRID:
 	case CX231XX_BOARD_HAUPPAUGE_USB2_FM_PAL:
 	case CX231XX_BOARD_HAUPPAUGE_USB2_FM_NTSC:
+	case CX231XX_BOARD_TBS_5280:
 	errCode = cx231xx_set_agc_analog_digital_mux_select(dev, 0);
 		break;
 	default:
@@ -1398,8 +1627,11 @@ int cx231xx_dev_init(struct cx231xx *dev)
 	cx231xx_set_alt_setting(dev, INDEX_VIDEO, 0);
 	cx231xx_set_alt_setting(dev, INDEX_VANC, 0);
 	cx231xx_set_alt_setting(dev, INDEX_HANC, 0);
-	if (dev->board.has_dvb)
+	if (dev->board.has_dvb) {
 		cx231xx_set_alt_setting(dev, INDEX_TS1, 0);
+		if (dev->board.adap_cnt == 2)
+			cx231xx_set_alt_setting(dev, INDEX_TS2, 0);
+	}
 
 	/* set the I2C master port to 3 on channel 1 */
 	errCode = cx231xx_enable_i2c_port_3(dev, true);

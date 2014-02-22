@@ -107,6 +107,7 @@ struct cx231xx_board cx231xx_boards[] = {
 		.tuner_i2c_master = 1,
 		.demod_i2c_master = 2,
 		.has_dvb = 1,
+		.adap_cnt = 1,
 		.demod_addr = 0x02,
 		.norm = V4L2_STD_PAL,
 
@@ -147,6 +148,7 @@ struct cx231xx_board cx231xx_boards[] = {
 		.tuner_i2c_master = 1,
 		.demod_i2c_master = 2,
 		.has_dvb = 1,
+		.adap_cnt = 1,
 		.demod_addr = 0x32,
 		.norm = V4L2_STD_NTSC,
 
@@ -187,6 +189,7 @@ struct cx231xx_board cx231xx_boards[] = {
 		.tuner_i2c_master = 1,
 		.demod_i2c_master = 2,
 		.has_dvb = 1,
+		.adap_cnt = 1,
 		.demod_addr = 0x02,
 		.norm = V4L2_STD_PAL,
 
@@ -228,6 +231,7 @@ struct cx231xx_board cx231xx_boards[] = {
 		.tuner_i2c_master = 1,
 		.demod_i2c_master = 2,
 		.has_dvb = 1,
+		.adap_cnt = 1,
 		.demod_addr = 0x02,
 		.norm = V4L2_STD_PAL,
 
@@ -300,6 +304,7 @@ struct cx231xx_board cx231xx_boards[] = {
 		.tuner_i2c_master = 1,
 		.demod_i2c_master = 2,
 		.has_dvb = 1,
+		.adap_cnt = 1,
 		.demod_addr = 0x02,
 		.norm = V4L2_STD_PAL,
 
@@ -328,6 +333,7 @@ struct cx231xx_board cx231xx_boards[] = {
 		.tuner_i2c_master = 1,
 		.demod_i2c_master = 2,
 		.has_dvb = 1,
+		.adap_cnt = 1,
 		.demod_addr = 0x32,
 		.norm = V4L2_STD_NTSC,
 
@@ -356,6 +362,7 @@ struct cx231xx_board cx231xx_boards[] = {
 		.tuner_i2c_master = 1,
 		.demod_i2c_master = 2,
 		.has_dvb = 1,
+		.adap_cnt = 1,
 		.demod_addr = 0x0e,
 		.norm = V4L2_STD_NTSC,
 
@@ -422,6 +429,7 @@ struct cx231xx_board cx231xx_boards[] = {
 		.demod_i2c_master = 1,
 		.ir_i2c_master = 2,
 		.has_dvb = 1,
+		.adap_cnt = 1,
 		.demod_addr = 0x10,
 		.norm = V4L2_STD_PAL_M,
 		.input = {{
@@ -460,6 +468,7 @@ struct cx231xx_board cx231xx_boards[] = {
 		.demod_i2c_master = 1,
 		.ir_i2c_master = 2,
 		.has_dvb = 1,
+		.adap_cnt = 1,
 		.demod_addr = 0x10,
 		.norm = V4L2_STD_NTSC_M,
 		.input = {{
@@ -499,6 +508,7 @@ struct cx231xx_board cx231xx_boards[] = {
 		.ir_i2c_master = 2,
 		.rc_map_name = RC_MAP_PIXELVIEW_002T,
 		.has_dvb = 1,
+		.adap_cnt = 1,
 		.demod_addr = 0x10,
 		.norm = V4L2_STD_PAL_M,
 		.input = {{
@@ -704,6 +714,44 @@ struct cx231xx_board cx231xx_boards[] = {
 			}
 		},
 	},
+	[CX231XX_BOARD_TBS_5280] = {
+		.name = "TurboSight TBS 5280",
+		.tuner_type = TUNER_ABSENT,
+		.decoder = CX231XX_AVDECODER,
+		.output_mode = OUT_MODE_VIP11,
+		.demod_xfer_mode = 0,
+		.ctl_pin_status_mask = 0xFFFFFFC4,
+		.agc_analog_digital_select_gpio = 0x00,
+		.tuner_sif_gpio = -1,
+		.tuner_scl_gpio = -1,
+		.tuner_sda_gpio = -1,
+		.gpio_pin_status_mask = 0x4001000,
+		.tuner_i2c_master = 2,
+		.demod_i2c_master = 1,
+		.has_dvb = 1,
+		.adap_cnt = 2,
+		.demod_addr = 0x6c,
+		.norm = V4L2_STD_PAL_M,
+		
+		.input = {{
+			.type = CX231XX_VMUX_TELEVISION,
+			.vmux = CX231XX_VIN_3_1,
+			.amux = CX231XX_AMUX_VIDEO,
+			.gpio = NULL,
+		}, {
+			.type = CX231XX_VMUX_COMPOSITE1,
+			.vmux = CX231XX_VIN_2_1,
+			.amux = CX231XX_AMUX_LINE_IN,
+			.gpio = NULL,
+		}, {
+			.type = CX231XX_VMUX_SVIDEO,
+			.vmux = CX231XX_VIN_1_1 |
+				(CX231XX_VIN_1_2 << 8) |
+				CX25840_SVIDEO_ON,
+			.amux = CX231XX_AMUX_LINE_IN,
+			.gpio = NULL,
+		} },
+	},
 };
 const unsigned int cx231xx_bcount = ARRAY_SIZE(cx231xx_boards);
 
@@ -751,6 +799,9 @@ struct usb_device_id cx231xx_id_table[] = {
 	 .driver_info = CX231XX_BOARD_ELGATO_VIDEO_CAPTURE_V2},
 	{USB_DEVICE(0x1f4d, 0x0102),
 	 .driver_info = CX231XX_BOARD_OTG102},
+	{USB_DEVICE(0x734c, 0x5280),
+	 .driver_info = CX231XX_BOARD_TBS_5280},
+
 	{},
 };
 
@@ -1378,6 +1429,44 @@ static int cx231xx_usb_probe(struct usb_interface *interface,
 			    (tmp & 0x07ff) * (((tmp & 0x1800) >> 11) + 1);
 			cx231xx_info("Alternate setting %i, max size= %i\n", i,
 				     dev->ts1_mode.alt_max_pkt_size[i]);
+		}
+	}
+
+	if (dev->current_pcb_config.ts2_source != 0xff) {
+		/* compute alternate max packet sizes for TS2 */
+		uif = udev->actconfig->interface[dev->current_pcb_config.
+					       hs_config_info[0].
+					       interface_info.
+					       ts2_index + 1];
+
+		dev->ts2_mode.end_point_addr =
+		    le16_to_cpu(uif->altsetting[0].endpoint[isoc_pipe].
+				desc.bEndpointAddress);
+
+		dev->ts2_mode.num_alt = uif->num_altsetting;
+		/* cx231xx_info("EndPoint Addr 0x%x, Alternate settings: %i\n",
+			     dev->ts2_mode.end_point_addr,
+			     dev->ts2_mode.num_alt); */
+		dev->ts2_mode.alt_max_pkt_size =
+			kmalloc(32 * dev->ts2_mode.num_alt, GFP_KERNEL);
+
+		if (dev->ts2_mode.alt_max_pkt_size == NULL) {
+			cx231xx_errdev("out of memory!\n");
+			clear_bit(dev->devno, &cx231xx_devused);
+			v4l2_device_unregister(&dev->v4l2_dev);
+			kfree(dev);
+			dev = NULL;
+			return -ENOMEM;
+		}
+
+		for (i = 0; i < dev->ts2_mode.num_alt; i++) {
+			u16 tmp = le16_to_cpu(uif->altsetting[i].
+						endpoint[isoc_pipe].desc.
+						wMaxPacketSize);
+			dev->ts2_mode.alt_max_pkt_size[i] =
+			    (tmp & 0x07ff) * (((tmp & 0x1800) >> 11) + 1);
+			/* cx231xx_info("Alternate setting %i, max size= %i\n", i,
+				     dev->ts2_mode.alt_max_pkt_size[i]); */
 		}
 	}
 
