@@ -30,7 +30,7 @@
 #include "tas2101.h"
 #include "tas2101_priv.h"
 
-#define TAS2101_USE_I2C_MUX
+//#define TAS2101_USE_I2C_MUX
 
 /* return i2c adapter */
 /* bus = 0   master   */
