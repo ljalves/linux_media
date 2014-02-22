@@ -34,6 +34,9 @@ struct m88rs2000_config {
 	int min_delay_ms;
 
 	int (*set_ts_params)(struct dvb_frontend *, int);
+
+	/* Hook for Lock LED */
+	void (*set_lock_led)(struct dvb_frontend *fe, int offon);
 };
 
 enum {

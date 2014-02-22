@@ -315,6 +315,10 @@ static int cxd2820r_read_status(struct dvb_frontend *fe, fe_status_t *status)
 		ret = -EINVAL;
 		break;
 	}
+
+	if (priv->cfg.set_lock_led)
+		priv->cfg.set_lock_led(fe, *status & FE_HAS_LOCK);
+
 	return ret;
 }
 
@@ -456,6 +460,9 @@ static int cxd2820r_sleep(struct dvb_frontend *fe)
 	struct cxd2820r_priv *priv = fe->demodulator_priv;
 	int ret;
 
+	if (priv->cfg.set_lock_led)
+		priv->cfg.set_lock_led(fe, 0);
+
 	dev_dbg(&priv->i2c->dev, "%s: delsys=%d\n", __func__,
 			fe->dtv_property_cache.delivery_system);
 
@@ -587,6 +594,9 @@ static void cxd2820r_release(struct dvb_frontend *fe)
 	int uninitialized_var(ret); /* silence compiler warning */
 
 	dev_dbg(&priv->i2c->dev, "%s\n", __func__);
+
+	if (priv->cfg.set_lock_led)
+		priv->cfg.set_lock_led(fe, 0);
 
 #ifdef CONFIG_GPIOLIB
 	/* remove GPIOs */

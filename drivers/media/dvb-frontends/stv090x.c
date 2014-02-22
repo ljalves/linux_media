@@ -3546,6 +3546,9 @@ static int stv090x_read_status(struct dvb_frontend *fe, enum fe_status *status)
 		break;
 	}
 
+	if (state->config->set_lock_led)
+		state->config->set_lock_led(fe, *status & FE_HAS_LOCK);
+
 	return 0;
 }
 
@@ -3893,6 +3896,9 @@ static int stv090x_sleep(struct dvb_frontend *fe)
 	u32 reg;
 	u8 full_standby = 0;
 
+	if (state->config->set_lock_led)
+		state->config->set_lock_led(fe, 0);
+
 	if (stv090x_i2c_gate_ctrl(state, 1) < 0)
 		goto err;
 
@@ -4123,6 +4129,9 @@ err:
 static void stv090x_release(struct dvb_frontend *fe)
 {
 	struct stv090x_state *state = fe->demodulator_priv;
+
+	if (state->config->set_lock_led)
+		state->config->set_lock_led(fe, 0);
 
 	state->internal->num_used--;
 	if (state->internal->num_used <= 0) {

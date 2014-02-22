@@ -86,6 +86,9 @@ struct m88ds3103_config {
 	 * Default: none, must set
 	 */
 	u8 agc;
+
+	/* Hook for Lock LED */
+	void (*set_lock_led)(struct dvb_frontend *fe, int offon);
 };
 
 /*

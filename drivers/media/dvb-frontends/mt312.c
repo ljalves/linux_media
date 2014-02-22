@@ -468,6 +468,9 @@ static int mt312_read_status(struct dvb_frontend *fe, fe_status_t *s)
 	if (status[0] & 0x01)
 		*s |= FE_HAS_LOCK;	/* qpsk lock */
 
+	if (state->config->set_lock_led)
+		state->config->set_lock_led(fe, *s & FE_HAS_LOCK);
+
 	return 0;
 }
 
@@ -700,6 +703,9 @@ static int mt312_sleep(struct dvb_frontend *fe)
 	int ret;
 	u8 config;
 
+	if (state->config->set_lock_led)
+		state->config->set_lock_led(fe, 0);
+
 	/* reset all registers to defaults */
 	ret = mt312_reset(state, 1);
 	if (ret < 0)
@@ -741,6 +747,10 @@ static int mt312_get_tune_settings(struct dvb_frontend *fe,
 static void mt312_release(struct dvb_frontend *fe)
 {
 	struct mt312_state *state = fe->demodulator_priv;
+
+	if (state->config->set_lock_led)
+		state->config->set_lock_led(fe, 0);
+
 	kfree(state);
 }
 

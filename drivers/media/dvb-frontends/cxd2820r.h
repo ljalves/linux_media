@@ -69,6 +69,9 @@ struct cxd2820r_config {
 	 * Values: 0, 1
 	 */
 	bool spec_inv;
+
+	/* Hook for Lock LED */
+	void (*set_lock_led)(struct dvb_frontend *fe, int offon);
 };
 
 

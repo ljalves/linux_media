@@ -69,6 +69,9 @@ struct tda10071_config {
 	 * Values:
 	 */
 	u8 pll_multiplier;
+
+	/* Hook for Lock LED */
+	void (*set_lock_led)(struct dvb_frontend *fe, int offon);
 };
 
 
