@@ -703,6 +703,9 @@ static int cx24116_read_status(struct dvb_frontend *fe, fe_status_t *status)
 	if (lock & CX24116_HAS_SYNCLOCK)
 		*status |= FE_HAS_SYNC | FE_HAS_LOCK;
 
+	if (state->config->set_lock_led)
+		state->config->set_lock_led(fe, *status & FE_HAS_LOCK);
+
 	return 0;
 }
 
@@ -1111,6 +1114,10 @@ static void cx24116_release(struct dvb_frontend *fe)
 {
 	struct cx24116_state *state = fe->demodulator_priv;
 	dprintk("%s\n", __func__);
+
+	if (state->config->set_lock_led)
+		state->config->set_lock_led(fe, 0);
+
 	kfree(state);
 }
 
@@ -1195,6 +1202,9 @@ static int cx24116_sleep(struct dvb_frontend *fe)
 	int ret;
 
 	dprintk("%s()\n", __func__);
+
+	if (state->config->set_lock_led)
+		state->config->set_lock_led(fe, 0);
 
 	/* Firmware CMD 36: Power config */
 	cmd.args[0x00] = CMD_TUNERSLEEP;

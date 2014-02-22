@@ -502,6 +502,9 @@ static int tda10071_read_status(struct dvb_frontend *fe, fe_status_t *status)
 
 	priv->fe_status = *status;
 
+	if (priv->cfg.set_lock_led)
+		priv->cfg.set_lock_led(fe, *status & FE_HAS_LOCK);
+
 	return ret;
 error:
 	dev_dbg(&priv->i2c->dev, "%s: failed=%d\n", __func__, ret);
@@ -1161,6 +1164,9 @@ static int tda10071_sleep(struct dvb_frontend *fe)
 		goto error;
 	}
 
+	if (priv->cfg.set_lock_led)
+		priv->cfg.set_lock_led(fe, 0);
+
 	cmd.args[0] = CMD_SET_SLEEP_MODE;
 	cmd.args[1] = 0;
 	cmd.args[2] = 1;
@@ -1195,6 +1201,10 @@ static int tda10071_get_tune_settings(struct dvb_frontend *fe,
 static void tda10071_release(struct dvb_frontend *fe)
 {
 	struct tda10071_priv *priv = fe->demodulator_priv;
+
+	if (priv->cfg.set_lock_led)
+		priv->cfg.set_lock_led(fe, 0);
+
 	kfree(priv);
 }
 
