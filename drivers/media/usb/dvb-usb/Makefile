@@ -76,6 +76,24 @@ obj-$(CONFIG_DVB_USB_AZ6027) += dvb-usb-az6027.o
 dvb-usb-technisat-usb2-objs := technisat-usb2.o
 obj-$(CONFIG_DVB_USB_TECHNISAT_USB2) += dvb-usb-technisat-usb2.o
 
+dvb-usb-tbsqbox-objs = tbs-qbox.o
+obj-$(CONFIG_DVB_USB_TBSQBOX) += dvb-usb-tbsqbox.o
+
+dvb-usb-tbsqbox2-objs = tbs-qbox2.o
+obj-$(CONFIG_DVB_USB_TBSQBOX2) += dvb-usb-tbsqbox2.o
+
+dvb-usb-tbsqboxs2-objs = tbs-qboxs2.o
+obj-$(CONFIG_DVB_USB_TBSQBOXS2) += dvb-usb-tbsqboxs2.o
+
+dvb-usb-tbsqbox2ci-objs = tbs-qbox2ci.o
+obj-$(CONFIG_DVB_USB_TBSQBOX2CI) += dvb-usb-tbsqbox2ci.o
+
+dvb-usb-tbs5925-objs = tbs5925.o
+obj-$(CONFIG_DVB_USB_TBS5925) += dvb-usb-tbs5925.o
+
+dvb-usb-tbs5880-objs = tbs5880.o
+obj-$(CONFIG_DVB_USB_TBS5880) += dvb-usb-tbs5880.o
+
 ccflags-y += -I$(srctree)/drivers/media/dvb-core
 ccflags-y += -I$(srctree)/drivers/media/dvb-frontends/
 # due to tuner-xc3028
