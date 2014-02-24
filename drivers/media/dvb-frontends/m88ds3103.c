@@ -229,7 +229,7 @@ static int m88ds3103_read_status(struct dvb_frontend *fe, fe_status_t *status)
 
 	priv->fe_status = *status;
 
-	if (prive->cfg.set_lock_led)
+	if (priv->cfg.set_lock_led)
 		priv->cfg.set_lock_led(fe, *status & FE_HAS_LOCK);
 
 	dev_dbg(&priv->i2c->dev, "%s: lock=%02x status=%02x\n",
