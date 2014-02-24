@@ -685,8 +685,8 @@ static struct tda18212_config tda18212_config[] = {
 static int saa716x_tbs6284_frontend_attach(struct saa716x_adapter *adapter, int count)
 {
 	struct saa716x_dev *saa716x = adapter->saa716x;
-	struct saa716x_i2c *i2c0 = &saa716x->i2c[0];
-	struct saa716x_i2c *i2c1 = &saa716x->i2c[1];
+	struct saa716x_i2c *i2c0 = &saa716x->i2c[SAA716x_I2C_BUS_A];
+	struct saa716x_i2c *i2c1 = &saa716x->i2c[SAA716x_I2C_BUS_B];
 
 	switch (count) {
 	case 0:
@@ -774,6 +774,122 @@ static struct saa716x_config saa716x_tbs6284_config = {
 			.ts_port = 0,
 			.worker = demux_worker
 		}
+	},
+};
+
+#define SAA716x_MODEL_TBS6280		"TurboSight TBS 6280"
+#define SAA716x_DEV_TBS6280		"DVB-T/T2/C"
+
+static int saa716x_tbs6280_frontend_attach(struct saa716x_adapter *adapter, int count)
+{
+	struct saa716x_dev *saa716x = adapter->saa716x;
+	struct saa716x_i2c *i2c0 = &saa716x->i2c[SAA716x_I2C_BUS_A];
+
+	switch (count) {
+	case 0:
+		/* reset */
+		saa716x_gpio_set_output(saa716x, 2);
+		saa716x_gpio_write(saa716x, 2, 0);
+		msleep(200);
+		saa716x_gpio_write(saa716x, 2, 1);
+		msleep(400);
+	case 1:
+		dprintk(SAA716x_ERROR, 1, "Probing for cxd2820r (%d)", count);
+		adapter->fe = cxd2820r_attach(&cxd2820r_config[count],
+					&i2c0->i2c_adapter, NULL);
+		if (!adapter->fe)
+			goto err;
+
+		if (!dvb_attach(tda18212_attach, adapter->fe,
+			&i2c0->i2c_adapter, &tda18212_config[count])) {
+			dvb_frontend_detach(adapter->fe);
+			adapter->fe = NULL;
+			goto err;
+		}
+		break;
+	default:
+		goto err;
+	}
+
+	dprintk(SAA716x_ERROR, 1, "Done!");
+	return 0;
+err:
+	printk(KERN_ERR "%s: frontend initialization failed\n",
+					adapter->saa716x->config->model_name);
+	dprintk(SAA716x_ERROR, 1, "Frontend attach failed");
+	return -ENODEV;
+}
+
+static struct saa716x_config saa716x_tbs6280_config = {
+	.model_name		= SAA716x_MODEL_TBS6280,
+	.dev_type		= SAA716x_DEV_TBS6280,
+	.boot_mode		= SAA716x_EXT_BOOT,
+	.adapters		= 2,
+	.frontend_attach	= saa716x_tbs6280_frontend_attach,
+	.irq_handler		= saa716x_budget_pci_irq,
+	.i2c_rate		= SAA716x_I2C_RATE_100,
+	.i2c_mode		= SAA716x_I2C_MODE_POLLING,
+	.adap_config		= {
+		{
+			/* adapter 0 */
+			.ts_port = 3, /* using FGPI 3 */
+			.worker = demux_worker
+		},
+		{
+			/* adapter 1 */
+			.ts_port = 1, /* using FGPI 1 */
+			.worker = demux_worker
+		},
+	},
+};
+
+#define SAA716x_MODEL_TBS6220		"TurboSight TBS 6220"
+#define SAA716x_DEV_TBS6220		"DVB-T/T2/C"
+
+static int saa716x_tbs6220_frontend_attach(struct saa716x_adapter *adapter, int count)
+{
+	struct saa716x_dev *saa716x = adapter->saa716x;
+	struct saa716x_i2c *i2c = &saa716x->i2c[SAA716x_I2C_BUS_A];
+
+	if (count == 0) {
+		dprintk(SAA716x_ERROR, 1, "Probing for cxd2820r (%d)", count);
+		adapter->fe = cxd2820r_attach(&cxd2820r_config[count],
+					&i2c->i2c_adapter, NULL);
+		if (!adapter->fe)
+			goto err;
+
+		if (!dvb_attach(tda18212_attach, adapter->fe,
+			&i2c->i2c_adapter, &tda18212_config[count])) {
+			dvb_frontend_detach(adapter->fe);
+			adapter->fe = NULL;
+			goto err;
+		}
+		dprintk(SAA716x_ERROR, 1, "Done!");
+		return 0;
+	}
+
+err:
+	printk(KERN_ERR "%s: frontend initialization failed\n",
+					adapter->saa716x->config->model_name);
+	dprintk(SAA716x_ERROR, 1, "Frontend attach failed");
+	return -ENODEV;
+}
+
+static struct saa716x_config saa716x_tbs6220_config = {
+	.model_name		= SAA716x_MODEL_TBS6220,
+	.dev_type		= SAA716x_DEV_TBS6220,
+	.boot_mode		= SAA716x_EXT_BOOT,
+	.adapters		= 1,
+	.frontend_attach	= saa716x_tbs6220_frontend_attach,
+	.irq_handler		= saa716x_budget_pci_irq,
+	.i2c_rate		= SAA716x_I2C_RATE_100,
+	.i2c_mode		= SAA716x_I2C_MODE_POLLING,
+	.adap_config		= {
+		{
+			/* adapter 0 */
+			.ts_port = 3, /* using FGPI 3 */
+			.worker = demux_worker
+		},
 	},
 };
 
@@ -1533,6 +1649,8 @@ static struct pci_device_id saa716x_budget_pci_table[] = {
 	MAKE_ENTRY(KNC_One, KNC_Dual_S2, SAA7160, &saa716x_knc1_duals2_config),
 	MAKE_ENTRY(TECHNISAT, SKYSTAR2_EXPRESS_HD, SAA7160, &skystar2_express_hd_config),
 	MAKE_ENTRY(TURBOSIGHT_TBS6284, TBS6284,   SAA7160, &saa716x_tbs6284_config),
+	MAKE_ENTRY(TURBOSIGHT_TBS6280, TBS6280,   SAA7160, &saa716x_tbs6280_config),
+	MAKE_ENTRY(TURBOSIGHT_TBS6220, TBS6220,   SAA7160, &saa716x_tbs6220_config),
 	MAKE_ENTRY(TURBOSIGHT_TBS6925, TBS6925,   SAA7160, &saa716x_tbs6925_config),
 	MAKE_ENTRY(TURBOSIGHT_TBS6982, TBS6982,   SAA7160, &saa716x_tbs6982_config),
 	MAKE_ENTRY(TURBOSIGHT_TBS6982, TBS6982SE, SAA7160, &saa716x_tbs6982se_config),
