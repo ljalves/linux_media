@@ -229,8 +229,8 @@ static int m88ds3103_read_status(struct dvb_frontend *fe, fe_status_t *status)
 
 	priv->fe_status = *status;
 
-	if (priv->cfg.set_lock_led)
-		priv->cfg.set_lock_led(fe, *status & FE_HAS_LOCK);
+	if (priv->cfg->set_lock_led)
+		priv->cfg->set_lock_led(fe, *status & FE_HAS_LOCK);
 
 	dev_dbg(&priv->i2c->dev, "%s: lock=%02x status=%02x\n",
 			__func__, u8tmp, *status);
@@ -653,8 +653,8 @@ static int m88ds3103_sleep(struct dvb_frontend *fe)
 	int ret;
 	dev_dbg(&priv->i2c->dev, "%s:\n", __func__);
 
-	if (priv->cfg.set_lock_led)
-		priv->cfg.set_lock_led(fe, 0);
+	if (priv->cfg->set_lock_led)
+		priv->cfg->set_lock_led(fe, 0);
 
 	priv->delivery_system = SYS_UNDEFINED;
 
@@ -1129,8 +1129,8 @@ static void m88ds3103_release(struct dvb_frontend *fe)
 {
 	struct m88ds3103_priv *priv = fe->demodulator_priv;
 
-	if (priv->cfg.set_lock_led)
-		priv->cfg.set_lock_led(fe, 0);
+	if (priv->cfg->set_lock_led)
+		priv->cfg->set_lock_led(fe, 0);
 
 	i2c_del_mux_adapter(priv->i2c_adapter);
 	kfree(priv);
