@@ -668,7 +668,7 @@ static int tas2101_get_frontend(struct dvb_frontend *fe)
 		reg += 5;
 	}
 
-	if (reg > 22) {
+	if (reg > 33) {
 		dev_dbg(&priv->i2c->dev, "%s() Unable to get current delivery"
 			" system and mode.\n", __func__);
 		reg = 0;
