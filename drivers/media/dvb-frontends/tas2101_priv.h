@@ -232,6 +232,19 @@ static struct tas2101_modfec tas2101_modfec_modes[] = {
 	{ SYS_DVBS2, PSK_8, FEC_5_6 },
 	{ SYS_DVBS2, PSK_8, FEC_8_9 },
 	{ SYS_DVBS2, PSK_8, FEC_9_10 },
+
+	{ SYS_DVBS2, APSK_16, FEC_2_3 },
+	{ SYS_DVBS2, APSK_16, FEC_3_4 },
+	{ SYS_DVBS2, APSK_16, FEC_4_5 },
+	{ SYS_DVBS2, APSK_16, FEC_5_6 },
+	{ SYS_DVBS2, APSK_16, FEC_8_9 },
+	{ SYS_DVBS2, APSK_16, FEC_9_10 },
+
+	{ SYS_DVBS2, APSK_32, FEC_3_4 },
+	{ SYS_DVBS2, APSK_32, FEC_4_5 },
+	{ SYS_DVBS2, APSK_32, FEC_5_6 },
+	{ SYS_DVBS2, APSK_32, FEC_8_9 },
+	{ SYS_DVBS2, APSK_32, FEC_9_10 },
 };
 
 #endif /* TAS2101_PRIV_H */
