@@ -919,12 +919,12 @@ static void tbs6922_lnb_power(struct dvb_frontend *fe, int onoff)
         struct saa716x_dev *dev = i2c->saa716x;
 	int enpwr_pin = 17;
 
-	/* lnb power, active low */
+	/* lnb power, active high */
 	saa716x_gpio_set_output(dev, enpwr_pin);
 	if (onoff)
-		saa716x_gpio_write(dev, enpwr_pin, 0);
-	else
 		saa716x_gpio_write(dev, enpwr_pin, 1);
+	else
+		saa716x_gpio_write(dev, enpwr_pin, 0);
 }
 
 
@@ -958,7 +958,7 @@ static int saa716x_tbs6922_frontend_attach(
 	msleep(120);
 
 	adapter->fe = dvb_attach(tas2101_attach, &tbs6922_cfg,
-				&dev->i2c[0].i2c_adapter);
+				&dev->i2c[SAA716x_I2C_BUS_A].i2c_adapter);
 	if (adapter->fe == NULL)
 		goto err;
 
@@ -1766,6 +1766,7 @@ static struct pci_device_id saa716x_budget_pci_table[] = {
 	MAKE_ENTRY(TURBOSIGHT_TBS6984, TBS6984,   SAA7160, &saa716x_tbs6984_config),
 	MAKE_ENTRY(TURBOSIGHT_TBS6985, TBS6985,   SAA7160, &saa716x_tbs6985_config),
 	MAKE_ENTRY(TURBOSIGHT_TBS6985, TBS6985+1, SAA7160, &saa716x_tbs6985_config),
+	MAKE_ENTRY(TECHNOTREND,        TT4100,    SAA7160, &saa716x_tbs6922_config),
 	{ }
 };
 MODULE_DEVICE_TABLE(pci, saa716x_budget_pci_table);
