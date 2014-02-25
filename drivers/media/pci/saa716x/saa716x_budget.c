@@ -937,7 +937,7 @@ static struct tas2101_config tbs6922_cfg = {
 
 static struct av201x_config tbs6922_av201x_cfg = {
 	.i2c_address = 0x63,
-	.id          = ID_AV2012,
+	.id          = ID_AV2011,
 	.xtal_freq   = 27000,		/* kHz */
 };
 
