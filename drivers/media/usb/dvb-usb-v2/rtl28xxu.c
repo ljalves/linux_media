@@ -164,6 +164,7 @@ static int rtl28xxu_i2c_xfer(struct i2c_adapter *adap, struct i2c_msg msg[],
 	struct dvb_usb_device *d = i2c_get_adapdata(adap);
 	struct rtl28xxu_priv *priv = d->priv;
 	struct rtl28xxu_req req;
+	int timeout;
 
 	/*
 	 * It is not known which are real I2C bus xfer limits, but testing
@@ -260,6 +261,13 @@ static int rtl28xxu_i2c_xfer(struct i2c_adapter *adap, struct i2c_msg msg[],
 			req.data = msg[0].buf;
 			ret = rtl28xxu_ctrl_msg(d, &req);
 		}
+
+		timeout = 100;
+		while (ret) {
+			msleep(100);
+			ret = rtl28xxu_ctrl_msg(d, &req);
+		}
+
 	} else {
 		ret = -EINVAL;
 	}
@@ -1441,6 +1449,25 @@ static int rtl2832u_get_rc_config(struct dvb_usb_device *d,
 #define rtl2832u_get_rc_config NULL
 #endif
 
+static int rtl2832u_pid_filter_ctrl(struct dvb_usb_adapter *adap, int onoff)
+{
+	struct dvb_usb_device *d = adap_to_d(adap);
+	dev_dbg(&d->udev->dev, "%s: onoff=%d\n", __func__, onoff);
+
+	return rtl2832_pid_filter_ctrl(adap->fe[1], onoff);
+}
+
+static int rtl2832u_pid_filter(struct dvb_usb_adapter *adap, int index, u16 pid,
+		int onoff)
+{
+	struct dvb_usb_device *d = adap_to_d(adap);
+	dev_dbg(&d->udev->dev, "%s: index=%d pid=%04x onoff=%d\n",
+			__func__, index, pid, onoff);
+
+	return rtl2832_pid_filter(adap->fe[1], index, pid, onoff);
+}
+
+
 static const struct dvb_usb_device_properties rtl2831u_props = {
 	.driver_name = KBUILD_MODNAME,
 	.owner = THIS_MODULE,
@@ -1458,6 +1485,7 @@ static const struct dvb_usb_device_properties rtl2831u_props = {
 	.num_adapters = 1,
 	.adapter = {
 		{
+
 			.stream = DVB_USB_STREAM_BULK(0x81, 6, 8 * 512),
 		},
 	},
@@ -1476,11 +1504,18 @@ static const struct dvb_usb_device_properties rtl2832u_props = {
 	.tuner_attach = rtl2832u_tuner_attach,
 	.init = rtl28xxu_init,
 	.exit = rtl28xxu_exit,
-	.get_rc_config = rtl2832u_get_rc_config,
+//	.get_rc_config = rtl2832u_get_rc_config,
 
 	.num_adapters = 1,
 	.adapter = {
 		{
+			.caps = DVB_USB_ADAP_HAS_PID_FILTER |
+				DVB_USB_ADAP_NEED_PID_FILTERING,
+
+			.pid_filter_count = 32,
+			.pid_filter_ctrl = rtl2832u_pid_filter_ctrl,
+			.pid_filter = rtl2832u_pid_filter,
+
 			.stream = DVB_USB_STREAM_BULK(0x81, 6, 8 * 512),
 		},
 	},

@@ -933,6 +933,107 @@ static void rtl2832_release(struct dvb_frontend *fe)
 	kfree(priv);
 }
 
+
+int rtl2832_pid_filter_ctrl(struct dvb_frontend *fe, int onoff)
+{
+	struct rtl2832_priv *priv = fe->demodulator_priv;
+	int ret;
+	u8 u8tmp;
+	dev_dbg(&priv->i2c->dev, "%s: onoff=%d\n", __func__, onoff);
+
+	if (onoff)
+		u8tmp = 0xa8;
+	else
+		u8tmp = 0x28;
+
+	ret = rtl2832_wr_reg(priv, 0x21, 0, u8tmp);
+	if (ret)
+		goto err;
+
+
+#if 0
+	if (onoff)
+		u8tmp = 0x80;
+	else
+		u8tmp = 0x00;
+
+	ret = rtl2832_wr_reg(priv, 0x61, 0, u8tmp);
+	if (ret)
+		goto err;
+#endif
+
+	return 0;
+err:
+	dev_dbg(&priv->i2c->dev, "%s: failed=%d\n", __func__, ret);
+	return ret;
+}
+EXPORT_SYMBOL(rtl2832_pid_filter_ctrl);
+
+int rtl2832_pid_filter(struct dvb_frontend *fe, u8 index, u16 pid, int onoff)
+{
+	struct rtl2832_priv *priv = fe->demodulator_priv;
+	int ret = 0;
+	u8 buf[4];
+
+	dev_info(&priv->i2c->dev, "%s: index=%d pid=%04x onoff=%d\n",
+			__func__, index, pid, onoff);
+
+	if (pid > 0x1fff)
+		return 0;
+
+	if (onoff)
+		set_bit(index, &priv->filters);
+	else
+		clear_bit(index, &priv->filters);
+
+	buf[0] = (pid >> 8) & 0xff;
+	buf[1] = (pid >> 0) & 0xff;
+	ret = rtl2832_wr_regs(priv, 0x26 + 2 * index, 0, buf, 2);
+	if (ret)
+		goto err;
+
+#if 0
+	ret = rtl2832_wr_regs(priv, 0x66 + 2 * index, 0, buf, 2);
+	if (ret)
+		goto err;
+#endif
+
+	buf[0] = (priv->filters >> 0) & 0xff;
+	buf[1] = (priv->filters >> 8) & 0xff;
+	buf[2] = (priv->filters >> 16) & 0xff;
+	buf[3] = (priv->filters >> 24) & 0xff;
+	ret = rtl2832_wr_regs(priv, 0x22, 0, buf, 4);
+	if (ret)
+		goto err;
+
+#if 0
+	ret = rtl2832_wr_regs(priv, 0x62, 0, buf, 4);
+	if (ret)
+		goto err;
+#endif
+
+#if 0
+	/* soft reset */
+	ret = rtl2832_wr_demod_reg(priv, DVBT_SOFT_RST, 0x1);
+	if (ret)
+		goto err;
+
+	ret = rtl2832_wr_demod_reg(priv, DVBT_SOFT_RST, 0x0);
+	if (ret)
+		goto err;
+#endif
+
+	return 0;
+err:
+	dev_dbg(&priv->i2c->dev, "%s: failed=%d\n", __func__, ret);
+	return ret;
+}
+EXPORT_SYMBOL(rtl2832_pid_filter);
+
+
+
+
+
 /*
  * Delay mechanism to avoid unneeded I2C gate open / close. Gate close is
  * delayed here a little bit in order to see if there is sequence of I2C

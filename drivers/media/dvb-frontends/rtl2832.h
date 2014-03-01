@@ -64,6 +64,17 @@ extern struct i2c_adapter *rtl2832_get_private_i2c_adapter(
 	struct dvb_frontend *fe
 );
 
+extern int rtl2832_pid_filter_ctrl(
+	struct dvb_frontend *fe,
+	int onoff
+);
+extern int rtl2832_pid_filter(
+	struct dvb_frontend *fe,
+	u8 index,
+	u16 pid,
+	int onoff
+);
+
 #else
 
 static inline struct dvb_frontend *rtl2832_attach(
