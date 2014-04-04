@@ -170,11 +170,44 @@ static int tas2101_read_status(struct dvb_frontend *fe, fe_status_t *status)
 	return ret;
 }
 
-/* unimplemented */
 static int tas2101_read_ber(struct dvb_frontend *fe, u32 *ber)
 {
 	struct tas2101_priv *priv = fe->demodulator_priv;
-	*ber = 0;
+	struct dtv_frontend_properties *c = &fe->dtv_property_cache;
+	int ret;
+
+	dev_dbg(&priv->i2c->dev, "%s()\n", __func__);
+
+	switch (c->delivery_system) {
+	case SYS_DVBS: {
+        u8 buf[4];
+
+        ret = tas2101_rdm(priv, S1_BER_0, buf, 4);
+        if (ret)
+            return ret;
+
+        *ber = ((((u32)buf[3] & 3)<<24)
+             |  (((u32)buf[2])<<16)
+             |  (((u32)buf[1])<<8)
+             |   ((u32)buf[0]));
+        break;
+    }
+	case SYS_DVBS2: {
+        u8 buf[2];
+
+        ret = tas2101_rdm(priv, S2_BER_0, buf, 2);
+        if (ret)
+            return ret;
+
+        *ber = ((((u32)buf[1])<<8)
+             |  ((u32)buf[0]));
+        break;
+    }
+    default:
+        *ber = 0;
+        break;
+    }
+
 	dev_dbg(&priv->i2c->dev, "%s() ber = %d\n", __func__, *ber);
 	return 0;
 }
@@ -183,15 +216,33 @@ static int tas2101_read_signal_strength(struct dvb_frontend *fe,
 	u16 *signal_strength)
 {
 	struct tas2101_priv *priv = fe->demodulator_priv;
-	int ret;
+	int ret, i;
+	long dbm_raw;
 	u8 buf[2];
 
 	ret = tas2101_rdm(priv, SIGSTR_0, buf, 2);
 	if (ret)
 		return ret;
 
-	/* return raw value - left justified */
-	*signal_strength = (buf[1] & 0xf0) | (buf[0] << 4);
+	dbm_raw = (((u16)buf[1] & 0x0f) << 8) | buf[0];
+
+	for (i = 0; i < ARRAY_SIZE(tas2101_dbmtable) - 1; i++)
+		if (tas2101_dbmtable[i].raw < dbm_raw)
+			break;
+
+    if( i == 0 )
+        *signal_strength = tas2101_dbmtable[i].dbm;
+    else
+    {
+        long val;
+
+        /* linear interpolation between two calibrated values */
+        val = (dbm_raw - tas2101_dbmtable[i].raw) * tas2101_dbmtable[i-1].dbm;
+        val += (tas2101_dbmtable[i-1].raw - dbm_raw) * tas2101_dbmtable[i].dbm;
+        val /= (tas2101_dbmtable[i-1].raw - tas2101_dbmtable[i].raw);
+
+        *signal_strength = (u16)val;
+    }
 
 	dev_dbg(&priv->i2c->dev, "%s() strength = 0x%04x\n",
 		__func__, *signal_strength);
@@ -209,13 +260,25 @@ static int tas2101_read_snr(struct dvb_frontend *fe, u16 *snr)
 	if (ret)
 		return ret;
 
-	snr_raw = (buf[1] & 0x0f) | buf[0];
+	snr_raw = (((u16)buf[1] & 0x0f) << 8) | buf[0];
 
 	for (i = 0; i < ARRAY_SIZE(tas2101_snrtable) - 1; i++)
 		if (tas2101_snrtable[i].raw < snr_raw)
 			break;
 
-	*snr = tas2101_snrtable[i].snr;
+    if( i == 0 )
+        *snr = tas2101_snrtable[i].snr;
+    else
+    {
+        long val;
+
+        /* linear interpolation between two calibrated values */
+        val = (snr_raw - tas2101_snrtable[i].raw) * tas2101_snrtable[i-1].snr;
+        val += (tas2101_snrtable[i-1].raw - snr_raw) * tas2101_snrtable[i].snr;
+        val /= (tas2101_snrtable[i-1].raw - tas2101_snrtable[i].raw);
+
+        *snr = (u16)val; /* dB / 10 */
+    }
 
 	dev_dbg(&priv->i2c->dev, "%s() snr = 0x%04x\n",
 		__func__, *snr);
