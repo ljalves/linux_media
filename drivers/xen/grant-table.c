@@ -928,17 +928,12 @@ void gnttab_batch_copy(struct gnttab_copy *batch, unsigned count)
 }
 EXPORT_SYMBOL_GPL(gnttab_batch_copy);
 
-int __gnttab_map_refs(struct gnttab_map_grant_ref *map_ops,
+int gnttab_map_refs(struct gnttab_map_grant_ref *map_ops,
 		    struct gnttab_map_grant_ref *kmap_ops,
-		    struct page **pages, unsigned int count,
-		    bool m2p_override)
+		    struct page **pages, unsigned int count)
 {
 	int i, ret;
-	bool lazy = false;
-	pte_t *pte;
-	unsigned long mfn, pfn;
 
-	BUG_ON(kmap_ops && !m2p_override);
 	ret = HYPERVISOR_grant_table_op(GNTTABOP_map_grant_ref, map_ops, count);
 	if (ret)
 		return ret;
@@ -949,148 +944,23 @@ int __gnttab_map_refs(struct gnttab_map_grant_ref *map_ops,
 			gnttab_retry_eagain_gop(GNTTABOP_map_grant_ref, map_ops + i,
 						&map_ops[i].status, __func__);
 
-	/* this is basically a nop on x86 */
-	if (xen_feature(XENFEAT_auto_translated_physmap)) {
-		for (i = 0; i < count; i++) {
-			if (map_ops[i].status)
-				continue;
-			set_phys_to_machine(map_ops[i].host_addr >> PAGE_SHIFT,
-					map_ops[i].dev_bus_addr >> PAGE_SHIFT);
-		}
-		return 0;
-	}
-
-	if (m2p_override &&
-	    !in_interrupt() &&
-	    paravirt_get_lazy_mode() == PARAVIRT_LAZY_NONE) {
-		arch_enter_lazy_mmu_mode();
-		lazy = true;
-	}
-
-	for (i = 0; i < count; i++) {
-		/* Do not add to override if the map failed. */
-		if (map_ops[i].status)
-			continue;
-
-		if (map_ops[i].flags & GNTMAP_contains_pte) {
-			pte = (pte_t *) (mfn_to_virt(PFN_DOWN(map_ops[i].host_addr)) +
-				(map_ops[i].host_addr & ~PAGE_MASK));
-			mfn = pte_mfn(*pte);
-		} else {
-			mfn = PFN_DOWN(map_ops[i].dev_bus_addr);
-		}
-		pfn = page_to_pfn(pages[i]);
-
-		WARN_ON(PagePrivate(pages[i]));
-		SetPagePrivate(pages[i]);
-		set_page_private(pages[i], mfn);
-
-		pages[i]->index = pfn_to_mfn(pfn);
-		if (unlikely(!set_phys_to_machine(pfn, FOREIGN_FRAME(mfn)))) {
-			ret = -ENOMEM;
-			goto out;
-		}
-		if (m2p_override)
-			ret = m2p_add_override(mfn, pages[i], kmap_ops ?
-					       &kmap_ops[i] : NULL);
-		if (ret)
-			goto out;
-	}
-
- out:
-	if (lazy)
-		arch_leave_lazy_mmu_mode();
-
-	return ret;
-}
-
-int gnttab_map_refs(struct gnttab_map_grant_ref *map_ops,
-		    struct page **pages, unsigned int count)
-{
-	return __gnttab_map_refs(map_ops, NULL, pages, count, false);
+	return set_foreign_p2m_mapping(map_ops, kmap_ops, pages, count);
 }
 EXPORT_SYMBOL_GPL(gnttab_map_refs);
 
-int gnttab_map_refs_userspace(struct gnttab_map_grant_ref *map_ops,
-			      struct gnttab_map_grant_ref *kmap_ops,
-			      struct page **pages, unsigned int count)
-{
-	return __gnttab_map_refs(map_ops, kmap_ops, pages, count, true);
-}
-EXPORT_SYMBOL_GPL(gnttab_map_refs_userspace);
-
-int __gnttab_unmap_refs(struct gnttab_unmap_grant_ref *unmap_ops,
+int gnttab_unmap_refs(struct gnttab_unmap_grant_ref *unmap_ops,
 		      struct gnttab_map_grant_ref *kmap_ops,
-		      struct page **pages, unsigned int count,
-		      bool m2p_override)
+		      struct page **pages, unsigned int count)
 {
-	int i, ret;
-	bool lazy = false;
-	unsigned long pfn, mfn;
+	int ret;
 
-	BUG_ON(kmap_ops && !m2p_override);
 	ret = HYPERVISOR_grant_table_op(GNTTABOP_unmap_grant_ref, unmap_ops, count);
 	if (ret)
 		return ret;
 
-	/* this is basically a nop on x86 */
-	if (xen_feature(XENFEAT_auto_translated_physmap)) {
-		for (i = 0; i < count; i++) {
-			set_phys_to_machine(unmap_ops[i].host_addr >> PAGE_SHIFT,
-					INVALID_P2M_ENTRY);
-		}
-		return 0;
-	}
-
-	if (m2p_override &&
-	    !in_interrupt() &&
-	    paravirt_get_lazy_mode() == PARAVIRT_LAZY_NONE) {
-		arch_enter_lazy_mmu_mode();
-		lazy = true;
-	}
-
-	for (i = 0; i < count; i++) {
-		pfn = page_to_pfn(pages[i]);
-		mfn = get_phys_to_machine(pfn);
-		if (mfn == INVALID_P2M_ENTRY || !(mfn & FOREIGN_FRAME_BIT)) {
-			ret = -EINVAL;
-			goto out;
-		}
-
-		set_page_private(pages[i], INVALID_P2M_ENTRY);
-		WARN_ON(!PagePrivate(pages[i]));
-		ClearPagePrivate(pages[i]);
-		set_phys_to_machine(pfn, pages[i]->index);
-		if (m2p_override)
-			ret = m2p_remove_override(pages[i],
-						  kmap_ops ?
-						   &kmap_ops[i] : NULL,
-						  mfn);
-		if (ret)
-			goto out;
-	}
-
- out:
-	if (lazy)
-		arch_leave_lazy_mmu_mode();
-
-	return ret;
-}
-
-int gnttab_unmap_refs(struct gnttab_unmap_grant_ref *map_ops,
-		    struct page **pages, unsigned int count)
-{
-	return __gnttab_unmap_refs(map_ops, NULL, pages, count, false);
+	return clear_foreign_p2m_mapping(unmap_ops, kmap_ops, pages, count);
 }
 EXPORT_SYMBOL_GPL(gnttab_unmap_refs);
-
-int gnttab_unmap_refs_userspace(struct gnttab_unmap_grant_ref *map_ops,
-				struct gnttab_map_grant_ref *kmap_ops,
-				struct page **pages, unsigned int count)
-{
-	return __gnttab_unmap_refs(map_ops, kmap_ops, pages, count, true);
-}
-EXPORT_SYMBOL_GPL(gnttab_unmap_refs_userspace);
 
 static unsigned nr_status_frames(unsigned nr_grant_frames)
 {

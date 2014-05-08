@@ -435,10 +435,10 @@ static int start_streaming(struct vb2_queue *vq, unsigned int count)
 	return 0;
 }
 
-static int stop_streaming(struct vb2_queue *vq)
+static void stop_streaming(struct vb2_queue *vq)
 {
 	struct camif_vp *vp = vb2_get_drv_priv(vq);
-	return camif_stop_capture(vp);
+	camif_stop_capture(vp);
 }
 
 static int queue_setup(struct vb2_queue *vq, const struct v4l2_format *pfmt,
@@ -1160,7 +1160,7 @@ int s3c_camif_register_video_node(struct camif_dev *camif, int idx)
 	q->mem_ops = &vb2_dma_contig_memops;
 	q->buf_struct_size = sizeof(struct camif_buffer);
 	q->drv_priv = vp;
-	q->timestamp_type = V4L2_BUF_FLAG_TIMESTAMP_MONOTONIC;
+	q->timestamp_flags = V4L2_BUF_FLAG_TIMESTAMP_MONOTONIC;
 
 	ret = vb2_queue_init(q);
 	if (ret)

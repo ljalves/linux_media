@@ -889,19 +889,28 @@ static void buffer_queue(struct vb2_buffer *vb)
 static int start_streaming(struct vb2_queue *vq, unsigned int count)
 {
 	struct vivi_dev *dev = vb2_get_drv_priv(vq);
+	int err;
 
 	dprintk(dev, 1, "%s\n", __func__);
 	dev->seq_count = 0;
-	return vivi_start_generating(dev);
+	err = vivi_start_generating(dev);
+	if (err) {
+		struct vivi_buffer *buf, *tmp;
+
+		list_for_each_entry_safe(buf, tmp, &dev->vidq.active, list) {
+			list_del(&buf->list);
+			vb2_buffer_done(&buf->vb, VB2_BUF_STATE_QUEUED);
+		}
+	}
+	return err;
 }
 
 /* abort streaming and wait for last buffer */
-static int stop_streaming(struct vb2_queue *vq)
+static void stop_streaming(struct vb2_queue *vq)
 {
 	struct vivi_dev *dev = vb2_get_drv_priv(vq);
 	dprintk(dev, 1, "%s\n", __func__);
 	vivi_stop_generating(dev);
-	return 0;
 }
 
 static void vivi_lock(struct vb2_queue *vq)
@@ -1111,7 +1120,11 @@ static int vidioc_enum_frameintervals(struct file *file, void *priv,
 	if (!fmt)
 		return -EINVAL;
 
-	/* regarding width & height - we support any */
+	/* check for valid width/height */
+	if (fival->width < 48 || fival->width > MAX_WIDTH || (fival->width & 3))
+		return -EINVAL;
+	if (fival->height < 32 || fival->height > MAX_HEIGHT)
+		return -EINVAL;
 
 	fival->type = V4L2_FRMIVAL_TYPE_CONTINUOUS;
 
@@ -1429,7 +1442,7 @@ static int __init vivi_create_instance(int inst)
 	q->buf_struct_size = sizeof(struct vivi_buffer);
 	q->ops = &vivi_video_qops;
 	q->mem_ops = &vb2_vmalloc_memops;
-	q->timestamp_type = V4L2_BUF_FLAG_TIMESTAMP_MONOTONIC;
+	q->timestamp_flags = V4L2_BUF_FLAG_TIMESTAMP_MONOTONIC;
 
 	ret = vb2_queue_init(q);
 	if (ret)

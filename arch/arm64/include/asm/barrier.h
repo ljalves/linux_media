@@ -25,7 +25,8 @@
 #define wfi()		asm volatile("wfi" : : : "memory")
 
 #define isb()		asm volatile("isb" : : : "memory")
-#define dsb()		asm volatile("dsb sy" : : : "memory")
+#define dmb(opt)	asm volatile("dmb sy" : : : "memory")
+#define dsb(opt)	asm volatile("dsb sy" : : : "memory")
 
 #define mb()		dsb()
 #define rmb()		asm volatile("dsb ld" : : : "memory")

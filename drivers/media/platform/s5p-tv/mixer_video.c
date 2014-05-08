@@ -946,11 +946,6 @@ static int start_streaming(struct vb2_queue *vq, unsigned int count)
 
 	mxr_dbg(mdev, "%s\n", __func__);
 
-	if (count == 0) {
-		mxr_dbg(mdev, "no output buffers queued\n");
-		return -ENOBUFS;
-	}
-
 	/* block any changes in output configuration */
 	mxr_output_get(mdev);
 
@@ -990,7 +985,7 @@ static void mxr_watchdog(unsigned long arg)
 	spin_unlock_irqrestore(&layer->enq_slock, flags);
 }
 
-static int stop_streaming(struct vb2_queue *vq)
+static void stop_streaming(struct vb2_queue *vq)
 {
 	struct mxr_layer *layer = vb2_get_drv_priv(vq);
 	struct mxr_device *mdev = layer->mdev;
@@ -1036,7 +1031,6 @@ static int stop_streaming(struct vb2_queue *vq)
 	mxr_streamer_put(mdev);
 	/* allow changes in output configuration */
 	mxr_output_put(mdev);
-	return 0;
 }
 
 static struct vb2_ops mxr_video_qops = {
@@ -1124,6 +1118,7 @@ struct mxr_layer *mxr_base_layer_create(struct mxr_device *mdev,
 		.drv_priv = layer,
 		.buf_struct_size = sizeof(struct mxr_buffer),
 		.ops = &mxr_video_qops,
+		.min_buffers_needed = 1,
 		.mem_ops = &vb2_dma_contig_memops,
 	};
 

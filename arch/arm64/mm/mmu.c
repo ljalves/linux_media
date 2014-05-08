@@ -125,7 +125,7 @@ early_param("cachepolicy", early_cachepolicy);
 /*
  * Adjust the PMD section entries according to the CPU in use.
  */
-static void __init init_mem_pgprot(void)
+void __init init_mem_pgprot(void)
 {
 	pteval_t default_pgprot;
 	int i;
@@ -203,10 +203,18 @@ static void __init alloc_init_pmd(pud_t *pud, unsigned long addr,
 	do {
 		next = pmd_addr_end(addr, end);
 		/* try section mapping first */
-		if (((addr | next | phys) & ~SECTION_MASK) == 0)
+		if (((addr | next | phys) & ~SECTION_MASK) == 0) {
+			pmd_t old_pmd =*pmd;
 			set_pmd(pmd, __pmd(phys | prot_sect_kernel));
-		else
+			/*
+			 * Check for previous table entries created during
+			 * boot (__create_page_tables) and flush them.
+			 */
+			if (!pmd_none(old_pmd))
+				flush_tlb_all();
+		} else {
 			alloc_init_pte(pmd, addr, next, __phys_to_pfn(phys));
+		}
 		phys += next - addr;
 	} while (pmd++, addr = next, addr != end);
 }
@@ -251,47 +259,6 @@ static void __init create_mapping(phys_addr_t phys, unsigned long virt,
 		phys += next - addr;
 	} while (pgd++, addr = next, addr != end);
 }
-
-#ifdef CONFIG_EARLY_PRINTK
-/*
- * Create an early I/O mapping using the pgd/pmd entries already populated
- * in head.S as this function is called too early to allocated any memory. The
- * mapping size is 2MB with 4KB pages or 64KB or 64KB pages.
- */
-void __iomem * __init early_io_map(phys_addr_t phys, unsigned long virt)
-{
-	unsigned long size, mask;
-	bool page64k = IS_ENABLED(CONFIG_ARM64_64K_PAGES);
-	pgd_t *pgd;
-	pud_t *pud;
-	pmd_t *pmd;
-	pte_t *pte;
-
-	/*
-	 * No early pte entries with !ARM64_64K_PAGES configuration, so using
-	 * sections (pmd).
-	 */
-	size = page64k ? PAGE_SIZE : SECTION_SIZE;
-	mask = ~(size - 1);
-
-	pgd = pgd_offset_k(virt);
-	pud = pud_offset(pgd, virt);
-	if (pud_none(*pud))
-		return NULL;
-	pmd = pmd_offset(pud, virt);
-
-	if (page64k) {
-		if (pmd_none(*pmd))
-			return NULL;
-		pte = pte_offset_kernel(pmd, virt);
-		set_pte(pte, __pte((phys & mask) | PROT_DEVICE_nGnRE));
-	} else {
-		set_pmd(pmd, __pmd((phys & mask) | PROT_SECT_DEVICE_nGnRE));
-	}
-
-	return (void __iomem *)((virt & mask) + (phys & ~mask));
-}
-#endif
 
 static void __init map_mem(void)
 {
@@ -349,7 +316,6 @@ void __init paging_init(void)
 {
 	void *zero_page;
 
-	init_mem_pgprot();
 	map_mem();
 
 	/*

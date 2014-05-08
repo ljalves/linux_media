@@ -64,10 +64,9 @@ static int cfg80211_conn_scan(struct wireless_dev *wdev)
 	int n_channels, err;
 
 	ASSERT_RTNL();
-	ASSERT_RDEV_LOCK(rdev);
 	ASSERT_WDEV_LOCK(wdev);
 
-	if (rdev->scan_req)
+	if (rdev->scan_req || rdev->scan_msg)
 		return -EBUSY;
 
 	if (wdev->conn->params.channel)

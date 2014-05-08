@@ -49,8 +49,14 @@ extern bool __set_phys_to_machine(unsigned long pfn, unsigned long mfn);
 extern unsigned long set_phys_range_identity(unsigned long pfn_s,
 					     unsigned long pfn_e);
 
+extern int set_foreign_p2m_mapping(struct gnttab_map_grant_ref *map_ops,
+				   struct gnttab_map_grant_ref *kmap_ops,
+				   struct page **pages, unsigned int count);
 extern int m2p_add_override(unsigned long mfn, struct page *page,
 			    struct gnttab_map_grant_ref *kmap_op);
+extern int clear_foreign_p2m_mapping(struct gnttab_unmap_grant_ref *unmap_ops,
+				     struct gnttab_map_grant_ref *kmap_ops,
+				     struct page **pages, unsigned int count);
 extern int m2p_remove_override(struct page *page,
 			       struct gnttab_map_grant_ref *kmap_op,
 			       unsigned long mfn);

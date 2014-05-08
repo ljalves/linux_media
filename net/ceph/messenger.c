@@ -383,7 +383,7 @@ static void con_sock_state_closed(struct ceph_connection *con)
  */
 
 /* data available on socket, or listen socket received a connect */
-static void ceph_sock_data_ready(struct sock *sk, int count_unused)
+static void ceph_sock_data_ready(struct sock *sk)
 {
 	struct ceph_connection *con = sk->sk_user_data;
 	if (atomic_read(&con->msgr->stopping)) {
@@ -840,9 +840,13 @@ static bool ceph_msg_data_bio_advance(struct ceph_msg_data_cursor *cursor,
 
 	if (!cursor->bvec_iter.bi_size) {
 		bio = bio->bi_next;
-		cursor->bvec_iter = bio->bi_iter;
+		cursor->bio = bio;
+		if (bio)
+			cursor->bvec_iter = bio->bi_iter;
+		else
+			memset(&cursor->bvec_iter, 0,
+			       sizeof(cursor->bvec_iter));
 	}
-	cursor->bio = bio;
 
 	if (!cursor->last_piece) {
 		BUG_ON(!cursor->resid);
@@ -914,6 +918,9 @@ static bool ceph_msg_data_pages_advance(struct ceph_msg_data_cursor *cursor,
 	cursor->page_offset = (cursor->page_offset + bytes) & ~PAGE_MASK;
 	if (!bytes || cursor->page_offset)
 		return false;	/* more bytes to process in the current page */
+
+	if (!cursor->resid)
+		return false;   /* no more data */
 
 	/* Move on to the next page; offset is already at 0 */
 
@@ -999,6 +1006,9 @@ static bool ceph_msg_data_pagelist_advance(struct ceph_msg_data_cursor *cursor,
 	/* offset of first page in pagelist is always 0 */
 	if (!bytes || cursor->offset & ~PAGE_MASK)
 		return false;	/* more bytes to process in the current page */
+
+	if (!cursor->resid)
+		return false;   /* no more data */
 
 	/* Move on to the next page */
 

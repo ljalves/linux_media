@@ -161,18 +161,25 @@ static void __cfg80211_bss_expire(struct cfg80211_registered_device *dev,
 		dev->bss_generation++;
 }
 
-void ___cfg80211_scan_done(struct cfg80211_registered_device *rdev)
+void ___cfg80211_scan_done(struct cfg80211_registered_device *rdev,
+			   bool send_message)
 {
 	struct cfg80211_scan_request *request;
 	struct wireless_dev *wdev;
+	struct sk_buff *msg;
 #ifdef CONFIG_CFG80211_WEXT
 	union iwreq_data wrqu;
 #endif
 
 	ASSERT_RTNL();
 
-	request = rdev->scan_req;
+	if (rdev->scan_msg) {
+		nl80211_send_scan_result(rdev, rdev->scan_msg);
+		rdev->scan_msg = NULL;
+		return;
+	}
 
+	request = rdev->scan_req;
 	if (!request)
 		return;
 
@@ -186,17 +193,15 @@ void ___cfg80211_scan_done(struct cfg80211_registered_device *rdev)
 	if (wdev->netdev)
 		cfg80211_sme_scan_done(wdev->netdev);
 
-	if (request->aborted) {
-		nl80211_send_scan_aborted(rdev, wdev);
-	} else {
-		if (request->flags & NL80211_SCAN_FLAG_FLUSH) {
-			/* flush entries from previous scans */
-			spin_lock_bh(&rdev->bss_lock);
-			__cfg80211_bss_expire(rdev, request->scan_start);
-			spin_unlock_bh(&rdev->bss_lock);
-		}
-		nl80211_send_scan_done(rdev, wdev);
+	if (!request->aborted &&
+	    request->flags & NL80211_SCAN_FLAG_FLUSH) {
+		/* flush entries from previous scans */
+		spin_lock_bh(&rdev->bss_lock);
+		__cfg80211_bss_expire(rdev, request->scan_start);
+		spin_unlock_bh(&rdev->bss_lock);
 	}
+
+	msg = nl80211_build_scan_msg(rdev, wdev, request->aborted);
 
 #ifdef CONFIG_CFG80211_WEXT
 	if (wdev->netdev && !request->aborted) {
@@ -211,6 +216,11 @@ void ___cfg80211_scan_done(struct cfg80211_registered_device *rdev)
 
 	rdev->scan_req = NULL;
 	kfree(request);
+
+	if (!send_message)
+		rdev->scan_msg = msg;
+	else
+		nl80211_send_scan_result(rdev, msg);
 }
 
 void __cfg80211_scan_done(struct work_struct *wk)
@@ -221,7 +231,7 @@ void __cfg80211_scan_done(struct work_struct *wk)
 			    scan_done_wk);
 
 	rtnl_lock();
-	___cfg80211_scan_done(rdev);
+	___cfg80211_scan_done(rdev, true);
 	rtnl_unlock();
 }
 
@@ -649,9 +659,6 @@ static bool cfg80211_combine_bsses(struct cfg80211_registered_device *dev,
 			continue;
 		if (ssidlen && ie[1] != ssidlen)
 			continue;
-		/* that would be odd ... */
-		if (bss->pub.beacon_ies)
-			continue;
 		if (WARN_ON_ONCE(bss->pub.hidden_beacon_bss))
 			continue;
 		if (WARN_ON_ONCE(!list_empty(&bss->hidden_list)))
@@ -670,7 +677,8 @@ static bool cfg80211_combine_bsses(struct cfg80211_registered_device *dev,
 /* Returned bss is reference counted and must be cleaned up appropriately. */
 static struct cfg80211_internal_bss *
 cfg80211_bss_update(struct cfg80211_registered_device *dev,
-		    struct cfg80211_internal_bss *tmp)
+		    struct cfg80211_internal_bss *tmp,
+		    bool signal_valid)
 {
 	struct cfg80211_internal_bss *found = NULL;
 
@@ -755,7 +763,12 @@ cfg80211_bss_update(struct cfg80211_registered_device *dev,
 		}
 
 		found->pub.beacon_interval = tmp->pub.beacon_interval;
-		found->pub.signal = tmp->pub.signal;
+		/*
+		 * don't update the signal if beacon was heard on
+		 * adjacent channel.
+		 */
+		if (signal_valid)
+			found->pub.signal = tmp->pub.signal;
 		found->pub.capability = tmp->pub.capability;
 		found->ts = tmp->ts;
 	} else {
@@ -859,13 +872,14 @@ cfg80211_get_bss_channel(struct wiphy *wiphy, const u8 *ie, size_t ielen,
 /* Returned bss is reference counted and must be cleaned up appropriately. */
 struct cfg80211_bss*
 cfg80211_inform_bss_width(struct wiphy *wiphy,
-			  struct ieee80211_channel *channel,
+			  struct ieee80211_channel *rx_channel,
 			  enum nl80211_bss_scan_width scan_width,
 			  const u8 *bssid, u64 tsf, u16 capability,
 			  u16 beacon_interval, const u8 *ie, size_t ielen,
 			  s32 signal, gfp_t gfp)
 {
 	struct cfg80211_bss_ies *ies;
+	struct ieee80211_channel *channel;
 	struct cfg80211_internal_bss tmp = {}, *res;
 
 	if (WARN_ON(!wiphy))
@@ -875,7 +889,7 @@ cfg80211_inform_bss_width(struct wiphy *wiphy,
 			(signal < 0 || signal > 100)))
 		return NULL;
 
-	channel = cfg80211_get_bss_channel(wiphy, ie, ielen, channel);
+	channel = cfg80211_get_bss_channel(wiphy, ie, ielen, rx_channel);
 	if (!channel)
 		return NULL;
 
@@ -903,7 +917,8 @@ cfg80211_inform_bss_width(struct wiphy *wiphy,
 	rcu_assign_pointer(tmp.pub.beacon_ies, ies);
 	rcu_assign_pointer(tmp.pub.ies, ies);
 
-	res = cfg80211_bss_update(wiphy_to_dev(wiphy), &tmp);
+	res = cfg80211_bss_update(wiphy_to_dev(wiphy), &tmp,
+				  rx_channel == channel);
 	if (!res)
 		return NULL;
 
@@ -919,20 +934,21 @@ EXPORT_SYMBOL(cfg80211_inform_bss_width);
 /* Returned bss is reference counted and must be cleaned up appropriately. */
 struct cfg80211_bss *
 cfg80211_inform_bss_width_frame(struct wiphy *wiphy,
-				struct ieee80211_channel *channel,
+				struct ieee80211_channel *rx_channel,
 				enum nl80211_bss_scan_width scan_width,
 				struct ieee80211_mgmt *mgmt, size_t len,
 				s32 signal, gfp_t gfp)
 {
 	struct cfg80211_internal_bss tmp = {}, *res;
 	struct cfg80211_bss_ies *ies;
+	struct ieee80211_channel *channel;
 	size_t ielen = len - offsetof(struct ieee80211_mgmt,
 				      u.probe_resp.variable);
 
 	BUILD_BUG_ON(offsetof(struct ieee80211_mgmt, u.probe_resp.variable) !=
 			offsetof(struct ieee80211_mgmt, u.beacon.variable));
 
-	trace_cfg80211_inform_bss_width_frame(wiphy, channel, scan_width, mgmt,
+	trace_cfg80211_inform_bss_width_frame(wiphy, rx_channel, scan_width, mgmt,
 					      len, signal);
 
 	if (WARN_ON(!mgmt))
@@ -949,7 +965,7 @@ cfg80211_inform_bss_width_frame(struct wiphy *wiphy,
 		return NULL;
 
 	channel = cfg80211_get_bss_channel(wiphy, mgmt->u.beacon.variable,
-					   ielen, channel);
+					   ielen, rx_channel);
 	if (!channel)
 		return NULL;
 
@@ -973,7 +989,8 @@ cfg80211_inform_bss_width_frame(struct wiphy *wiphy,
 	tmp.pub.beacon_interval = le16_to_cpu(mgmt->u.probe_resp.beacon_int);
 	tmp.pub.capability = le16_to_cpu(mgmt->u.probe_resp.capab_info);
 
-	res = cfg80211_bss_update(wiphy_to_dev(wiphy), &tmp);
+	res = cfg80211_bss_update(wiphy_to_dev(wiphy), &tmp,
+				  rx_channel == channel);
 	if (!res)
 		return NULL;
 
@@ -1079,7 +1096,7 @@ int cfg80211_wext_siwscan(struct net_device *dev,
 	if (IS_ERR(rdev))
 		return PTR_ERR(rdev);
 
-	if (rdev->scan_req) {
+	if (rdev->scan_req || rdev->scan_msg) {
 		err = -EBUSY;
 		goto out;
 	}
@@ -1481,7 +1498,7 @@ int cfg80211_wext_giwscan(struct net_device *dev,
 	if (IS_ERR(rdev))
 		return PTR_ERR(rdev);
 
-	if (rdev->scan_req)
+	if (rdev->scan_req || rdev->scan_msg)
 		return -EAGAIN;
 
 	res = ieee80211_scan_results(rdev, info, extra, data->length);

@@ -36,6 +36,7 @@ struct map {
 	bool			erange_warned;
 	u32			priv;
 	u64			pgoff;
+	u64			reloc;
 	u32			maj, min; /* only valid for MMAP2 record */
 	u64			ino;      /* only valid for MMAP2 record */
 	u64			ino_generation;/* only valid for MMAP2 record */
@@ -88,6 +89,16 @@ u64 map__rip_2objdump(struct map *map, u64 rip);
 u64 map__objdump_2mem(struct map *map, u64 ip);
 
 struct symbol;
+
+/* map__for_each_symbol - iterate over the symbols in the given map
+ *
+ * @map: the 'struct map *' in which symbols itereated
+ * @pos: the 'struct symbol *' to use as a loop cursor
+ * @n: the 'struct rb_node *' to use as a temporary storage
+ * Note: caller must ensure map->dso is not NULL (map is loaded).
+ */
+#define map__for_each_symbol(map, pos, n)	\
+	dso__for_each_symbol(map->dso, pos, n, map->type)
 
 typedef int (*symbol_filter_t)(struct map *map, struct symbol *sym);
 

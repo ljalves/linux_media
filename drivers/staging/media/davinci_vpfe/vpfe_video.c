@@ -415,7 +415,6 @@ static int vpfe_open(struct file *file)
 	video->usrs++;
 	/* Set io_allowed member to false */
 	handle->io_allowed = 0;
-	v4l2_prio_open(&video->prio, &handle->prio);
 	handle->video = video;
 	file->private_data = &handle->vfh;
 	mutex_unlock(&video->lock);
@@ -532,8 +531,8 @@ static int vpfe_release(struct file *file)
 	}
 	/* Decrement device users counter */
 	video->usrs--;
-	/* Close the priority */
-	v4l2_prio_close(&video->prio, fh->prio);
+	v4l2_fh_del(&fh->vfh);
+	v4l2_fh_exit(&fh->vfh);
 	/* If this is the last file handle */
 	if (!video->usrs)
 		video->initialized = 0;
@@ -1201,8 +1200,6 @@ static int vpfe_start_streaming(struct vb2_queue *vq, unsigned int count)
 	unsigned long addr;
 	int ret;
 
-	if (count == 0)
-		return -ENOBUFS;
 	ret = mutex_lock_interruptible(&video->lock);
 	if (ret)
 		goto streamoff;
@@ -1221,8 +1218,16 @@ static int vpfe_start_streaming(struct vb2_queue *vq, unsigned int count)
 	video->state = VPFE_VIDEO_BUFFER_QUEUED;
 
 	ret = vpfe_start_capture(video);
-	if (ret)
+	if (ret) {
+		struct vpfe_cap_buffer *buf, *tmp;
+
+		vb2_buffer_done(&video->cur_frm->vb, VB2_BUF_STATE_QUEUED);
+		list_for_each_entry_safe(buf, tmp, &video->dma_queue, list) {
+			list_del(&buf->list);
+			vb2_buffer_done(&buf->vb, VB2_BUF_STATE_QUEUED);
+		}
 		goto unlock_out;
+	}
 
 	mutex_unlock(&video->lock);
 
@@ -1244,21 +1249,29 @@ static int vpfe_buffer_init(struct vb2_buffer *vb)
 }
 
 /* abort streaming and wait for last buffer */
-static int vpfe_stop_streaming(struct vb2_queue *vq)
+static void vpfe_stop_streaming(struct vb2_queue *vq)
 {
 	struct vpfe_fh *fh = vb2_get_drv_priv(vq);
 	struct vpfe_video_device *video = fh->video;
 
-	if (!vb2_is_streaming(vq))
-		return 0;
 	/* release all active buffers */
+	if (video->cur_frm == video->next_frm) {
+		vb2_buffer_done(&video->cur_frm->vb, VB2_BUF_STATE_ERROR);
+	} else {
+		if (video->cur_frm != NULL)
+			vb2_buffer_done(&video->cur_frm->vb,
+					VB2_BUF_STATE_ERROR);
+		if (video->next_frm != NULL)
+			vb2_buffer_done(&video->next_frm->vb,
+					VB2_BUF_STATE_ERROR);
+	}
+
 	while (!list_empty(&video->dma_queue)) {
 		video->next_frm = list_entry(video->dma_queue.next,
 						struct vpfe_cap_buffer, list);
 		list_del(&video->next_frm->list);
 		vb2_buffer_done(&video->next_frm->vb, VB2_BUF_STATE_ERROR);
 	}
-	return 0;
 }
 
 static void vpfe_buf_cleanup(struct vb2_buffer *vb)
@@ -1327,6 +1340,7 @@ static int vpfe_reqbufs(struct file *file, void *priv,
 	q->type = req_buf->type;
 	q->io_modes = VB2_MMAP | VB2_USERPTR;
 	q->drv_priv = fh;
+	q->min_buffers_needed = 1;
 	q->ops = &video_qops;
 	q->mem_ops = &vb2_dma_contig_memops;
 	q->buf_struct_size = sizeof(struct vpfe_cap_buffer);
@@ -1582,8 +1596,6 @@ int vpfe_video_init(struct vpfe_video_device *video, const char *name)
 	snprintf(video->video_dev.name, sizeof(video->video_dev.name),
 		 "DAVINCI VIDEO %s %s", name, direction);
 
-	/* Initialize prio member of device object */
-	v4l2_prio_init(&video->prio);
 	spin_lock_init(&video->irqlock);
 	spin_lock_init(&video->dma_queue_lock);
 	mutex_init(&video->lock);
@@ -1592,6 +1604,7 @@ int vpfe_video_init(struct vpfe_video_device *video, const char *name)
 	if (ret < 0)
 		return ret;
 
+	set_bit(V4L2_FL_USE_FH_PRIO, &video->video_dev.flags);
 	video_set_drvdata(&video->video_dev, video);
 
 	return 0;

@@ -350,14 +350,14 @@ static int start_streaming(struct vb2_queue *q, unsigned int count)
 	return 0;
 }
 
-static int stop_streaming(struct vb2_queue *q)
+static void stop_streaming(struct vb2_queue *q)
 {
 	struct fimc_lite *fimc = q->drv_priv;
 
 	if (!fimc_lite_active(fimc))
-		return -EINVAL;
+		return;
 
-	return fimc_lite_stop_capture(fimc, false);
+	fimc_lite_stop_capture(fimc, false);
 }
 
 static int queue_setup(struct vb2_queue *vq, const struct v4l2_format *pfmt,
@@ -1313,7 +1313,7 @@ static int fimc_lite_subdev_registered(struct v4l2_subdev *sd)
 	q->mem_ops = &vb2_dma_contig_memops;
 	q->buf_struct_size = sizeof(struct flite_buffer);
 	q->drv_priv = fimc;
-	q->timestamp_type = V4L2_BUF_FLAG_TIMESTAMP_MONOTONIC;
+	q->timestamp_flags = V4L2_BUF_FLAG_TIMESTAMP_MONOTONIC;
 	q->lock = &fimc->lock;
 
 	ret = vb2_queue_init(q);
@@ -1563,7 +1563,7 @@ static int fimc_lite_probe(struct platform_device *pdev)
 	if (!pm_runtime_enabled(dev)) {
 		ret = clk_enable(fimc->clock);
 		if (ret < 0)
-			goto err_clk_put;
+			goto err_sd;
 	}
 
 	fimc->alloc_ctx = vb2_dma_contig_init_ctx(dev);
@@ -1579,7 +1579,8 @@ static int fimc_lite_probe(struct platform_device *pdev)
 	return 0;
 
 err_clk_dis:
-	clk_disable(fimc->clock);
+	if (!pm_runtime_enabled(dev))
+		clk_disable(fimc->clock);
 err_sd:
 	fimc_lite_unregister_capture_subdev(fimc);
 err_clk_put:
@@ -1587,6 +1588,7 @@ err_clk_put:
 	return ret;
 }
 
+#ifdef CONFIG_PM_RUNTIME
 static int fimc_lite_runtime_resume(struct device *dev)
 {
 	struct fimc_lite *fimc = dev_get_drvdata(dev);
@@ -1602,6 +1604,7 @@ static int fimc_lite_runtime_suspend(struct device *dev)
 	clk_disable(fimc->clock);
 	return 0;
 }
+#endif
 
 #ifdef CONFIG_PM_SLEEP
 static int fimc_lite_resume(struct device *dev)

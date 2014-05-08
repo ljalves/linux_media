@@ -5460,13 +5460,14 @@ static void rt2800_init_bbp_53xx(struct rt2x00_dev *rt2x00dev)
 
 	rt2800_bbp_write(rt2x00dev, 68, 0x0b);
 
-	rt2800_bbp_write(rt2x00dev, 69, 0x0d);
-	rt2800_bbp_write(rt2x00dev, 70, 0x06);
+	rt2800_bbp_write(rt2x00dev, 69, 0x12);
 	rt2800_bbp_write(rt2x00dev, 73, 0x13);
 	rt2800_bbp_write(rt2x00dev, 75, 0x46);
 	rt2800_bbp_write(rt2x00dev, 76, 0x28);
 
 	rt2800_bbp_write(rt2x00dev, 77, 0x59);
+
+	rt2800_bbp_write(rt2x00dev, 70, 0x0a);
 
 	rt2800_bbp_write(rt2x00dev, 79, 0x13);
 	rt2800_bbp_write(rt2x00dev, 80, 0x05);
@@ -5510,7 +5511,6 @@ static void rt2800_init_bbp_53xx(struct rt2x00_dev *rt2x00dev)
 	if (rt2x00_rt(rt2x00dev, RT5392)) {
 		rt2800_bbp_write(rt2x00dev, 134, 0xd0);
 		rt2800_bbp_write(rt2x00dev, 135, 0xf6);
-		rt2800_bbp_write(rt2x00dev, 148, 0x84);
 	}
 
 	rt2800_disable_unused_dac_adc(rt2x00dev);
@@ -7458,10 +7458,9 @@ static int rt2800_probe_hw_mode(struct rt2x00_dev *rt2x00dev)
 	u32 reg;
 
 	/*
-	 * Disable powersaving as default on PCI devices.
+	 * Disable powersaving as default.
 	 */
-	if (rt2x00_is_pci(rt2x00dev) || rt2x00_is_soc(rt2x00dev))
-		rt2x00dev->hw->wiphy->flags &= ~WIPHY_FLAG_PS_ON_BY_DEFAULT;
+	rt2x00dev->hw->wiphy->flags &= ~WIPHY_FLAG_PS_ON_BY_DEFAULT;
 
 	/*
 	 * Initialize all hw fields.

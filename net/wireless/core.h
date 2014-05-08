@@ -62,6 +62,7 @@ struct cfg80211_registered_device {
 	struct rb_root bss_tree;
 	u32 bss_generation;
 	struct cfg80211_scan_request *scan_req; /* protected by RTNL */
+	struct sk_buff *scan_msg;
 	struct cfg80211_sched_scan_request *sched_scan_req;
 	unsigned long suspend_at;
 	struct work_struct scan_done_wk;
@@ -165,7 +166,6 @@ static inline void wdev_unlock(struct wireless_dev *wdev)
 	mutex_unlock(&wdev->mtx);
 }
 
-#define ASSERT_RDEV_LOCK(rdev) ASSERT_RTNL()
 #define ASSERT_WDEV_LOCK(wdev) lockdep_assert_held(&(wdev)->mtx)
 
 static inline bool cfg80211_has_monitors_only(struct cfg80211_registered_device *rdev)
@@ -210,6 +210,7 @@ struct cfg80211_event {
 		} dc;
 		struct {
 			u8 bssid[ETH_ALEN];
+			struct ieee80211_channel *channel;
 		} ij;
 	};
 };
@@ -244,10 +245,6 @@ void cfg80211_bss_age(struct cfg80211_registered_device *dev,
                       unsigned long age_secs);
 
 /* IBSS */
-int __cfg80211_join_ibss(struct cfg80211_registered_device *rdev,
-			 struct net_device *dev,
-			 struct cfg80211_ibss_params *params,
-			 struct cfg80211_cached_keys *connkeys);
 int cfg80211_join_ibss(struct cfg80211_registered_device *rdev,
 		       struct net_device *dev,
 		       struct cfg80211_ibss_params *params,
@@ -257,7 +254,8 @@ int __cfg80211_leave_ibss(struct cfg80211_registered_device *rdev,
 			  struct net_device *dev, bool nowext);
 int cfg80211_leave_ibss(struct cfg80211_registered_device *rdev,
 			struct net_device *dev, bool nowext);
-void __cfg80211_ibss_joined(struct net_device *dev, const u8 *bssid);
+void __cfg80211_ibss_joined(struct net_device *dev, const u8 *bssid,
+			    struct ieee80211_channel *channel);
 int cfg80211_ibss_wext_join(struct cfg80211_registered_device *rdev,
 			    struct wireless_dev *wdev);
 
@@ -280,7 +278,7 @@ int cfg80211_set_mesh_channel(struct cfg80211_registered_device *rdev,
 
 /* AP */
 int cfg80211_stop_ap(struct cfg80211_registered_device *rdev,
-		     struct net_device *dev);
+		     struct net_device *dev, bool notify);
 
 /* MLME */
 int cfg80211_mlme_auth(struct cfg80211_registered_device *rdev,
@@ -361,7 +359,8 @@ int cfg80211_validate_key_settings(struct cfg80211_registered_device *rdev,
 				   struct key_params *params, int key_idx,
 				   bool pairwise, const u8 *mac_addr);
 void __cfg80211_scan_done(struct work_struct *wk);
-void ___cfg80211_scan_done(struct cfg80211_registered_device *rdev);
+void ___cfg80211_scan_done(struct cfg80211_registered_device *rdev,
+			   bool send_message);
 void __cfg80211_sched_scan_results(struct work_struct *wk);
 int __cfg80211_stop_sched_scan(struct cfg80211_registered_device *rdev,
 			       bool driver_initiated);
@@ -398,6 +397,9 @@ void cfg80211_set_dfs_state(struct wiphy *wiphy,
 
 void cfg80211_dfs_channels_update_work(struct work_struct *work);
 
+unsigned int
+cfg80211_chandef_dfs_cac_time(struct wiphy *wiphy,
+			      const struct cfg80211_chan_def *chandef);
 
 static inline int
 cfg80211_can_change_interface(struct cfg80211_registered_device *rdev,
@@ -441,7 +443,8 @@ static inline unsigned int elapsed_jiffies_msecs(unsigned long start)
 void
 cfg80211_get_chan_state(struct wireless_dev *wdev,
 		        struct ieee80211_channel **chan,
-		        enum cfg80211_chan_mode *chanmode);
+		        enum cfg80211_chan_mode *chanmode,
+		        u8 *radar_detect);
 
 int cfg80211_set_monitor_channel(struct cfg80211_registered_device *rdev,
 				 struct cfg80211_chan_def *chandef);

@@ -125,6 +125,12 @@ int arch_show_interrupts(struct seq_file *p, int prec)
 		seq_printf(p, "%10u ", per_cpu(mce_poll_count, j));
 	seq_printf(p, "  Machine check polls\n");
 #endif
+#if IS_ENABLED(CONFIG_HYPERV) || defined(CONFIG_XEN)
+	seq_printf(p, "%*s: ", prec, "THR");
+	for_each_online_cpu(j)
+		seq_printf(p, "%10u ", irq_stats(j)->irq_hv_callback_count);
+	seq_printf(p, "  Hypervisor callback interrupts\n");
+#endif
 	seq_printf(p, "%*s: %10u\n", prec, "ERR", atomic_read(&irq_err_count));
 #if defined(CONFIG_X86_IO_APIC)
 	seq_printf(p, "%*s: %10u\n", prec, "MIS", atomic_read(&irq_mis_count));
@@ -266,6 +272,14 @@ __visible void smp_trace_x86_platform_ipi(struct pt_regs *regs)
 EXPORT_SYMBOL_GPL(vector_used_by_percpu_irq);
 
 #ifdef CONFIG_HOTPLUG_CPU
+
+/* These two declarations are only used in check_irq_vectors_for_cpu_disable()
+ * below, which is protected by stop_machine().  Putting them on the stack
+ * results in a stack frame overflow.  Dynamically allocating could result in a
+ * failure so declare these two cpumasks as global.
+ */
+static struct cpumask affinity_new, online_new;
+
 /*
  * This cpu is going to be removed and its vectors migrated to the remaining
  * online cpus.  Check to see if there are enough vectors in the remaining cpus.
@@ -277,7 +291,6 @@ int check_irq_vectors_for_cpu_disable(void)
 	unsigned int this_cpu, vector, this_count, count;
 	struct irq_desc *desc;
 	struct irq_data *data;
-	struct cpumask affinity_new, online_new;
 
 	this_cpu = smp_processor_id();
 	cpumask_copy(&online_new, cpu_online_mask);

@@ -350,6 +350,16 @@ struct nvme_delete_queue {
 	__u32			rsvd11[5];
 };
 
+struct nvme_abort_cmd {
+	__u8			opcode;
+	__u8			flags;
+	__u16			command_id;
+	__u32			rsvd1[9];
+	__le16			sqid;
+	__u16			cid;
+	__u32			rsvd11[5];
+};
+
 struct nvme_download_firmware {
 	__u8			opcode;
 	__u8			flags;
@@ -384,6 +394,7 @@ struct nvme_command {
 		struct nvme_download_firmware dlfw;
 		struct nvme_format_cmd format;
 		struct nvme_dsm_cmd dsm;
+		struct nvme_abort_cmd abort;
 	};
 };
 
@@ -423,6 +434,7 @@ enum {
 	NVME_SC_REFTAG_CHECK		= 0x284,
 	NVME_SC_COMPARE_FAILED		= 0x285,
 	NVME_SC_ACCESS_DENIED		= 0x286,
+	NVME_SC_DNR			= 0x4000,
 };
 
 struct nvme_completion {

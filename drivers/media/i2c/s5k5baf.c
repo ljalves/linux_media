@@ -21,6 +21,7 @@
 #include <linux/media.h>
 #include <linux/module.h>
 #include <linux/of_gpio.h>
+#include <linux/of_graph.h>
 #include <linux/regulator/consumer.h>
 #include <linux/slab.h>
 
@@ -478,25 +479,33 @@ static void s5k5baf_write_arr_seq(struct s5k5baf *state, u16 addr,
 				  u16 count, const u16 *seq)
 {
 	struct i2c_client *c = v4l2_get_subdevdata(&state->sd);
-	__be16 buf[count + 1];
-	int ret, n;
+	__be16 buf[65];
 
 	s5k5baf_i2c_write(state, REG_CMDWR_ADDR, addr);
 	if (state->error)
 		return;
 
-	buf[0] = __constant_cpu_to_be16(REG_CMD_BUF);
-	for (n = 1; n <= count; ++n)
-		buf[n] = cpu_to_be16(*seq++);
-
-	n *= 2;
-	ret = i2c_master_send(c, (char *)buf, n);
 	v4l2_dbg(3, debug, c, "i2c_write_seq(count=%d): %*ph\n", count,
-		 min(2 * count, 64), seq - count);
+		 min(2 * count, 64), seq);
 
-	if (ret != n) {
-		v4l2_err(c, "i2c_write_seq: error during transfer (%d)\n", ret);
-		state->error = ret;
+	buf[0] = __constant_cpu_to_be16(REG_CMD_BUF);
+
+	while (count > 0) {
+		int n = min_t(int, count, ARRAY_SIZE(buf) - 1);
+		int ret, i;
+
+		for (i = 1; i <= n; ++i)
+			buf[i] = cpu_to_be16(*seq++);
+
+		i *= 2;
+		ret = i2c_master_send(c, (char *)buf, i);
+		if (ret != i) {
+			v4l2_err(c, "i2c_write_seq: error during transfer (%d)\n", ret);
+			state->error = ret;
+			break;
+		}
+
+		count -= n;
 	}
 }
 
@@ -1847,7 +1856,7 @@ static int s5k5baf_parse_device_node(struct s5k5baf *state, struct device *dev)
 	if (ret < 0)
 		return ret;
 
-	node_ep = v4l2_of_get_next_endpoint(node, NULL);
+	node_ep = of_graph_get_next_endpoint(node, NULL);
 	if (!node_ep) {
 		dev_err(dev, "no endpoint defined at node %s\n",
 			node->full_name);

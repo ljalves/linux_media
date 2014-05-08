@@ -472,7 +472,7 @@ static noinline int add_ra_bio_pages(struct inode *inode,
 		rcu_read_lock();
 		page = radix_tree_lookup(&mapping->page_tree, pg_index);
 		rcu_read_unlock();
-		if (page) {
+		if (page && !radix_tree_exceptional_entry(page)) {
 			misses++;
 			if (misses > 4)
 				break;
@@ -1010,6 +1010,8 @@ int btrfs_decompress_buf2page(char *buf, unsigned long buf_start,
 		bytes = min(bytes, working_bytes);
 		kaddr = kmap_atomic(page_out);
 		memcpy(kaddr + *pg_offset, buf + buf_offset, bytes);
+		if (*pg_index == (vcnt - 1) && *pg_offset == 0)
+			memset(kaddr + bytes, 0, PAGE_CACHE_SIZE - bytes);
 		kunmap_atomic(kaddr);
 		flush_dcache_page(page_out);
 

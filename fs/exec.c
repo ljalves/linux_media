@@ -26,6 +26,7 @@
 #include <linux/file.h>
 #include <linux/fdtable.h>
 #include <linux/mm.h>
+#include <linux/vmacache.h>
 #include <linux/stat.h>
 #include <linux/fcntl.h>
 #include <linux/swap.h>
@@ -97,6 +98,7 @@ static inline void put_binfmt(struct linux_binfmt * fmt)
 	module_put(fmt->module);
 }
 
+#ifdef CONFIG_USELIB
 /*
  * Note that a shared library must be both readable and executable due to
  * security reasons.
@@ -156,6 +158,7 @@ exit:
 out:
   	return error;
 }
+#endif /* #ifdef CONFIG_USELIB */
 
 #ifdef CONFIG_MMU
 /*
@@ -748,11 +751,10 @@ EXPORT_SYMBOL(setup_arg_pages);
 
 #endif /* CONFIG_MMU */
 
-struct file *open_exec(const char *name)
+static struct file *do_open_exec(struct filename *name)
 {
 	struct file *file;
 	int err;
-	struct filename tmp = { .name = name };
 	static const struct open_flags open_exec_flags = {
 		.open_flag = O_LARGEFILE | O_RDONLY | __FMODE_EXEC,
 		.acc_mode = MAY_EXEC | MAY_OPEN,
@@ -760,7 +762,7 @@ struct file *open_exec(const char *name)
 		.lookup_flags = LOOKUP_FOLLOW,
 	};
 
-	file = do_filp_open(AT_FDCWD, &tmp, &open_exec_flags);
+	file = do_filp_open(AT_FDCWD, name, &open_exec_flags);
 	if (IS_ERR(file))
 		goto out;
 
@@ -784,6 +786,12 @@ exit:
 	fput(file);
 	return ERR_PTR(err);
 }
+
+struct file *open_exec(const char *name)
+{
+	struct filename tmp = { .name = name };
+	return do_open_exec(&tmp);
+}
 EXPORT_SYMBOL(open_exec);
 
 int kernel_read(struct file *file, loff_t offset,
@@ -805,7 +813,7 @@ EXPORT_SYMBOL(kernel_read);
 
 ssize_t read_code(struct file *file, unsigned long addr, loff_t pos, size_t len)
 {
-	ssize_t res = file->f_op->read(file, (void __user *)addr, len, &pos);
+	ssize_t res = vfs_read(file, (void __user *)addr, len, &pos);
 	if (res > 0)
 		flush_icache_range(addr, addr + len);
 	return res;
@@ -815,7 +823,7 @@ EXPORT_SYMBOL(read_code);
 static int exec_mmap(struct mm_struct *mm)
 {
 	struct task_struct *tsk;
-	struct mm_struct * old_mm, *active_mm;
+	struct mm_struct *old_mm, *active_mm;
 
 	/* Notify parent that we're no longer interested in the old VM */
 	tsk = current;
@@ -841,6 +849,8 @@ static int exec_mmap(struct mm_struct *mm)
 	tsk->mm = mm;
 	tsk->active_mm = mm;
 	activate_mm(active_mm, mm);
+	tsk->mm->vmacache_seqnum = 0;
+	vmacache_flush(tsk);
 	task_unlock(tsk);
 	if (old_mm) {
 		up_read(&old_mm->mmap_sem);
@@ -1036,28 +1046,13 @@ EXPORT_SYMBOL_GPL(get_task_comm);
  * so that a new one can be started
  */
 
-void set_task_comm(struct task_struct *tsk, char *buf)
+void set_task_comm(struct task_struct *tsk, const char *buf)
 {
 	task_lock(tsk);
 	trace_task_rename(tsk, buf);
 	strlcpy(tsk->comm, buf, sizeof(tsk->comm));
 	task_unlock(tsk);
 	perf_event_comm(tsk);
-}
-
-static void filename_to_taskname(char *tcomm, const char *fn, unsigned int len)
-{
-	int i, ch;
-
-	/* Copies the binary name from after last slash */
-	for (i = 0; (ch = *(fn++)) != '\0';) {
-		if (ch == '/')
-			i = 0; /* overwrite what we wrote */
-		else
-			if (i < len - 1)
-				tcomm[i++] = ch;
-	}
-	tcomm[i] = '\0';
 }
 
 int flush_old_exec(struct linux_binprm * bprm)
@@ -1073,8 +1068,6 @@ int flush_old_exec(struct linux_binprm * bprm)
 		goto out;
 
 	set_mm_exe_file(bprm->mm, bprm->file);
-
-	filename_to_taskname(bprm->tcomm, bprm->filename, sizeof(bprm->tcomm));
 	/*
 	 * Release all of the old mmap stuff
 	 */
@@ -1117,7 +1110,7 @@ void setup_new_exec(struct linux_binprm * bprm)
 	else
 		set_dumpable(current->mm, suid_dumpable);
 
-	set_task_comm(current, bprm->tcomm);
+	set_task_comm(current, kbasename(bprm->filename));
 
 	/* Set the new mm task size. We have to do that late because it may
 	 * depend on TIF_32BIT which is only updated in flush_thread() on
@@ -1162,7 +1155,7 @@ int prepare_bprm_creds(struct linux_binprm *bprm)
 	return -ENOMEM;
 }
 
-void free_bprm(struct linux_binprm *bprm)
+static void free_bprm(struct linux_binprm *bprm)
 {
 	free_arg_pages(bprm);
 	if (bprm->cred) {
@@ -1432,7 +1425,7 @@ static int exec_binprm(struct linux_binprm *bprm)
 /*
  * sys_execve() executes a new program.
  */
-static int do_execve_common(const char *filename,
+static int do_execve_common(struct filename *filename,
 				struct user_arg_ptr argv,
 				struct user_arg_ptr envp)
 {
@@ -1440,6 +1433,9 @@ static int do_execve_common(const char *filename,
 	struct file *file;
 	struct files_struct *displaced;
 	int retval;
+
+	if (IS_ERR(filename))
+		return PTR_ERR(filename);
 
 	/*
 	 * We move the actual failure in case of RLIMIT_NPROC excess from
@@ -1473,7 +1469,7 @@ static int do_execve_common(const char *filename,
 	check_unsafe_exec(bprm);
 	current->in_execve = 1;
 
-	file = open_exec(filename);
+	file = do_open_exec(filename);
 	retval = PTR_ERR(file);
 	if (IS_ERR(file))
 		goto out_unmark;
@@ -1481,8 +1477,7 @@ static int do_execve_common(const char *filename,
 	sched_exec();
 
 	bprm->file = file;
-	bprm->filename = filename;
-	bprm->interp = filename;
+	bprm->filename = bprm->interp = filename->name;
 
 	retval = bprm_mm_init(bprm);
 	if (retval)
@@ -1523,6 +1518,7 @@ static int do_execve_common(const char *filename,
 	acct_update_integrals(current);
 	task_numa_free(current);
 	free_bprm(bprm);
+	putname(filename);
 	if (displaced)
 		put_files_struct(displaced);
 	return retval;
@@ -1544,10 +1540,11 @@ out_files:
 	if (displaced)
 		reset_files_struct(displaced);
 out_ret:
+	putname(filename);
 	return retval;
 }
 
-int do_execve(const char *filename,
+int do_execve(struct filename *filename,
 	const char __user *const __user *__argv,
 	const char __user *const __user *__envp)
 {
@@ -1557,7 +1554,7 @@ int do_execve(const char *filename,
 }
 
 #ifdef CONFIG_COMPAT
-static int compat_do_execve(const char *filename,
+static int compat_do_execve(struct filename *filename,
 	const compat_uptr_t __user *__argv,
 	const compat_uptr_t __user *__envp)
 {
@@ -1607,25 +1604,13 @@ SYSCALL_DEFINE3(execve,
 		const char __user *const __user *, argv,
 		const char __user *const __user *, envp)
 {
-	struct filename *path = getname(filename);
-	int error = PTR_ERR(path);
-	if (!IS_ERR(path)) {
-		error = do_execve(path->name, argv, envp);
-		putname(path);
-	}
-	return error;
+	return do_execve(getname(filename), argv, envp);
 }
 #ifdef CONFIG_COMPAT
-asmlinkage long compat_sys_execve(const char __user * filename,
-	const compat_uptr_t __user * argv,
-	const compat_uptr_t __user * envp)
+COMPAT_SYSCALL_DEFINE3(execve, const char __user *, filename,
+	const compat_uptr_t __user *, argv,
+	const compat_uptr_t __user *, envp)
 {
-	struct filename *path = getname(filename);
-	int error = PTR_ERR(path);
-	if (!IS_ERR(path)) {
-		error = compat_do_execve(path->name, argv, envp);
-		putname(path);
-	}
-	return error;
+	return compat_do_execve(getname(filename), argv, envp);
 }
 #endif

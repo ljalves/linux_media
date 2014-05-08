@@ -208,6 +208,24 @@ static struct mfc_control controls[] = {
 		.default_value = 0,
 	},
 	{
+		.id = V4L2_CID_MPEG_VIDEO_MV_H_SEARCH_RANGE,
+		.type = V4L2_CTRL_TYPE_INTEGER,
+		.name = "Horizontal MV Search Range",
+		.minimum = 16,
+		.maximum = 128,
+		.step = 16,
+		.default_value = 32,
+	},
+	{
+		.id = V4L2_CID_MPEG_VIDEO_MV_V_SEARCH_RANGE,
+		.type = V4L2_CTRL_TYPE_INTEGER,
+		.name = "Vertical MV Search Range",
+		.minimum = 16,
+		.maximum = 128,
+		.step = 16,
+		.default_value = 32,
+	},
+	{
 		.id = V4L2_CID_MPEG_VIDEO_H264_CPB_SIZE,
 		.type = V4L2_CTRL_TYPE_INTEGER,
 		.minimum = 0,
@@ -1417,6 +1435,12 @@ static int s5p_mfc_enc_s_ctrl(struct v4l2_ctrl *ctrl)
 	case V4L2_CID_MPEG_VIDEO_VBV_SIZE:
 		p->vbv_size = ctrl->val;
 		break;
+	case V4L2_CID_MPEG_VIDEO_MV_H_SEARCH_RANGE:
+		p->mv_h_range = ctrl->val;
+		break;
+	case V4L2_CID_MPEG_VIDEO_MV_V_SEARCH_RANGE:
+		p->mv_v_range = ctrl->val;
+		break;
 	case V4L2_CID_MPEG_VIDEO_H264_CPB_SIZE:
 		p->codec.h264.cpb_size = ctrl->val;
 		break;
@@ -1930,7 +1954,7 @@ static int s5p_mfc_start_streaming(struct vb2_queue *q, unsigned int count)
 	return 0;
 }
 
-static int s5p_mfc_stop_streaming(struct vb2_queue *q)
+static void s5p_mfc_stop_streaming(struct vb2_queue *q)
 {
 	unsigned long flags;
 	struct s5p_mfc_ctx *ctx = fh_to_ctx(q->drv_priv);
@@ -1959,7 +1983,6 @@ static int s5p_mfc_stop_streaming(struct vb2_queue *q)
 		ctx->src_queue_cnt = 0;
 	}
 	spin_unlock_irqrestore(&dev->irqlock, flags);
-	return 0;
 }
 
 static void s5p_mfc_buf_queue(struct vb2_buffer *vb)

@@ -654,14 +654,16 @@ EXPORT_SYMBOL(mark_buffer_dirty_inode);
 static void __set_page_dirty(struct page *page,
 		struct address_space *mapping, int warn)
 {
-	spin_lock_irq(&mapping->tree_lock);
+	unsigned long flags;
+
+	spin_lock_irqsave(&mapping->tree_lock, flags);
 	if (page->mapping) {	/* Race with truncate? */
 		WARN_ON_ONCE(warn && !PageUptodate(page));
 		account_page_dirtied(page, mapping);
 		radix_tree_tag_set(&mapping->page_tree,
 				page_index(page), PAGECACHE_TAG_DIRTY);
 	}
-	spin_unlock_irq(&mapping->tree_lock);
+	spin_unlock_irqrestore(&mapping->tree_lock, flags);
 	__mark_inode_dirty(mapping->host, I_DIRTY_PAGES);
 }
 
@@ -2112,8 +2114,8 @@ EXPORT_SYMBOL(generic_write_end);
  * Returns true if all buffers which correspond to a file portion
  * we want to read are uptodate.
  */
-int block_is_partially_uptodate(struct page *page, read_descriptor_t *desc,
-					unsigned long from)
+int block_is_partially_uptodate(struct page *page, unsigned long from,
+					unsigned long count)
 {
 	unsigned block_start, block_end, blocksize;
 	unsigned to;
@@ -2125,7 +2127,7 @@ int block_is_partially_uptodate(struct page *page, read_descriptor_t *desc,
 
 	head = page_buffers(page);
 	blocksize = head->b_size;
-	to = min_t(unsigned, PAGE_CACHE_SIZE - from, desc->count);
+	to = min_t(unsigned, PAGE_CACHE_SIZE - from, count);
 	to = from + to;
 	if (from < blocksize && to > PAGE_CACHE_SIZE - blocksize)
 		return 0;
@@ -3086,7 +3088,7 @@ EXPORT_SYMBOL(submit_bh);
  * until the buffer gets unlocked).
  *
  * ll_rw_block sets b_end_io to simple completion handler that marks
- * the buffer up-to-date (if approriate), unlocks the buffer and wakes
+ * the buffer up-to-date (if appropriate), unlocks the buffer and wakes
  * any waiters. 
  *
  * All of the buffers must be for the same device, and must also be a

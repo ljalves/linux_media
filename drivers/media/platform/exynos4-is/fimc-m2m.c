@@ -85,7 +85,7 @@ static int start_streaming(struct vb2_queue *q, unsigned int count)
 	return ret > 0 ? 0 : ret;
 }
 
-static int stop_streaming(struct vb2_queue *q)
+static void stop_streaming(struct vb2_queue *q)
 {
 	struct fimc_ctx *ctx = q->drv_priv;
 	int ret;
@@ -95,7 +95,6 @@ static int stop_streaming(struct vb2_queue *q)
 		fimc_m2m_job_finish(ctx, VB2_BUF_STATE_ERROR);
 
 	pm_runtime_put(&ctx->fimc_dev->pdev->dev);
-	return 0;
 }
 
 static void fimc_device_run(void *priv)
@@ -134,6 +133,9 @@ static void fimc_device_run(void *priv)
 		goto dma_unlock;
 
 	dst_vb->v4l2_buf.timestamp = src_vb->v4l2_buf.timestamp;
+	dst_vb->v4l2_buf.flags &= ~V4L2_BUF_FLAG_TSTAMP_SRC_MASK;
+	dst_vb->v4l2_buf.flags |=
+		src_vb->v4l2_buf.flags & V4L2_BUF_FLAG_TSTAMP_SRC_MASK;
 
 	/* Reconfigure hardware if the context has changed. */
 	if (fimc->m2m.ctx != ctx) {
@@ -557,7 +559,7 @@ static int queue_init(void *priv, struct vb2_queue *src_vq,
 	src_vq->ops = &fimc_qops;
 	src_vq->mem_ops = &vb2_dma_contig_memops;
 	src_vq->buf_struct_size = sizeof(struct v4l2_m2m_buffer);
-	src_vq->timestamp_type = V4L2_BUF_FLAG_TIMESTAMP_COPY;
+	src_vq->timestamp_flags = V4L2_BUF_FLAG_TIMESTAMP_COPY;
 	src_vq->lock = &ctx->fimc_dev->lock;
 
 	ret = vb2_queue_init(src_vq);
@@ -570,7 +572,7 @@ static int queue_init(void *priv, struct vb2_queue *src_vq,
 	dst_vq->ops = &fimc_qops;
 	dst_vq->mem_ops = &vb2_dma_contig_memops;
 	dst_vq->buf_struct_size = sizeof(struct v4l2_m2m_buffer);
-	dst_vq->timestamp_type = V4L2_BUF_FLAG_TIMESTAMP_COPY;
+	dst_vq->timestamp_flags = V4L2_BUF_FLAG_TIMESTAMP_COPY;
 	dst_vq->lock = &ctx->fimc_dev->lock;
 
 	return vb2_queue_init(dst_vq);

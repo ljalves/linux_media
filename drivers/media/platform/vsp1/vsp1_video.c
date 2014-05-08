@@ -1,7 +1,7 @@
 /*
  * vsp1_video.c  --  R-Car VSP1 Video Node
  *
- * Copyright (C) 2013 Renesas Corporation
+ * Copyright (C) 2013-2014 Renesas Electronics Corporation
  *
  * Contact: Laurent Pinchart (laurent.pinchart@ideasonboard.com)
  *
@@ -720,7 +720,7 @@ static int vsp1_video_start_streaming(struct vb2_queue *vq, unsigned int count)
 	return 0;
 }
 
-static int vsp1_video_stop_streaming(struct vb2_queue *vq)
+static void vsp1_video_stop_streaming(struct vb2_queue *vq)
 {
 	struct vsp1_video *video = vb2_get_drv_priv(vq);
 	struct vsp1_pipeline *pipe = to_vsp1_pipeline(&video->video.entity);
@@ -743,8 +743,6 @@ static int vsp1_video_stop_streaming(struct vb2_queue *vq)
 	spin_lock_irqsave(&video->irqlock, flags);
 	INIT_LIST_HEAD(&video->irqqueue);
 	spin_unlock_irqrestore(&video->irqlock, flags);
-
-	return 0;
 }
 
 static struct vb2_ops vsp1_video_queue_qops = {
@@ -1051,7 +1049,7 @@ int vsp1_video_init(struct vsp1_video *video, struct vsp1_entity *rwpf)
 	video->queue.buf_struct_size = sizeof(struct vsp1_video_buffer);
 	video->queue.ops = &vsp1_video_queue_qops;
 	video->queue.mem_ops = &vb2_dma_contig_memops;
-	video->queue.timestamp_type = V4L2_BUF_FLAG_TIMESTAMP_COPY;
+	video->queue.timestamp_flags = V4L2_BUF_FLAG_TIMESTAMP_COPY;
 	ret = vb2_queue_init(&video->queue);
 	if (ret < 0) {
 		dev_err(video->vsp1->dev, "failed to initialize vb2 queue\n");
