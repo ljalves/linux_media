@@ -57,6 +57,12 @@ enum tas2101_reg_addr {
 	FREQ_OS1	= 0x76,
 	SNR_0		= 0x92,
 	SNR_1		= 0x93,
+	S1_BER_0	= 0xd1,
+	S1_BER_1	= 0xd2,
+	S1_BER_2	= 0xd3,
+	S1_BER_3	= 0xd4,
+	S2_BER_0	= 0xec,
+	S2_BER_1	= 0xed,
 	MODFEC_0	= 0xee,
 	MODFEC_1	= 0xef,
 };
@@ -165,7 +171,7 @@ struct tas2101_snrtable_pair {
 };
 
 static struct tas2101_snrtable_pair tas2101_snrtable[] =  {
-        {10, 0x65a},
+        {10, 0x65a}, /* 1.0 dB */
         {20, 0x50c},
         {30, 0x402},
         {40, 0x32f},
@@ -194,7 +200,25 @@ static struct tas2101_snrtable_pair tas2101_snrtable[] =  {
         {270, 0x4},
         {280, 0x3},
         {300, 0x2},
-        {330, 0x1},
+        {330, 0x1}, /* 33.0 dB */
+	{0, 0}
+};
+
+struct tas2101_dbmtable_pair {
+	u16 dbm;
+	u16 raw;
+};
+
+static struct tas2101_dbmtable_pair tas2101_dbmtable[] =  {
+        { 0x3333, 0xfff}, /* 20% */
+        { 0x4CCC, 0x778},
+        { 0x6666, 0x621},
+        { 0x7FFF, 0x55c},
+        { 0x9999, 0x40e},
+        { 0xB332, 0x343},
+        { 0xCCCC, 0x2b7},
+        { 0xE665, 0x231},
+        { 0xFFFF, 0x1a1}, /* 100% */
 	{0, 0}
 };
 
