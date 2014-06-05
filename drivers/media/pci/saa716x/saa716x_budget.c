@@ -832,12 +832,12 @@ static struct saa716x_config saa716x_tbs6280_config = {
 	.adap_config		= {
 		{
 			/* adapter 0 */
-			.ts_port = 3, /* using FGPI 3 */
+			.ts_port = 1, /* using FGPI 1 */
 			.worker = demux_worker
 		},
 		{
 			/* adapter 1 */
-			.ts_port = 1, /* using FGPI 1 */
+			.ts_port = 3, /* using FGPI 3 */
 			.worker = demux_worker
 		},
 	},
