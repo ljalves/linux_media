@@ -905,7 +905,7 @@ static int __reqbufs(struct vb2_queue *q, struct v4l2_requestbuffers *req)
 	 * Make sure the requested values and current defaults are sane.
 	 */
 	num_buffers = min_t(unsigned int, req->count, VIDEO_MAX_FRAME);
-	num_buffers = max_t(unsigned int, req->count, q->min_buffers_needed);
+	num_buffers = max_t(unsigned int, num_buffers, q->min_buffers_needed);
 	memset(q->plane_sizes, 0, sizeof(q->plane_sizes));
 	memset(q->alloc_ctx, 0, sizeof(q->alloc_ctx));
 	q->memory = req->memory;
@@ -1198,6 +1198,30 @@ void vb2_buffer_done(struct vb2_buffer *vb, enum vb2_buffer_state state)
 	wake_up(&q->done_wq);
 }
 EXPORT_SYMBOL_GPL(vb2_buffer_done);
+
+/**
+ * vb2_discard_done() - discard all buffers marked as DONE
+ * @q:		videobuf2 queue
+ *
+ * This function is intended to be used with suspend/resume operations. It
+ * discards all 'done' buffers as they would be too old to be requested after
+ * resume.
+ *
+ * Drivers must stop the hardware and synchronize with interrupt handlers and/or
+ * delayed works before calling this function to make sure no buffer will be
+ * touched by the driver and/or hardware.
+ */
+void vb2_discard_done(struct vb2_queue *q)
+{
+	struct vb2_buffer *vb;
+	unsigned long flags;
+
+	spin_lock_irqsave(&q->done_lock, flags);
+	list_for_each_entry(vb, &q->done_list, done_entry)
+		vb->state = VB2_BUF_STATE_ERROR;
+	spin_unlock_irqrestore(&q->done_lock, flags);
+}
+EXPORT_SYMBOL_GPL(vb2_discard_done);
 
 /**
  * __fill_vb2_buffer() - fill a vb2_buffer with information provided in a
@@ -2087,9 +2111,6 @@ static void __vb2_queue_cancel(struct vb2_queue *q)
 	 */
 	if (q->start_streaming_called)
 		call_void_qop(q, stop_streaming, q);
-	q->streaming = 0;
-	q->start_streaming_called = 0;
-	q->queued_count = 0;
 
 	if (WARN_ON(atomic_read(&q->owned_by_drv_count))) {
 		for (i = 0; i < q->num_buffers; ++i)
@@ -2098,6 +2119,10 @@ static void __vb2_queue_cancel(struct vb2_queue *q)
 		/* Must be zero now */
 		WARN_ON(atomic_read(&q->owned_by_drv_count));
 	}
+
+	q->streaming = 0;
+	q->start_streaming_called = 0;
+	q->queued_count = 0;
 
 	/*
 	 * Remove all buffers from videobuf's list...
@@ -2150,10 +2175,6 @@ static int vb2_internal_streamon(struct vb2_queue *q, enum v4l2_buf_type type)
 		return -EINVAL;
 	}
 
-	if (!q->num_buffers) {
-		dprintk(1, "no buffers have been allocated\n");
-		return -EINVAL;
-	}
 	if (q->num_buffers < q->min_buffers_needed) {
 		dprintk(1, "need at least %u allocated buffers\n",
 				q->min_buffers_needed);

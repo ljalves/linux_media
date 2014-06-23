@@ -75,6 +75,7 @@ struct vsp1_pipeline {
 	unsigned int num_inputs;
 	struct vsp1_rwpf *inputs[VPS1_MAX_RPF];
 	struct vsp1_rwpf *output;
+	struct vsp1_entity *bru;
 	struct vsp1_entity *lif;
 
 	struct list_head entities;
@@ -89,7 +90,6 @@ static inline struct vsp1_pipeline *to_vsp1_pipeline(struct media_entity *e)
 }
 
 struct vsp1_video_buffer {
-	struct vsp1_video *video;
 	struct vb2_buffer buf;
 	struct list_head queue;
 
