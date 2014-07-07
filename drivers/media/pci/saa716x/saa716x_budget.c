@@ -836,8 +836,25 @@ static struct saa716x_config saa716x_tbs6280_config = {
 
 static int saa716x_tbs6281_frontend_attach(struct saa716x_adapter *adapter, int count)
 {
+	struct saa716x_dev *saa716x = adapter->saa716x;
+
+	if (count > 1)
+		goto err;
+
+	/* reset */
+	saa716x_gpio_set_output(saa716x, count ? 2 : 16);
+	saa716x_gpio_write(saa716x, count ? 2 : 16, 0);
+	msleep(50);
+	saa716x_gpio_write(saa716x, count ? 2 : 16, 1);
+	msleep(100);
+
 
 	return 0;
+err:
+	printk(KERN_ERR "%s: frontend initialization failed\n",
+					adapter->saa716x->config->model_name);
+	dprintk(SAA716x_ERROR, 1, "Frontend attach failed");
+	return -ENODEV;
 }
 
 static struct saa716x_config saa716x_tbs6281_config = {
