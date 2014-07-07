@@ -119,6 +119,9 @@ struct saa716x_adapter {
 
 	u8				feeds;
 	u8				count;
+
+	struct i2c_client	*i2c_client_demod;
+	struct i2c_client	*i2c_client_tuner;
 };
 
 struct saa716x_dev {
