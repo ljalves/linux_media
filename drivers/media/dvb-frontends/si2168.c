@@ -209,88 +209,23 @@ static int si2168_set_frontend(struct dvb_frontend *fe)
 			goto err;
 	}
 
-	memcpy(cmd.args, "\x88\x02\x02\x02\x02", 5);
-	cmd.wlen = 5;
-	cmd.rlen = 5;
-	ret = si2168_cmd_execute(s, &cmd);
-	if (ret)
-		goto err;
-
-	/* that has no big effect */
-	if (c->delivery_system == SYS_DVBT)
-		memcpy(cmd.args, "\x89\x21\x06\x11\xff\x98", 6);
-	else if (c->delivery_system == SYS_DVBC_ANNEX_A)
-		memcpy(cmd.args, "\x89\x21\x06\x11\x89\xf0", 6);
-	else if (c->delivery_system == SYS_DVBT2)
-		memcpy(cmd.args, "\x89\x21\x06\x11\x89\x20", 6);
+	memcpy(cmd.args, "\x14\x00\x01\x12\x00\x00", 6);
 	cmd.wlen = 6;
-	cmd.rlen = 3;
+	cmd.rlen = 4;
 	ret = si2168_cmd_execute(s, &cmd);
 	if (ret)
 		goto err;
 
-	memcpy(cmd.args, "\x51\x03", 2);
-	cmd.wlen = 2;
-	cmd.rlen = 12;
-	ret = si2168_cmd_execute(s, &cmd);
-	if (ret)
-		goto err;
 
-	memcpy(cmd.args, "\x12\x08\x04", 3);
-	cmd.wlen = 3;
-	cmd.rlen = 3;
-	ret = si2168_cmd_execute(s, &cmd);
-	if (ret)
-		goto err;
-
-	memcpy(cmd.args, "\x14\x00\x01\x04\x00\x00", 6);
-	cmd.wlen = 6;
-	cmd.rlen = 1;
-	ret = si2168_cmd_execute(s, &cmd);
-	if (ret)
-		goto err;
-
-	memcpy(cmd.args, "\x14\x00\x03\x10\x17\x00", 6);
-	cmd.wlen = 6;
-	cmd.rlen = 1;
-	ret = si2168_cmd_execute(s, &cmd);
-	if (ret)
-		goto err;
-
-	memcpy(cmd.args, "\x14\x00\x02\x10\x15\x00", 6);
-	cmd.wlen = 6;
-	cmd.rlen = 1;
-	ret = si2168_cmd_execute(s, &cmd);
-	if (ret)
-		goto err;
-
-	memcpy(cmd.args, "\x14\x00\x0c\x10\x12\x00", 6);
-	cmd.wlen = 6;
-	cmd.rlen = 1;
-	ret = si2168_cmd_execute(s, &cmd);
-	if (ret)
-		goto err;
-
-	memcpy(cmd.args, "\x14\x00\x06\x10\x24\x00", 6);
-	cmd.wlen = 6;
-	cmd.rlen = 1;
-	ret = si2168_cmd_execute(s, &cmd);
-	if (ret)
-		goto err;
-
-	memcpy(cmd.args, "\x14\x00\x0b\x10\x88\x13", 6);
-	cmd.wlen = 6;
-	cmd.rlen = 1;
-	ret = si2168_cmd_execute(s, &cmd);
-	if (ret)
-		goto err;
-
-	memcpy(cmd.args, "\x14\x00\x07\x10\x00\x24", 6);
-	cmd.wlen = 6;
-	cmd.rlen = 1;
-	ret = si2168_cmd_execute(s, &cmd);
-	if (ret)
-		goto err;
+	if (c->delivery_system == SYS_DVBT2) {
+		memcpy(cmd.args, "\x52\x00\x01", 3);
+		cmd.args[1] = (c->stream_id > 0xff) ? 0x00 : c->stream_id;
+		cmd.wlen = 3;
+		cmd.rlen = 1;
+		ret = si2168_cmd_execute(s, &cmd);
+		if (ret)
+			goto err;
+	}
 
 	memcpy(cmd.args, "\x14\x00\x0a\x10\x00\x00", 6);
 	cmd.args[4] = delivery_system | bandwidth;
@@ -300,124 +235,17 @@ static int si2168_set_frontend(struct dvb_frontend *fe)
 	if (ret)
 		goto err;
 
-	memcpy(cmd.args, "\x14\x00\x04\x10\x15\x00", 6);
-	cmd.wlen = 6;
-	cmd.rlen = 1;
-	ret = si2168_cmd_execute(s, &cmd);
-	if (ret)
-		goto err;
 
-	memcpy(cmd.args, "\x14\x00\x05\x10\xa1\x00", 6);
-	cmd.wlen = 6;
-	cmd.rlen = 1;
-	ret = si2168_cmd_execute(s, &cmd);
-	if (ret)
-		goto err;
 
-	memcpy(cmd.args, "\x14\x00\x0f\x10\x10\x00", 6);
-	cmd.wlen = 6;
-	cmd.rlen = 1;
-	ret = si2168_cmd_execute(s, &cmd);
-	if (ret)
-		goto err;
-
-	memcpy(cmd.args, "\x14\x00\x0d\x10\xd0\x02", 6);
-	cmd.wlen = 6;
-	cmd.rlen = 1;
-	ret = si2168_cmd_execute(s, &cmd);
-	if (ret)
-		goto err;
-
-	memcpy(cmd.args, "\x14\x00\x01\x10\x00\x00", 6);
-	cmd.wlen = 6;
-	cmd.rlen = 1;
-	ret = si2168_cmd_execute(s, &cmd);
-	if (ret)
-		goto err;
-
-	memcpy(cmd.args, "\x14\x00\x09\x10\xe3\x18", 6);
-	cmd.wlen = 6;
-	cmd.rlen = 1;
-	ret = si2168_cmd_execute(s, &cmd);
-	if (ret)
-		goto err;
-
-	memcpy(cmd.args, "\x14\x00\x08\x10\xd7\x15", 6);
-	cmd.wlen = 6;
-	cmd.rlen = 1;
-	ret = si2168_cmd_execute(s, &cmd);
-	if (ret)
-		goto err;
-
-	memcpy(cmd.args, "\x14\x00\x04\x03\x00\x00", 6);
-	cmd.wlen = 6;
-	cmd.rlen = 1;
-	ret = si2168_cmd_execute(s, &cmd);
-	if (ret)
-		goto err;
-
-	memcpy(cmd.args, "\x14\x00\x03\x03\x00\x00", 6);
-	cmd.wlen = 6;
-	cmd.rlen = 1;
-	ret = si2168_cmd_execute(s, &cmd);
-	if (ret)
-		goto err;
-
-	memcpy(cmd.args, "\x14\x00\x08\x03\x00\x00", 6);
-	cmd.wlen = 6;
-	cmd.rlen = 1;
-	ret = si2168_cmd_execute(s, &cmd);
-	if (ret)
-		goto err;
-
-	memcpy(cmd.args, "\x14\x00\x07\x03\x01\x02", 6);
-	cmd.wlen = 6;
-	cmd.rlen = 1;
-	ret = si2168_cmd_execute(s, &cmd);
-	if (ret)
-		goto err;
-
-	memcpy(cmd.args, "\x14\x00\x06\x03\x00\x00", 6);
-	cmd.wlen = 6;
-	cmd.rlen = 1;
-	ret = si2168_cmd_execute(s, &cmd);
-	if (ret)
-		goto err;
-
-	memcpy(cmd.args, "\x14\x00\x05\x03\x00\x00", 6);
-	cmd.wlen = 6;
-	cmd.rlen = 1;
-	ret = si2168_cmd_execute(s, &cmd);
-	if (ret)
-		goto err;
-
-	memcpy(cmd.args, "\x14\x00\x01\x03\x0c\x40", 6);
-	cmd.wlen = 6;
-	cmd.rlen = 1;
-	ret = si2168_cmd_execute(s, &cmd);
-	if (ret)
-		goto err;
-
+#if 0
 	memcpy(cmd.args, "\x14\x00\x01\x10\x16\x00", 6);
 	cmd.wlen = 6;
 	cmd.rlen = 1;
 	ret = si2168_cmd_execute(s, &cmd);
 	if (ret)
 		goto err;
+#endif
 
-	memcpy(cmd.args, "\x14\x00\x01\x12\x00\x00", 6);
-	cmd.wlen = 6;
-	cmd.rlen = 1;
-	ret = si2168_cmd_execute(s, &cmd);
-	if (ret)
-		goto err;
-
-	cmd.args[0] = 0x85;
-	cmd.wlen = 1;
-	cmd.rlen = 1;
-	ret = si2168_cmd_execute(s, &cmd);
-	if (ret)
-		goto err;
 
 	s->delivery_system = c->delivery_system;
 
@@ -430,20 +258,20 @@ err:
 static int si2168_init(struct dvb_frontend *fe)
 {
 	struct si2168 *s = fe->demodulator_priv;
-	int ret, len, remaining;
+	int i, ret, len, remaining;
 	const struct firmware *fw = NULL;
-	u8 *fw_file = SI2168_FIRMWARE;
+	u8 *fw_file;
 	const unsigned int i2c_wr_max = 8;
 	struct si2168_cmd cmd;
 
 	dev_dbg(&s->client->dev, "%s:\n", __func__);
 
-	cmd.args[0] = 0x13;
+/*	cmd.args[0] = 0x13;
 	cmd.wlen = 1;
 	cmd.rlen = 0;
 	ret = si2168_cmd_execute(s, &cmd);
 	if (ret)
-		goto err;
+		goto err;*/
 
 	cmd.args[0] = 0xc0;
 	cmd.args[1] = 0x12;
@@ -459,7 +287,7 @@ static int si2168_init(struct dvb_frontend *fe)
 	cmd.args[11] = 0x00;
 	cmd.args[12] = 0x00;
 	cmd.wlen = 13;
-	cmd.rlen = 0;
+	cmd.rlen = 1;
 	ret = si2168_cmd_execute(s, &cmd);
 	if (ret)
 		goto err;
@@ -485,23 +313,37 @@ static int si2168_init(struct dvb_frontend *fe)
 	if (ret)
 		goto err;
 
-	cmd.args[0] = 0x05;
-	cmd.args[1] = 0x00;
-	cmd.args[2] = 0xaa;
-	cmd.args[3] = 0x4d;
-	cmd.args[4] = 0x56;
-	cmd.args[5] = 0x40;
-	cmd.args[6] = 0x00;
-	cmd.args[7] = 0x00;
-	cmd.wlen = 8;
-	cmd.rlen = 1;
-	ret = si2168_cmd_execute(s, &cmd);
-	if (ret)
-		goto err;
-
 	/* cold state - try to download firmware */
-	dev_info(&s->client->dev, "%s: found a '%s' in cold state\n",
-			KBUILD_MODNAME, si2168_ops.info.name);
+	dev_info(&s->client->dev,
+		"%s: found a Si21%d-%c%c%c rev%d in cold state\n",
+		KBUILD_MODNAME, cmd.args[2], cmd.args[1],
+		cmd.args[3], cmd.args[4], cmd.args[12]);
+
+	s->hw_rev = (cmd.args[3] - 0x30) * 10 + (cmd.args[4]-0x30);
+	s->fw_rev = cmd.args[12];
+
+	/* ? */
+	if (s->hw_rev > 20) {
+		cmd.args[0] = 0x05;
+		cmd.args[1] = 0x00;
+		cmd.args[2] = 0xaa;
+		cmd.args[3] = 0x4d;
+		cmd.args[4] = 0x56;
+		cmd.args[5] = 0x40;
+		cmd.args[6] = 0x00;
+		cmd.args[7] = 0x00;
+		cmd.wlen = 8;
+		cmd.rlen = 1;
+		ret = si2168_cmd_execute(s, &cmd);
+		if (ret)
+			goto err;
+	}
+
+	if ((s->hw_rev == 20) && (s->fw_rev == 2)) {
+		fw_file = SI2168A20_2_FIRMWARE;
+	} else {
+		fw_file = SI2168_FIRMWARE;
+	}
 
 	/* request the firmware, this will block and timeout */
 	ret = request_firmware(&fw, fw_file, &s->client->dev);
@@ -537,6 +379,221 @@ static int si2168_init(struct dvb_frontend *fe)
 	cmd.args[0] = 0x01;
 	cmd.args[1] = 0x01;
 	cmd.wlen = 2;
+	cmd.rlen = 1;
+	ret = si2168_cmd_execute(s, &cmd);
+	if (ret)
+		goto err;
+
+	/* TODO: check if this diff has any effect */
+	if ((s->hw_rev == 20) && (s->fw_rev == 2))
+		memcpy(cmd.args, "\x88\x01\x02\x01\x01", 5);
+	else
+		memcpy(cmd.args, "\x88\x02\x02\x02\x02", 5);
+	cmd.wlen = 5;
+	cmd.rlen = 5;
+	ret = si2168_cmd_execute(s, &cmd);
+	if (ret)
+		goto err;
+
+	/* TODO: check if this cmd is really needed */
+	cmd.wlen = 6;
+	cmd.rlen = 3;
+//	if ((s->hw_rev == 20) && (s->fw_rev == 2)) {
+		memcpy(cmd.args, "\x89\x21\x06\x12\x00\x00", 6);
+#if 0
+	} else {
+		/* that has no big effect */
+		if (c->delivery_system == SYS_DVBT)
+			memcpy(cmd.args, "\x89\x21\x06\x11\xff\x98", 6);
+		else if (c->delivery_system == SYS_DVBC_ANNEX_A)
+			memcpy(cmd.args, "\x89\x21\x06\x11\x89\xf0", 6);
+		else if (c->delivery_system == SYS_DVBT2)
+			memcpy(cmd.args, "\x89\x21\x06\x11\x89\x20", 6);
+	}
+#endif
+	ret = si2168_cmd_execute(s, &cmd);
+	if (ret)
+		goto err;
+
+	memcpy(cmd.args, "\x51\x03", 2);
+	cmd.wlen = 2;
+	cmd.rlen = 12;
+	ret = si2168_cmd_execute(s, &cmd);
+	if (ret)
+		goto err;
+
+	memcpy(cmd.args, "\x12\x08\x04", 3);
+	cmd.wlen = 3;
+	cmd.rlen = 3;
+	ret = si2168_cmd_execute(s, &cmd);
+	if (ret)
+		goto err;
+
+	memcpy(cmd.args, "\x14\x00\x01\x04\x00\x00", 6);
+	cmd.wlen = 6;
+	cmd.rlen = 4;
+	ret = si2168_cmd_execute(s, &cmd);
+	if (ret)
+		goto err;
+
+	cmd.wlen = 6;
+	cmd.rlen = 4;
+	for (i = 0; i < 14; i++) {
+		cmd.args[0] = 0x14;
+		cmd.args[1] = 0x00;
+		cmd.args[2] = si2168_init1_data[i*4];
+		cmd.args[3] = si2168_init1_data[i*4 + 1];
+		cmd.args[4] = si2168_init1_data[i*4 + 2];
+		cmd.args[5] = si2168_init1_data[i*4 + 3];
+		ret = si2168_cmd_execute(s, &cmd);
+		if (ret)
+			goto err;
+	}
+
+	if ((s->hw_rev == 20) && (s->fw_rev == 2)) {
+		cmd.wlen = 6;
+		cmd.rlen = 4;
+		for (i = 0; i < 4; i++) {
+			cmd.args[0] = 0x14;
+			cmd.args[1] = 0x00;
+			cmd.args[2] = si2168_init2_data[i*4];
+			cmd.args[3] = si2168_init2_data[i*4 + 1];
+			cmd.args[4] = si2168_init2_data[i*4 + 2];
+			cmd.args[5] = si2168_init2_data[i*4 + 3];
+			ret = si2168_cmd_execute(s, &cmd);
+			if (ret)
+				goto err;
+		}
+
+		cmd.args[0] = 0x14;
+		cmd.args[1] = 0x00;
+		cmd.args[2] = 0x03;
+		cmd.args[3] = 0x12;
+		cmd.args[4] = 0x82;
+		cmd.args[5] = 0x00;
+		cmd.wlen = 6;
+		cmd.rlen = 4;
+		ret = si2168_cmd_execute(s, &cmd);
+		if (ret)
+			goto err;
+
+		cmd.args[0] = 0x14;
+		cmd.args[1] = 0x00;
+		cmd.args[2] = 0x02;
+		cmd.args[3] = 0x12;
+		cmd.args[4] = 0x26;
+		cmd.args[5] = 0x02;
+		cmd.wlen = 6;
+		cmd.rlen = 4;
+		ret = si2168_cmd_execute(s, &cmd);
+		if (ret)
+			goto err;
+
+		cmd.args[0] = 0x14;
+		cmd.args[1] = 0x00;
+		cmd.args[2] = 0x01;
+		cmd.args[3] = 0x12;
+		cmd.args[4] = 0x00;
+		cmd.args[5] = 0x00;
+		cmd.wlen = 6;
+		cmd.rlen = 4;
+		ret = si2168_cmd_execute(s, &cmd);
+		if (ret)
+			goto err;
+
+		cmd.args[0] = 0x14;
+		cmd.args[1] = 0x00;
+		cmd.args[2] = 0x03;
+		cmd.args[3] = 0x13;
+		cmd.args[4] = 0x82;
+		cmd.args[5] = 0x00;
+		cmd.wlen = 6;
+		cmd.rlen = 4;
+		ret = si2168_cmd_execute(s, &cmd);
+		if (ret)
+			goto err;
+
+		cmd.args[0] = 0x14;
+		cmd.args[1] = 0x00;
+		cmd.args[2] = 0x01;
+		cmd.args[3] = 0x13;
+		cmd.args[4] = 0x26;
+		cmd.args[5] = 0x02;
+		cmd.wlen = 6;
+		cmd.rlen = 4;
+		ret = si2168_cmd_execute(s, &cmd);
+		if (ret)
+			goto err;
+
+		cmd.args[0] = 0x14;
+		cmd.args[1] = 0x00;
+		cmd.args[2] = 0x02;
+		cmd.args[3] = 0x13;
+		cmd.args[4] = 0x01;
+		cmd.args[5] = 0x11;
+		cmd.wlen = 6;
+		cmd.rlen = 4;
+		ret = si2168_cmd_execute(s, &cmd);
+		if (ret)
+			goto err;
+	}
+
+	cmd.wlen = 6;
+	cmd.rlen = 4;
+	for (i = 0; i < 7; i++) {
+		cmd.args[0] = 0x14;
+		cmd.args[1] = 0x00;
+		cmd.args[2] = si2168_init4_data[i*4];
+		cmd.args[3] = si2168_init4_data[i*4 + 1];
+		cmd.args[4] = si2168_init4_data[i*4 + 2];
+		cmd.args[5] = si2168_init4_data[i*4 + 3];
+		ret = si2168_cmd_execute(s, &cmd);
+		if (ret)
+			goto err;
+	}
+
+	if ((s->hw_rev == 20) && (s->fw_rev == 2)) {
+		cmd.args[0] = 0x8e;
+		cmd.args[1] = 0x00;
+		cmd.args[2] = 0x23;
+		cmd.args[3] = 0x01;
+		cmd.args[4] = 0x00;
+		cmd.args[5] = 0x00;
+		cmd.args[6] = 0x00;
+		cmd.args[7] = 0x00;
+		cmd.wlen = 8;
+		cmd.rlen = 1;
+		ret = si2168_cmd_execute(s, &cmd);
+		if (ret)
+			goto err;
+
+		cmd.args[0] = 0x12;
+		cmd.args[1] = 0x01;
+		cmd.args[2] = 0x01;
+		cmd.args[3] = 0x01;
+		cmd.args[4] = 0x01;
+		cmd.args[5] = 0x01;
+		cmd.wlen = 6;
+		cmd.rlen = 6;
+		ret = si2168_cmd_execute(s, &cmd);
+		if (ret)
+			goto err;
+
+		cmd.args[0] = 0x14;
+		cmd.args[1] = 0x00;
+		cmd.args[2] = 0x0a;
+		cmd.args[3] = 0x10;
+		cmd.args[4] = 0x28;
+		cmd.args[5] = 0x00;
+		cmd.wlen = 6;
+		cmd.rlen = 4;
+		ret = si2168_cmd_execute(s, &cmd);
+		if (ret)
+			goto err;
+	}
+
+	cmd.args[0] = 0x85;
+	cmd.wlen = 1;
 	cmd.rlen = 1;
 	ret = si2168_cmd_execute(s, &cmd);
 	if (ret)
