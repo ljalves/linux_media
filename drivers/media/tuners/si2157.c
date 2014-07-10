@@ -83,14 +83,6 @@ static int si2157_init_si2158(struct dvb_frontend *fe)
 	struct si2157_cmd cmd;
 	int ret, i;
 
-	cmd.args[0] = 0x1;
-	cmd.args[1] = 0x1;
-	cmd.wlen = 2;
-	cmd.rlen = 1;
-	ret = si2157_cmd_execute(s, &cmd);
-	//if (ret)
-	//	goto err;
-
 	for (i = 0; i < 15; i++) {
 		cmd.args[0] = 0x14;
 		cmd.args[1] = 0x00;
@@ -220,15 +212,28 @@ static int si2157_init_si2158(struct dvb_frontend *fe)
 	   I suspect that they are for other revison of chips
 	   clean up unnedded commands */
 
-	return 0;
+	return ret;
+err:
+	dev_dbg(&s->client->dev, "%s: failed=%d\n", __func__, ret);
+	return ret;
 }
 
 static int si2157_init(struct dvb_frontend *fe)
 {
 	struct si2157 *s = fe->tuner_priv;
+	struct si2157_cmd cmd;
 	int ret = 0;
 
 	dev_dbg(&s->client->dev, "%s:\n", __func__);
+
+
+	cmd.args[0] = 0x1;
+	cmd.args[1] = 0x1;
+	cmd.wlen = 2;
+	cmd.rlen = 1;
+	ret = si2157_cmd_execute(s, &cmd);
+	//if (ret)
+	//	goto err;
 
 	switch (s->chip_id) {
 	case 58:
@@ -278,6 +283,7 @@ static int si2157_set_params(struct dvb_frontend *fe)
 	struct dtv_frontend_properties *c = &fe->dtv_property_cache;
 	int ret;
 	struct si2157_cmd cmd;
+	u8 bandwidth, delivery_system;
 
 	dev_dbg(&s->client->dev,
 			"%s: delivery_system=%d frequency=%u bandwidth_hz=%u\n",
@@ -289,39 +295,46 @@ static int si2157_set_params(struct dvb_frontend *fe)
 		goto err;
 	}
 
-	/* configure? */
-	cmd.args[0] = 0xc0;
-	cmd.args[1] = 0x00;
-	cmd.args[2] = 0x0c;
-	cmd.args[3] = 0x00;
-	cmd.args[4] = 0x00;
-	cmd.args[5] = 0x01;
-	cmd.args[6] = 0x01;
-	cmd.args[7] = 0x01;
-	cmd.args[8] = 0x01;
-	cmd.args[9] = 0x01;
-	cmd.args[10] = 0x01;
-	cmd.args[11] = 0x02;
-	cmd.args[12] = 0x00;
-	cmd.args[13] = 0x00;
-	cmd.args[14] = 0x01;
-	cmd.wlen = 15;
-	cmd.rlen = 1;
+	switch (c->delivery_system) {
+	case SYS_DVBT2:
+		delivery_system = 0x03;
+		break;
+	case SYS_DVBT:
+	case SYS_DVBC_ANNEX_A:
+	default:
+		delivery_system = 0x01;
+	}
+
+	if (c->bandwidth_hz <= 5000000)
+		bandwidth = 0x05;
+	else if (c->bandwidth_hz <= 6000000)
+		bandwidth = 0x06;
+	else if (c->bandwidth_hz <= 7000000)
+		bandwidth = 0x07;
+	else if (c->bandwidth_hz <= 8000000)
+		bandwidth = 0x08;
+	else if (c->bandwidth_hz <= 9000000)
+		bandwidth = 0x09;
+	else if (c->bandwidth_hz <= 10000000)
+		bandwidth = 0x0a;
+	else
+		bandwidth = 0x0f;
+
+
+	/* set delivery system */
+	memcpy(cmd.args, "\x14\x00\x11\x07\x00\x00", 6);
+	cmd.args[4] = delivery_system;
+	cmd.wlen = 6;
+	cmd.rlen = 4;
 	ret = si2157_cmd_execute(s, &cmd);
 	if (ret)
 		goto err;
 
-	cmd.args[0] = 0x02;
-	cmd.wlen = 1;
-	cmd.rlen = 13;
-	ret = si2157_cmd_execute(s, &cmd);
-	if (ret)
-		goto err;
-
-	cmd.args[0] = 0x01;
-	cmd.args[1] = 0x01;
-	cmd.wlen = 2;
-	cmd.rlen = 1;
+	/* set bandwidth */
+	memcpy(cmd.args, "\x14\x00\x03\x07\x00\x00", 6);
+	cmd.args[4] = 0x20 | bandwidth;
+	cmd.wlen = 6;
+	cmd.rlen = 4;
 	ret = si2157_cmd_execute(s, &cmd);
 	if (ret)
 		goto err;
