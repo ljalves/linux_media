@@ -218,12 +218,41 @@ static int si2157_probe(struct i2c_client *client,
 	s->fe = cfg->fe;
 	mutex_init(&s->i2c_mutex);
 
-	/* check if the tuner is there */
-	cmd.wlen = 0;
+	/* get tuner info */
+	cmd.args[0] = 0xc0;
+	cmd.args[1] = 0x00;
+	cmd.args[2] = 0x00; //0x0c;
+	cmd.args[3] = 0x00;
+	cmd.args[4] = 0x00;
+	cmd.args[5] = 0x01;
+	cmd.args[6] = 0x01;
+	cmd.args[7] = 0x01;
+	cmd.args[8] = 0x01;
+	cmd.args[9] = 0x01;
+	cmd.args[10] = 0x01;
+	cmd.args[11] = 0x02;
+	cmd.args[12] = 0x00;
+	cmd.args[13] = 0x00;
+	cmd.args[14] = 0x01;
+	cmd.wlen = 15;
 	cmd.rlen = 1;
 	ret = si2157_cmd_execute(s, &cmd);
 	if (ret)
 		goto err;
+
+	msleep(50);
+
+	cmd.args[0] = 0x02;
+	cmd.wlen = 1;
+	cmd.rlen = 13;
+	ret = si2157_cmd_execute(s, &cmd);
+	if (ret)
+		goto err;
+
+	dev_info(&s->client->dev,
+		"%s: Found a Si21%d-%c%c%c rev%d\n",
+		KBUILD_MODNAME, cmd.args[2], cmd.args[1],
+		cmd.args[3], cmd.args[4], cmd.args[12]);
 
 	fe->tuner_priv = s;
 	memcpy(&fe->ops.tuner_ops, &si2157_tuner_ops,
