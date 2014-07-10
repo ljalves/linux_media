@@ -45,6 +45,9 @@
 #include "tda18212.h"
 #include "cxd2820r.h"
 
+#include "si2168.h"
+#include "si2157.h"
+
 unsigned int verbose;
 module_param(verbose, int, 0644);
 MODULE_PARM_DESC(verbose, "verbose startup messages, default is 1 (yes)");
@@ -836,24 +839,69 @@ static struct saa716x_config saa716x_tbs6280_config = {
 
 static int saa716x_tbs6281_frontend_attach(struct saa716x_adapter *adapter, int count)
 {
-	struct saa716x_dev *saa716x = adapter->saa716x;
+	struct saa716x_dev *dev = adapter->saa716x;
+	struct i2c_adapter *i2cadapter;
+	struct i2c_client *client;
+	struct i2c_board_info info;
+	struct si2168_config si2168_config;
+	struct si2157_config si2157_config;
 
 	if (count > 1)
 		goto err;
 
 	/* reset */
-	saa716x_gpio_set_output(saa716x, count ? 2 : 16);
-	saa716x_gpio_write(saa716x, count ? 2 : 16, 0);
+	saa716x_gpio_set_output(dev, count ? 2 : 16);
+	saa716x_gpio_write(dev, count ? 2 : 16, 0);
 	msleep(50);
-	saa716x_gpio_write(saa716x, count ? 2 : 16, 1);
+	saa716x_gpio_write(dev, count ? 2 : 16, 1);
 	msleep(100);
 
+	/* attach demod */
+	si2168_config.i2c_adapter = &i2cadapter;
+	si2168_config.fe = &adapter->fe;
+	memset(&info, 0, sizeof(struct i2c_board_info));
+	strlcpy(info.type, "si2168", I2C_NAME_SIZE);
+	info.addr = 0x64;
+	info.platform_data = &si2168_config;
+	request_module(info.type);
+	client = i2c_new_device(&dev->i2c[1 - count].i2c_adapter, &info);
+	if (client == NULL || client->dev.driver == NULL) {
+		goto err;
+	}
+	if (!try_module_get(client->dev.driver->owner)) {
+		i2c_unregister_device(client);
+		goto err;
+	}
+	adapter->i2c_client_demod = client;
+
+	/* attach tuner */
+	si2157_config.fe = adapter->fe;
+	memset(&info, 0, sizeof(struct i2c_board_info));
+	strlcpy(info.type, "si2157", I2C_NAME_SIZE);
+	info.addr = 0x60;
+	info.platform_data = &si2157_config;
+	request_module(info.type);
+	client = i2c_new_device(i2cadapter, &info);
+	if (client == NULL || client->dev.driver == NULL) {
+		module_put(adapter->i2c_client_demod->dev.driver->owner);
+		i2c_unregister_device(adapter->i2c_client_demod);
+		goto err;
+	}
+	if (!try_module_get(client->dev.driver->owner)) {
+		i2c_unregister_device(client);
+		module_put(adapter->i2c_client_demod->dev.driver->owner);
+		i2c_unregister_device(adapter->i2c_client_demod);
+		goto err;
+	}
+	adapter->i2c_client_tuner = client;
+
+	dev_dbg(&dev->pdev->dev, "%s frontend %d attached\n",
+		dev->config->model_name, count);
 
 	return 0;
 err:
-	printk(KERN_ERR "%s: frontend initialization failed\n",
-					adapter->saa716x->config->model_name);
-	dprintk(SAA716x_ERROR, 1, "Frontend attach failed");
+	dev_err(&dev->pdev->dev, "%s frontend %d attach failed\n",
+		dev->config->model_name, count);
 	return -ENODEV;
 }
 
