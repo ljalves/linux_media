@@ -77,15 +77,138 @@ err:
 	return ret;
 }
 
+static int si2157_init_si2158(struct dvb_frontend *fe)
+{
+	struct si2157 *s = fe->tuner_priv;
+	struct si2157_cmd cmd;
+	int ret, i;
+
+	cmd.args[0] = 0x1;
+	cmd.args[1] = 0x1;
+	cmd.wlen = 2;
+	cmd.rlen = 1;
+	ret = si2157_cmd_execute(s, &cmd);
+	//if (ret)
+	//	goto err;
+
+	for (i = 0; i < 15; i++) {
+		cmd.args[0] = 0x14;
+		cmd.args[1] = 0x00;
+		cmd.args[2] = si2158_init_data[i*4];
+		cmd.args[3] = si2158_init_data[i*4+1];
+		cmd.args[4] = si2158_init_data[i*4+2];
+		cmd.args[5] = si2158_init_data[i*4+3];
+		cmd.wlen = 6;
+		cmd.rlen = 4;
+		ret = si2157_cmd_execute(s, &cmd);
+		//if (ret)
+		//	goto err;
+	}
+
+	cmd.args[0] = 0x14;
+	cmd.args[1] = 0x00;
+	cmd.args[2] = 0x02;
+	cmd.args[3] = 0x04;
+	cmd.args[4] = 0x08;
+	cmd.args[5] = 0x00;
+	cmd.wlen = 6;
+	cmd.rlen = 4;
+	ret = si2157_cmd_execute(s, &cmd);
+	//if (ret)
+	//	goto err;
+
+	cmd.args[0] = 0x14;
+	cmd.args[1] = 0x00;
+	cmd.args[2] = 0x01;
+	cmd.args[3] = 0x04;
+	cmd.args[4] = 0x00;
+	cmd.args[5] = 0x00;
+	cmd.wlen = 6;
+	cmd.rlen = 4;
+	ret = si2157_cmd_execute(s, &cmd);
+	//if (ret)
+	//	goto err;
+
+	for (i = 0; i < 18; i++) {
+		cmd.args[0] = 0x14;
+		cmd.args[1] = 0x00;
+		cmd.args[2] = si2158_init_data2[i*4];
+		cmd.args[3] = si2158_init_data2[i*4+1];
+		cmd.args[4] = si2158_init_data2[i*4+2];
+		cmd.args[5] = si2158_init_data2[i*4+3];
+		cmd.wlen = 6;
+		cmd.rlen = 4;
+		ret = si2157_cmd_execute(s, &cmd);
+		//if (ret)
+		//	goto err;
+	}
+
+	for (i = 0; i < 5; i++) {
+		cmd.args[0] = 0x14;
+		cmd.args[1] = 0x00;
+		cmd.args[2] = si2158_init_data3[i*4];
+		cmd.args[3] = si2158_init_data3[i*4+1];
+		cmd.args[4] = si2158_init_data3[i*4+2];
+		cmd.args[5] = si2158_init_data3[i*4+3];
+		cmd.wlen = 6;
+		cmd.rlen = 4;
+		ret = si2157_cmd_execute(s, &cmd);
+		//if (ret)
+		//	goto err;
+	}
+
+	cmd.args[0] = 0x14;
+	cmd.args[1] = 0x00;
+	cmd.args[2] = 0x02;
+	cmd.args[3] = 0x07;
+	cmd.args[4] = 0x01;
+	cmd.args[5] = 0x01;
+	cmd.wlen = 6;
+	cmd.rlen = 4;
+	ret = si2157_cmd_execute(s, &cmd);
+	//if (ret)
+	//	goto err;
+
+	cmd.args[0] = 0xc0;
+	cmd.args[1] = 0x00;
+	cmd.args[2] = 0x0c;
+	cmd.wlen = 3;
+	cmd.rlen = 1;
+	ret = si2157_cmd_execute(s, &cmd);
+	//if (ret)
+	//	goto err;
+
+	/* FIX: some of the above commands return an error
+	   I suspect that they are for other revison of chips
+	   clean up unnedded commands */
+
+	return 0;
+}
+
 static int si2157_init(struct dvb_frontend *fe)
 {
 	struct si2157 *s = fe->tuner_priv;
+	int ret = 0;
 
 	dev_dbg(&s->client->dev, "%s:\n", __func__);
 
-	s->active = true;
+	switch (s->chip_id) {
+	case 58:
+		/* Si2158-A20 */
+		ret = si2157_init_si2158(fe);
+		break;
+	default:
+		break;
+	}
 
-	return 0;
+	if (ret)
+		goto err;
+
+	s->active = true;
+	return ret;
+err:
+	dev_dbg(&s->client->dev, "%s: failed=%d\n", __func__, ret);
+	return ret;
 }
 
 static int si2157_sleep(struct dvb_frontend *fe)
