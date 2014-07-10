@@ -237,6 +237,8 @@ static int si2157_probe(struct i2c_client *client,
 	if (ret)
 		goto err;
 
+	s->chip_id = cmd.args[2];
+
 	dev_info(&s->client->dev,
 		"%s: Found a Si21%d-%c%c%c rev%d\n",
 		KBUILD_MODNAME, cmd.args[2], cmd.args[1],

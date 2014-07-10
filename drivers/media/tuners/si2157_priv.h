@@ -25,6 +25,7 @@ struct si2157 {
 	struct i2c_client *client;
 	struct dvb_frontend *fe;
 	bool active;
+	u8 chip_id;
 };
 
 /* firmare command struct */
