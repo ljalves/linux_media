@@ -222,11 +222,26 @@ EXPORT_SYMBOL(saa716x_dvb_init);
 void saa716x_dvb_exit(struct saa716x_dev *saa716x)
 {
 	struct saa716x_adapter *saa716x_adap = saa716x->saa716x_adap;
+	struct i2c_client *client;
 	int i;
 
 	for (i = 0; i < saa716x->config->adapters; i++) {
 
 		saa716x_fgpi_exit(saa716x, saa716x->config->adap_config[i].ts_port);
+
+		/* remove I2C tuner */
+		client = saa716x_adap->i2c_client_tuner;
+		if (client) {
+			module_put(client->dev.driver->owner);
+			i2c_unregister_device(client);
+		}
+
+		/* remove I2C demod */
+		client = saa716x_adap->i2c_client_demod;
+		if (client) {
+			module_put(client->dev.driver->owner);
+			i2c_unregister_device(client);
+		}
 
 		if (saa716x_adap->fe) {
 			dvb_unregister_frontend(saa716x_adap->fe);
