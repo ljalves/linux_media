@@ -321,21 +321,9 @@ static int si2157_probe(struct i2c_client *client,
 	mutex_init(&s->i2c_mutex);
 
 	/* get tuner info */
-	cmd.args[0] = 0xc0;
-	cmd.args[1] = 0x00;
-	cmd.args[2] = 0x00; //0x0c;
-	cmd.args[3] = 0x00;
-	cmd.args[4] = 0x00;
-	cmd.args[5] = 0x01;
-	cmd.args[6] = 0x01;
-	cmd.args[7] = 0x01;
-	cmd.args[8] = 0x01;
-	cmd.args[9] = 0x01;
-	cmd.args[10] = 0x01;
-	cmd.args[11] = 0x02;
-	cmd.args[12] = 0x00;
-	cmd.args[13] = 0x00;
-	cmd.args[14] = 0x01;
+	memcpy(cmd.args, "\xc0\x00\x00\x00\x00"
+			 "\x01\x01\x01\x01\x01"
+			 "\x01\x02\x00\x00\x01", 15);
 	cmd.wlen = 15;
 	cmd.rlen = 1;
 	ret = si2157_cmd_execute(s, &cmd);
