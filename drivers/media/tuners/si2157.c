@@ -226,6 +226,28 @@ static int si2157_init(struct dvb_frontend *fe)
 
 	dev_dbg(&s->client->dev, "%s:\n", __func__);
 
+	memcpy(cmd.args, "\xc0\x00\x00\x00\x00"
+			 "\x01\x01\x01\x01\x01"
+			 "\x01\x02\x00\x00\x01", 15);
+	cmd.wlen = 15;
+	cmd.rlen = 1;
+	ret = si2157_cmd_execute(s, &cmd);
+	if (ret)
+		goto err;
+
+	cmd.args[0] = 0x02;
+	cmd.wlen = 1;
+	cmd.rlen = 13;
+	ret = si2157_cmd_execute(s, &cmd);
+	if (ret)
+		goto err;
+
+	s->chip_id = cmd.args[2];
+
+	dev_info(&s->client->dev,
+		"%s: Found a Si21%d-%c%c%c rev%d\n",
+		KBUILD_MODNAME, cmd.args[2], cmd.args[1],
+		cmd.args[3], cmd.args[4], cmd.args[12]);
 
 	cmd.args[0] = 0x1;
 	cmd.args[1] = 0x1;
@@ -392,31 +414,12 @@ static int si2157_probe(struct i2c_client *client,
 	s->fe = cfg->fe;
 	mutex_init(&s->i2c_mutex);
 
-	/* get tuner info */
-	memcpy(cmd.args, "\xc0\x00\x00\x00\x00"
-			 "\x01\x01\x01\x01\x01"
-			 "\x01\x02\x00\x00\x01", 15);
-	cmd.wlen = 15;
+	/* check if the demod is there */
+	cmd.wlen = 0;
 	cmd.rlen = 1;
 	ret = si2157_cmd_execute(s, &cmd);
 	if (ret)
 		goto err;
-
-	msleep(50);
-
-	cmd.args[0] = 0x02;
-	cmd.wlen = 1;
-	cmd.rlen = 13;
-	ret = si2157_cmd_execute(s, &cmd);
-	if (ret)
-		goto err;
-
-	s->chip_id = cmd.args[2];
-
-	dev_info(&s->client->dev,
-		"%s: Found a Si21%d-%c%c%c rev%d\n",
-		KBUILD_MODNAME, cmd.args[2], cmd.args[1],
-		cmd.args[3], cmd.args[4], cmd.args[12]);
 
 	fe->tuner_priv = s;
 	memcpy(&fe->ops.tuner_ops, &si2157_tuner_ops,
