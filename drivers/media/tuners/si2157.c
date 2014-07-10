@@ -178,6 +178,44 @@ static int si2157_init_si2158(struct dvb_frontend *fe)
 	//if (ret)
 	//	goto err;
 
+
+	/* To test: this was being done after demod init */
+	cmd.args[0] = 0x14;
+	cmd.args[1] = 0x00;
+	cmd.args[2] = 0x0e;
+	cmd.args[3] = 0x07;
+	cmd.args[4] = 0x00;
+	cmd.args[5] = 0x00;
+	cmd.wlen = 6;
+	cmd.rlen = 4;
+	ret = si2157_cmd_execute(s, &cmd);
+	if (ret)
+		goto err;
+
+	cmd.args[0] = 0x14;
+	cmd.args[1] = 0x00;
+	cmd.args[2] = 0x08;
+	cmd.args[3] = 0x07;
+	cmd.args[4] = 0x00;
+	cmd.args[5] = 0x00;
+	cmd.wlen = 6;
+	cmd.rlen = 4;
+	ret = si2157_cmd_execute(s, &cmd);
+	if (ret)
+		goto err;
+
+	cmd.args[0] = 0x14;
+	cmd.args[1] = 0x00;
+	cmd.args[2] = 0x11;
+	cmd.args[3] = 0x07;
+	cmd.args[4] = 0x01;
+	cmd.args[5] = 0x00;
+	cmd.wlen = 6;
+	cmd.rlen = 4;
+	ret = si2157_cmd_execute(s, &cmd);
+	if (ret)
+		goto err;
+
 	/* FIX: some of the above commands return an error
 	   I suspect that they are for other revison of chips
 	   clean up unnedded commands */
