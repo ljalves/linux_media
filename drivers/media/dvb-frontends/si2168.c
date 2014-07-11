@@ -291,6 +291,8 @@ static int si2168_set_frontend(struct dvb_frontend *fe)
 			goto err;
 
 		/* set symbol rate */
+		printk("srate = %d\n", c->symbol_rate);
+		printk("srate/1000 = %d\n", c->symbol_rate/1000);
 		p.addr = 0x1102;
 		p.val = c->symbol_rate / 1000;
 		ret = si2168_set_prop(s, &p);

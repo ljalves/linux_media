@@ -22,7 +22,7 @@
 #include <linux/firmware.h>
 #include <linux/i2c-mux.h>
 
-#define SI2168_FIRMWARE "dvb-demod-si2168-01.fw"
+#define SI2168_FIRMWARE "dvb-demod-si2168-02.fw"
 #define SI2168A20_2_FIRMWARE "dvb-demod-si2168-03.fw"
 
 /* state struct */
