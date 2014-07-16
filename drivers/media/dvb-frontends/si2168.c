@@ -200,20 +200,6 @@ static int si2168_set_frontend(struct dvb_frontend *fe)
 		goto err;
 	}
 
-	switch (c->delivery_system) {
-	case SYS_DVBT:
-		delivery_system = 0x20;
-		break;
-	case SYS_DVBC_ANNEX_A:
-		delivery_system = 0x30;
-		break;
-	case SYS_DVBT2:
-		delivery_system = 0x70;
-		break;
-	default:
-		ret = -EINVAL;
-		goto err;
-	}
 
 	if (c->bandwidth_hz <= 5000000)
 		bandwidth = 0x05;
@@ -230,6 +216,23 @@ static int si2168_set_frontend(struct dvb_frontend *fe)
 	else
 		bandwidth = 0x0f;
 
+
+	switch (c->delivery_system) {
+	case SYS_DVBT:
+		delivery_system = 0x20;
+		break;
+	case SYS_DVBC_ANNEX_A:
+		delivery_system = 0x30;
+		bandwidth = 0x08;
+		break;
+	case SYS_DVBT2:
+		delivery_system = 0x70;
+		break;
+	default:
+		ret = -EINVAL;
+		goto err;
+	}
+
 	/* program tuner */
 	if (fe->ops.tuner_ops.set_params) {
 		ret = fe->ops.tuner_ops.set_params(fe);
@@ -243,7 +246,7 @@ static int si2168_set_frontend(struct dvb_frontend *fe)
 	if (ret)
 		goto err;
 
-
+/*
 	if (c->delivery_system == SYS_DVBT2) {
 		memcpy(cmd.args, "\x52\x00\x01", 3);
 		cmd.args[1] = (c->stream_id > 0xff) ? 0x00 : c->stream_id;
@@ -253,6 +256,7 @@ static int si2168_set_frontend(struct dvb_frontend *fe)
 		if (ret)
 			goto err;
 	}
+*/
 
 	/* set delivery system and bandwidth */
 	p.addr = 0x100a;
@@ -284,6 +288,7 @@ static int si2168_set_frontend(struct dvb_frontend *fe)
 		default:
 			fec_inner = 0x00;
 		}
+
 		p.addr = 0x1101;
 		p.val = fec_inner;
 		ret = si2168_set_prop(s, &p);
@@ -291,26 +296,28 @@ static int si2168_set_frontend(struct dvb_frontend *fe)
 			goto err;
 
 		/* set symbol rate */
-		printk("srate = %d\n", c->symbol_rate);
-		printk("srate/1000 = %d\n", c->symbol_rate/1000);
 		p.addr = 0x1102;
 		p.val = c->symbol_rate / 1000;
 		ret = si2168_set_prop(s, &p);
 		if (ret)
 			goto err;
-
-
 	}
 
-
-#if 0
+/*
 	memcpy(cmd.args, "\x14\x00\x01\x10\x16\x00", 6);
 	cmd.wlen = 6;
 	cmd.rlen = 1;
 	ret = si2168_cmd_execute(s, &cmd);
 	if (ret)
 		goto err;
-#endif
+*/
+
+	cmd.args[0] = 0x85;
+	cmd.wlen = 1;
+	cmd.rlen = 1;
+	ret = si2168_cmd_execute(s, &cmd);
+	if (ret)
+		goto err;
 
 
 	s->delivery_system = c->delivery_system;
@@ -389,22 +396,6 @@ static int si2168_init(struct dvb_frontend *fe)
 	s->hw_rev = (cmd.args[3] - 0x30) * 10 + (cmd.args[4]-0x30);
 	s->fw_rev = cmd.args[12];
 
-	/* ? */
-	if (s->hw_rev > 20) {
-		cmd.args[0] = 0x05;
-		cmd.args[1] = 0x00;
-		cmd.args[2] = 0xaa;
-		cmd.args[3] = 0x4d;
-		cmd.args[4] = 0x56;
-		cmd.args[5] = 0x40;
-		cmd.args[6] = 0x00;
-		cmd.args[7] = 0x00;
-		cmd.wlen = 8;
-		cmd.rlen = 1;
-		ret = si2168_cmd_execute(s, &cmd);
-		if (ret)
-			goto err;
-	}
 
 	if ((s->hw_rev == 20) && (s->fw_rev == 2)) {
 		fw_file = SI2168A20_2_FIRMWARE;
