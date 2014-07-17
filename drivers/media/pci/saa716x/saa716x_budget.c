@@ -963,23 +963,14 @@ static int saa716x_tbs6285_frontend_attach(struct saa716x_adapter *adapter, int 
 	si2168_config.fe = &adapter->fe;
 	memset(&info, 0, sizeof(struct i2c_board_info));
 	strlcpy(info.type, "si2168", I2C_NAME_SIZE);
-
-	if ((count == 0) || (count == 2)) {
-		info.addr = 0x64;
-		info.platform_data = &si2168_config;
-		request_module(info.type);
-		client = i2c_new_device(&dev->i2c[count/2].i2c_adapter, &info);
-		if (client == NULL || client->dev.driver == NULL) {
-			goto err;
-		}
-	} else {
-		info.addr = 0x66;
-		info.platform_data = &si2168_config;
-		request_module(info.type);
-		client = i2c_new_device(&dev->i2c[(count-1)/2].i2c_adapter, &info);
-		if (client == NULL || client->dev.driver == NULL) {
-			goto err;
-		}
+	info.addr = ((count == 0) || (count == 2)) ? 0x64 : 0x66;
+	info.platform_data = &si2168_config;
+	request_module(info.type);
+	client = i2c_new_device( ((count == 0) || (count == 2)) ? 
+		&dev->i2c[count/2].i2c_adapter : &dev->i2c[(count-1)/2].i2c_adapter,
+		&info);
+	if (client == NULL || client->dev.driver == NULL) {
+		goto err;
 	}
 
 	if (!try_module_get(client->dev.driver->owner)) {
@@ -992,7 +983,7 @@ static int saa716x_tbs6285_frontend_attach(struct saa716x_adapter *adapter, int 
 	si2157_config.fe = adapter->fe;
 	memset(&info, 0, sizeof(struct i2c_board_info));
 	strlcpy(info.type, "si2157", I2C_NAME_SIZE);
-	info.addr = 0x60;
+	info.addr = ((count == 0) || (count == 2)) ? 0x62 : 0x60;
 	info.platform_data = &si2157_config;
 	request_module(info.type);
 	client = i2c_new_device(i2cadapter, &info);
