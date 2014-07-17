@@ -22,8 +22,10 @@
 #include <linux/firmware.h>
 #include <linux/i2c-mux.h>
 
-#define SI2168_FIRMWARE "dvb-demod-si2168-02.fw"
-#define SI2168A20_2_FIRMWARE "dvb-demod-si2168-03.fw"
+#define SI2168_A20_FIRMWARE "dvb-demod-si2168-a20-01.fw"
+#define SI2168_A30_FIRMWARE "dvb-demod-si2168-a30-01.fw"
+#define SI2168_B40_FIRMWARE "dvb-demod-si2168-b40-01.fw"
+#define SI2168_B40_FIRMWARE_FALLBACK "dvb-demod-si2168-02.fw"
 
 /* state struct */
 struct si2168 {
@@ -34,15 +36,12 @@ struct si2168 {
 	fe_delivery_system_t delivery_system;
 	fe_status_t fe_status;
 	bool active;
-
-	u8 hw_rev;
-	u8 fw_rev;
 };
 
 /* firmare command struct */
-#define SI2157_ARGLEN      30
+#define SI2168_ARGLEN      30
 struct si2168_cmd {
-	u8 args[SI2157_ARGLEN];
+	u8 args[SI2168_ARGLEN];
 	unsigned wlen;
 	unsigned rlen;
 };
@@ -64,7 +63,7 @@ struct si2168_prop si2168_demod_init[] = {
 	{ 0x1005, 0x00a1 },
 	{ 0x100f, 0x0010 },
 	{ 0x100d, 0x02d0 },
-	{ 0x1001, 0x0056 },	/* crope : 0x00 / 0x56 */
+	{ 0x1001, 0x0056 },	/* TS_MODE crope : 0x16 / 81,21 = 0x56 (85 = 0x53) */
 	{ 0x1009, 0x18e3 },
 	{ 0x1008, 0x15d7 },
 };
