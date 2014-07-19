@@ -82,6 +82,9 @@ obj-$(CONFIG_DVB_USB_TBSQBOX) += dvb-usb-tbsqbox.o
 dvb-usb-tbsqbox2-objs = tbs-qbox2.o
 obj-$(CONFIG_DVB_USB_TBSQBOX2) += dvb-usb-tbsqbox2.o
 
+dvb-usb-tbsqbox22-objs = tbs-qbox22.o
+obj-$(CONFIG_DVB_USB_TBSQBOX22) += dvb-usb-tbsqbox22.o
+
 dvb-usb-tbsqboxs2-objs = tbs-qboxs2.o
 obj-$(CONFIG_DVB_USB_TBSQBOXS2) += dvb-usb-tbsqboxs2.o
 
