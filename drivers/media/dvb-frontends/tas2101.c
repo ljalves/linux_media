@@ -603,7 +603,7 @@ static int tas2101_initfe(struct dvb_frontend *fe)
 	if (ret)
 		return ret;
 
-	ret = tas2101_regmask(priv, 0xe0, buf[6], 0xff);
+	ret = tas2101_regmask(priv, 0xe0, priv->cfg->init[6], 0xff);
 	if (ret)
 		return ret;
 
