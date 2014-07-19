@@ -932,7 +932,7 @@ static struct tas2101_config tbs6922_cfg = {
 	.i2c_address   = 0x68,
 	.reset_demod   = tbs6922_reset_fe,
 	.lnb_power     = tbs6922_lnb_power,
-	.init          = {0x10, 0x32, 0x54, 0x76, 0xb8, 0x9a},
+	.init          = {0x10, 0x32, 0x54, 0x76, 0xb8, 0x9a, 0x33},
 };
 
 static struct av201x_config tbs6922_av201x_cfg = {
@@ -1188,12 +1188,13 @@ static struct tas2101_config tbs6982_cfg[] = {
 		.i2c_address   = 0x68,
 		.reset_demod   = tbs6982_reset_fe0,
 		.lnb_power     = tbs6982_lnb0_power,
-		.init          = {}
+		.init          = {0x10, 0x32, 0x54, 0x76, 0xb8, 0x9a, 0x33},
 	},
 	{
 		.i2c_address   = 0x68,
 		.reset_demod   = tbs6982_reset_fe1,
 		.lnb_power     = tbs6982_lnb1_power,
+		.init          = {0x8a, 0x6b, 0x13, 0x70, 0x45, 0x92, 0x33},
 	}
 };
 
@@ -1325,13 +1326,13 @@ static struct tas2101_config tbs6982se_cfg[] = {
 		.i2c_address   = 0x60,
 		.reset_demod   = tbs6982se_reset_fe0,
 		.lnb_power     = tbs6982se_lnb0_power,
-		.init          = {0x10, 0x32, 0x54, 0x76, 0xb8, 0x9a},
+		.init          = {0x10, 0x32, 0x54, 0x76, 0xb8, 0x9a, 0x33},
 	},
 	{
 		.i2c_address   = 0x68,
 		.reset_demod   = tbs6982se_reset_fe1,
 		.lnb_power     = tbs6982se_lnb1_power,
-		.init          = {0x8a, 0x6b, 0x13, 0x70, 0x45, 0x92},
+		.init          = {0x8a, 0x6b, 0x13, 0x70, 0x45, 0x92, 0x33},
 	}
 };
 
@@ -1559,7 +1560,6 @@ static struct saa716x_config saa716x_tbs6984_config = {
 #define SAA716x_MODEL_TBS6985 "TurboSight TBS 6985"
 #define SAA716x_DEV_TBS6985   "DVB-S/S2"
 
-
 static void tbs6985_reset_fe(struct dvb_frontend *fe, int reset_pin)
 {
 	struct i2c_adapter *adapter = tas2101_get_i2c_adapter(fe, 0);
@@ -1629,30 +1629,47 @@ static void tbs6985_lnb3_power(struct dvb_frontend *fe, int onoff)
 	tbs6985_lnb_power(fe, 15, onoff);
 }
 
+#undef TBS6985_TSMODE0
 static struct tas2101_config tbs6985_cfg[] = {
 	{
 		.i2c_address   = 0x60,
 		.reset_demod   = tbs6985_reset_fe0,
 		.lnb_power     = tbs6985_lnb0_power,
-		.init          = {0x01, 0x32, 0x65, 0x74, 0xab, 0x98},
+#ifdef TBS6985_TSMODE0
+		.init          = {0x01, 0x32, 0x65, 0x74, 0xab, 0x98, 0x33},
+#else
+		.init          = {0x0b, 0x8a, 0x65, 0x74, 0xab, 0x98, 0xb1},
+#endif
 	},
 	{
 		.i2c_address   = 0x68,
 		.reset_demod   = tbs6985_reset_fe1,
 		.lnb_power     = tbs6985_lnb1_power,
-		.init          = {0x10, 0x32, 0x54, 0xb7, 0x86, 0x9a},
+#ifdef TBS6985_TSMODE0
+		.init          = {0x10, 0x32, 0x54, 0xb7, 0x86, 0x9a, 0x33},
+#else
+		.init          = {0x0a, 0x8b, 0x54, 0xb7, 0x86, 0x9a, 0xb1},
+#endif
 	},
 	{
 		.i2c_address   = 0x60,
 		.reset_demod   = tbs6985_reset_fe2,
 		.lnb_power     = tbs6985_lnb2_power,
-		.init          = {0x25, 0x36, 0x40, 0xb1, 0x87, 0x9a},
+#ifdef TBS6985_TSMODE0
+		.init          = {0x25, 0x36, 0x40, 0xb1, 0x87, 0x9a, 0x33},
+#else
+		.init          = {0xba, 0x80, 0x40, 0xb1, 0x87, 0x9a, 0xb1},
+#endif
 	},
 	{
 		.i2c_address   = 0x68,
 		.reset_demod   = tbs6985_reset_fe3,
 		.lnb_power     = tbs6985_lnb3_power,
-		.init          = {0x80, 0xba, 0x21, 0x53, 0x74, 0x96},
+#ifdef TBS6985_TSMODE0
+		.init          = {0x80, 0xba, 0x21, 0x53, 0x74, 0x96, 0x33},
+#else
+		.init          = {0xba, 0x80, 0x21, 0x53, 0x74, 0x96, 0xb1},
+#endif
 	}
 };
 
