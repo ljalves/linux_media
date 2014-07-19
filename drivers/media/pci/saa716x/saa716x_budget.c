@@ -1493,52 +1493,27 @@ static int saa716x_tbs6984_frontend_attach(
 	struct saa716x_adapter *adapter, int count)
 {
 	struct saa716x_dev *dev = adapter->saa716x;
+	struct saa716x_i2c *i2c = &dev->i2c[1 - (count >> 1)];
 
 	dev_dbg(&dev->pdev->dev, "%s frontend %d attaching\n",
 		dev->config->model_name, count);
 
-	switch (count) {
-	case 0:
-		saa716x_tbs6984_init(dev);
-	case 1:
-		/* first and second FE attaching */
-		adapter->fe = dvb_attach(cx24117_attach, &tbs6984_cx24117_cfg[0],
-				&dev->i2c[SAA716x_I2C_BUS_A].i2c_adapter);
-		if (adapter->fe == NULL)
-			goto err;
-		if (dvb_attach(isl6422_attach, adapter->fe,
-				&dev->i2c[SAA716x_I2C_BUS_A].i2c_adapter,
-				&tbs6984_isl6422_cfg[count]) == NULL) {
-			dvb_frontend_detach(adapter->fe);
-			adapter->fe = NULL;
-			dev_dbg(&dev->pdev->dev,
-				"%s frontend %d SEC attach failed\n",
-				dev->config->model_name, count);
-			goto err;
-		}
-		break;
-	case 2:
-	case 3:
-		/* third and forth FE attaching */
-		adapter->fe = dvb_attach(cx24117_attach, &tbs6984_cx24117_cfg[1],
-				&dev->i2c[SAA716x_I2C_BUS_B].i2c_adapter);
-		if (adapter->fe == NULL)
-			goto err;
-		if (dvb_attach(isl6422_attach, adapter->fe,
-				&dev->i2c[SAA716x_I2C_BUS_B].i2c_adapter,
-				&tbs6984_isl6422_cfg[count - 2]) == NULL) {
-			dvb_frontend_detach(adapter->fe);
-			adapter->fe = NULL;
-			dev_dbg(&dev->pdev->dev,
-				"%s frontend %d SEC attach failed\n",
-				dev->config->model_name, count);
-			goto err;
-		}
-		break;
-	default:
+	if (count > 3)
 		goto err;
-		break;
-	}
+
+	if (count == 0)
+		saa716x_tbs6984_init(dev);
+
+	adapter->fe = dvb_attach(cx24117_attach, &tbs6984_cx24117_cfg[count >> 1],
+			&i2c->i2c_adapter);
+	if (adapter->fe == NULL)
+		goto err;
+
+	if (dvb_attach(isl6422_attach, adapter->fe, &i2c->i2c_adapter,
+			&tbs6984_isl6422_cfg[count & 0x01]) == NULL)
+		dev_info(&dev->pdev->dev,
+			"%s frontend %d doesn't seem to have a isl6422b on the i2c bus.\n",
+			dev->config->model_name, count);
 
 	return 0;
 err:
@@ -1554,7 +1529,7 @@ static struct saa716x_config saa716x_tbs6984_config = {
 	.adapters		= 4,
 	.frontend_attach	= saa716x_tbs6984_frontend_attach,
 	.irq_handler		= saa716x_budget_pci_irq,
-	.i2c_rate		= SAA716x_I2C_RATE_100,
+	.i2c_rate		= SAA716x_I2C_RATE_400,
 	.i2c_mode		= SAA716x_I2C_MODE_POLLING,
 	.adap_config		= {
 		{
