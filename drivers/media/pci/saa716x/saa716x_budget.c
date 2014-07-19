@@ -885,17 +885,6 @@ static struct saa716x_config saa716x_tbs6220_config = {
 
 static void tbs6922_reset_fe(struct dvb_frontend *fe)
 {
-	struct i2c_adapter *adapter = tas2101_get_i2c_adapter(fe, 0);
-        struct saa716x_i2c *i2c = i2c_get_adapdata(adapter);
-        struct saa716x_dev *dev = i2c->saa716x;
-	int reset_pin = 0;
-
-	/* reset frontend, active low */
-/*	saa716x_gpio_set_output(dev, reset_pin);
-	saa716x_gpio_write(dev, reset_pin, 0);
-	msleep(60);
-	saa716x_gpio_write(dev, reset_pin, 1);
-	msleep(120);*/
 }
 
 static void tbs6922_lnb_power(struct dvb_frontend *fe, int onoff)
