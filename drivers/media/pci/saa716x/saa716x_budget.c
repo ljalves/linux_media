@@ -684,63 +684,49 @@ static struct tda18212_config tda18212_config[] = {
 
 static int saa716x_tbs6284_frontend_attach(struct saa716x_adapter *adapter, int count)
 {
-	struct saa716x_dev *saa716x = adapter->saa716x;
-	struct saa716x_i2c *i2c0 = &saa716x->i2c[SAA716x_I2C_BUS_A];
-	struct saa716x_i2c *i2c1 = &saa716x->i2c[SAA716x_I2C_BUS_B];
+	struct saa716x_dev *dev = adapter->saa716x;
+	struct saa716x_i2c *i2c = &dev->i2c[1 - (count >> 1)];
 
-	switch (count) {
-	case 0:
-		/* reset */
-		saa716x_gpio_set_output(saa716x, 22);
-		saa716x_gpio_write(saa716x, 22, 0);
+	if (count > 3)
+		goto err;
+
+	/* reset */
+	if (count == 0) {
+		saa716x_gpio_set_output(dev, 22);
+		saa716x_gpio_write(dev, 22, 0);
 		msleep(200);
-		saa716x_gpio_write(saa716x, 22, 1);
+		saa716x_gpio_write(dev, 22, 1);
 		msleep(400);
-	case 1:
-		dprintk(SAA716x_ERROR, 1, "Probing for cxd2820r (%d)", count);
-		adapter->fe = cxd2820r_attach(&cxd2820r_config[count],
-					&i2c1->i2c_adapter, NULL);
-		if (!adapter->fe)
-			goto err;
-
-		if (!dvb_attach(tda18212_attach, adapter->fe,
-			&i2c1->i2c_adapter, &tda18212_config[count])) {
-			dvb_frontend_detach(adapter->fe);
-			adapter->fe = NULL;
-			goto err;
-		}
-		break;
-	case 2:
-		/* reset */
-		saa716x_gpio_set_output(saa716x, 12);
-		saa716x_gpio_write(saa716x, 12, 0);
+	} else if (count == 2) {
+		saa716x_gpio_set_output(dev, 12);
+		saa716x_gpio_write(dev, 12, 0);
 		msleep(200);
-		saa716x_gpio_write(saa716x, 12, 1);
+		saa716x_gpio_write(dev, 12, 1);
 		msleep(400);
-	case 3:
-		dprintk(SAA716x_ERROR, 1, "Probing for cxd2820r (%d)", count);
-		adapter->fe = cxd2820r_attach(&cxd2820r_config[count - 2],
-					&i2c0->i2c_adapter, NULL);
-		if (!adapter->fe)
-			goto err;
+	}
 
-		if (!dvb_attach(tda18212_attach, adapter->fe,
-			&i2c0->i2c_adapter, &tda18212_config[count - 2])) {
-			dvb_frontend_detach(adapter->fe);
-			adapter->fe = NULL;
-			goto err;
-		}
-		break;
-	default:
+	/* attach frontend */
+	adapter->fe = cxd2820r_attach(&cxd2820r_config[count & 1],
+				&i2c->i2c_adapter, NULL);
+	if (!adapter->fe)
+		goto err;
+
+	/* attach tuner */
+	if (!dvb_attach(tda18212_attach, adapter->fe, &i2c->i2c_adapter,
+					&tda18212_config[count & 1])) {
+		dvb_frontend_detach(adapter->fe);
+		adapter->fe = NULL;
+		dev_err(&dev->pdev->dev, "%s frontend %d tuner attach failed\n",
+			dev->config->model_name, count);
 		goto err;
 	}
 
-	dprintk(SAA716x_ERROR, 1, "Done!");
+	dev_dbg(&dev->pdev->dev, "%s frontend %d attached\n",
+		dev->config->model_name, count);
 	return 0;
 err:
-	printk(KERN_ERR "%s: frontend initialization failed\n",
-					adapter->saa716x->config->model_name);
-	dprintk(SAA716x_ERROR, 1, "Frontend attach failed");
+	dev_err(&dev->pdev->dev, "%s frontend %d attach failed\n",
+		dev->config->model_name, count);
 	return -ENODEV;
 }
 
