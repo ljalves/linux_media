@@ -34,7 +34,7 @@ struct tas2101_config {
 	void (*lnb_power)(struct dvb_frontend *fe, int onoff);
 
 	/* frontend gpio/tuner init */
-	u8 init[6];
+	u8 init[7];
 };
 
 struct i2c_adapter *tas2101_get_i2c_adapter(struct dvb_frontend *fe, int bus);

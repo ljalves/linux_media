@@ -603,6 +603,10 @@ static int tas2101_initfe(struct dvb_frontend *fe)
 	if (ret)
 		return ret;
 
+	ret = tas2101_regmask(priv, 0xe0, buf[6], 0xff);
+	if (ret)
+		return ret;
+
 	ret = tas2101_wrtable(priv, tas2101_initfe1,
 		ARRAY_SIZE(tas2101_initfe1));
 	if (ret)
