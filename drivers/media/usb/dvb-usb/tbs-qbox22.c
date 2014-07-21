@@ -179,20 +179,11 @@ static int tbsqbox22_read_mac_address(struct dvb_usb_device *d, u8 mac[6])
 static struct dvb_usb_device_properties tbsqbox22_properties;
 
 
-static void tbs5922_reset_fe(struct dvb_frontend *fe)
-{
-}
-
-static void tbs5922_lnb_power(struct dvb_frontend *fe,
-	int onoff)
-{
-}
-
 static struct tas2101_config tbs5922_cfg = {
 	.i2c_address   = 0x68,
 	.id            = ID_TAS2100,
-	.reset_demod   = tbs5922_reset_fe,
-	.lnb_power     = tbs5922_lnb_power,
+	.reset_demod   = NULL,
+	.lnb_power     = NULL,
 	.init          = {0xb8, 0x67, 0x45, 0x23, 0x01, 0x9a, 0x33},
 };
 
