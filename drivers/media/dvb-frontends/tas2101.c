@@ -557,7 +557,8 @@ struct dvb_frontend *tas2101_attach(const struct tas2101_config *cfg,
 	priv->fe.demodulator_priv = priv;
 
 	/* reset demod */
-	cfg->reset_demod(&priv->fe);
+	if (cfg->reset_demod)
+		cfg->reset_demod(&priv->fe);
 
 	msleep(100);
 
