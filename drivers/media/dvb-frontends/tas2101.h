@@ -24,9 +24,17 @@
 #include <linux/kconfig.h>
 #include <linux/dvb/frontend.h>
 
+typedef enum tas210x_id {
+	ID_TAS2100,
+	ID_TAS2101,
+} tas210x_id_t;
+
 struct tas2101_config {
 	/* demodulator i2c address */
 	u8 i2c_address;
+
+	/* chip id */
+	tas210x_id_t id;
 
 	/* demod hard reset */
 	void (*reset_demod)(struct dvb_frontend *fe);

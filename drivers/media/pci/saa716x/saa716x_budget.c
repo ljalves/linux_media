@@ -905,6 +905,7 @@ static void tbs6922_lnb_power(struct dvb_frontend *fe, int onoff)
 
 static struct tas2101_config tbs6922_cfg = {
 	.i2c_address   = 0x68,
+	.id            = ID_TAS2100,
 	.reset_demod   = tbs6922_reset_fe,
 	.lnb_power     = tbs6922_lnb_power,
 	.init          = {0x10, 0x32, 0x54, 0x76, 0xb8, 0x9a, 0x33},
@@ -1161,12 +1162,14 @@ static void tbs6982_lnb1_power(struct dvb_frontend *fe, int onoff)
 static struct tas2101_config tbs6982_cfg[] = {
 	{
 		.i2c_address   = 0x68,
+		.id            = ID_TAS2101,
 		.reset_demod   = tbs6982_reset_fe0,
 		.lnb_power     = tbs6982_lnb0_power,
 		.init          = {0x10, 0x32, 0x54, 0x76, 0xb8, 0x9a, 0x33},
 	},
 	{
 		.i2c_address   = 0x68,
+		.id            = ID_TAS2101,
 		.reset_demod   = tbs6982_reset_fe1,
 		.lnb_power     = tbs6982_lnb1_power,
 		.init          = {0x8a, 0x6b, 0x13, 0x70, 0x45, 0x92, 0x33},
@@ -1299,12 +1302,14 @@ static void tbs6982se_lnb1_power(struct dvb_frontend *fe, int onoff)
 static struct tas2101_config tbs6982se_cfg[] = {
 	{
 		.i2c_address   = 0x60,
+		.id            = ID_TAS2101,
 		.reset_demod   = tbs6982se_reset_fe0,
 		.lnb_power     = tbs6982se_lnb0_power,
 		.init          = {0x10, 0x32, 0x54, 0x76, 0xb8, 0x9a, 0x33},
 	},
 	{
 		.i2c_address   = 0x68,
+		.id            = ID_TAS2101,
 		.reset_demod   = tbs6982se_reset_fe1,
 		.lnb_power     = tbs6982se_lnb1_power,
 		.init          = {0x8a, 0x6b, 0x13, 0x70, 0x45, 0x92, 0x33},
@@ -1608,6 +1613,7 @@ static void tbs6985_lnb3_power(struct dvb_frontend *fe, int onoff)
 static struct tas2101_config tbs6985_cfg[] = {
 	{
 		.i2c_address   = 0x60,
+		.id            = ID_TAS2101,
 		.reset_demod   = tbs6985_reset_fe0,
 		.lnb_power     = tbs6985_lnb0_power,
 #ifdef TBS6985_TSMODE0
@@ -1618,6 +1624,7 @@ static struct tas2101_config tbs6985_cfg[] = {
 	},
 	{
 		.i2c_address   = 0x68,
+		.id            = ID_TAS2101,
 		.reset_demod   = tbs6985_reset_fe1,
 		.lnb_power     = tbs6985_lnb1_power,
 #ifdef TBS6985_TSMODE0
@@ -1628,6 +1635,7 @@ static struct tas2101_config tbs6985_cfg[] = {
 	},
 	{
 		.i2c_address   = 0x60,
+		.id            = ID_TAS2101,
 		.reset_demod   = tbs6985_reset_fe2,
 		.lnb_power     = tbs6985_lnb2_power,
 #ifdef TBS6985_TSMODE0
@@ -1638,6 +1646,7 @@ static struct tas2101_config tbs6985_cfg[] = {
 	},
 	{
 		.i2c_address   = 0x68,
+		.id            = ID_TAS2101,
 		.reset_demod   = tbs6985_reset_fe3,
 		.lnb_power     = tbs6985_lnb3_power,
 #ifdef TBS6985_TSMODE0

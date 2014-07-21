@@ -190,6 +190,7 @@ static void tbs5922_lnb_power(struct dvb_frontend *fe,
 
 static struct tas2101_config tbs5922_cfg = {
 	.i2c_address   = 0x68,
+	.id            = ID_TAS2100,
 	.reset_demod   = tbs5922_reset_fe,
 	.lnb_power     = tbs5922_lnb_power,
 	.init          = {0xb8, 0x67, 0x45, 0x23, 0x01, 0x9a, 0x33},
