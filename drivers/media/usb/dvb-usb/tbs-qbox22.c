@@ -105,7 +105,7 @@ static int tbsqbox22_i2c_transfer(struct i2c_adapter *adap, struct i2c_msg msg[]
 			buf[0] = msg[0].len + 1; //lenth
 			buf[1] = msg[0].addr << 1; //demod addr
 			for(i=0; i < msg[0].len; i++)
-				buf6[2+i] = msg[0].buf[i]; //register
+				buf[2+i] = msg[0].buf[i]; //register
 			tbsqbox22_op_rw(d->udev, 0x80, 0, 0,
 						buf, msg[0].len+2, TBSQBOX_WRITE_MSG);
 			//msleep(3);
