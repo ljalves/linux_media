@@ -74,10 +74,9 @@ static int tbsqbox22_op_rw(struct usb_device *dev, u8 request, u16 value,
 static int tbsqbox22_i2c_transfer(struct i2c_adapter *adap, struct i2c_msg msg[],
 		int num)
 {
-struct dvb_usb_device *d = i2c_get_adapdata(adap);
+	struct dvb_usb_device *d = i2c_get_adapdata(adap);
 	int i = 0;
-	u8 ibuf[1], obuf[3];
-	u8 buf6[20];
+	u8 buf[20];
 
 	if (!d)
 		return -ENODEV;
@@ -85,61 +84,48 @@ struct dvb_usb_device *d = i2c_get_adapdata(adap);
 		return -EAGAIN;
 
 	switch (num) {
-	case 2: {
+	case 2:
 		/* read */
-		obuf[0] = msg[0].len;
-		obuf[1] = msg[0].addr<<1;
-		obuf[2] = msg[0].buf[0];
+		buf[0] = msg[1].len;
+		buf[1] = msg[0].addr << 1;
+		buf[2] = msg[0].buf[0];
 
 		tbsqbox22_op_rw(d->udev, 0x90, 0, 0,
-					obuf, 3, TBSQBOX_WRITE_MSG);
+				buf, 3, TBSQBOX_WRITE_MSG);
 		msleep(5);
 		tbsqbox22_op_rw(d->udev, 0x91, 0, 0,
-					ibuf, 1, TBSQBOX_READ_MSG);
-		memcpy(msg[1].buf, ibuf, msg[1].len);
+				buf, msg[1].len, TBSQBOX_READ_MSG);
+		memcpy(msg[1].buf, buf, msg[1].len);
 		break;
-	}
 	case 1:
 		switch (msg[0].addr) {
-		case 0x68: {
-				/* write to register */
-				buf6[0] = msg[0].len+1;//lenth
-				buf6[1] = msg[0].addr<<1;//demod addr
-				for(i=0;i<msg[0].len;i++) {
-				buf6[2+i] = msg[0].buf[i];//register
-				}
-				tbsqbox22_op_rw(d->udev, 0x80, 0, 0,
-							buf6, msg[0].len+2, TBSQBOX_WRITE_MSG);
-				//msleep(3);
-			break;
-		}
-		case 0x63: {
+		case 0x68:
+		case 0x63:
 			/* write to register */
-			buf6[0] = msg[0].len+1;//lenth
-			buf6[1] = msg[0].addr<<1;//demod addr
-			for(i=0;i<msg[0].len;i++) {
-				buf6[2+i] = msg[0].buf[i];//register
-			}
+			buf[0] = msg[0].len + 1; //lenth
+			buf[1] = msg[0].addr << 1; //demod addr
+			for(i=0; i < msg[0].len; i++)
+				buf6[2+i] = msg[0].buf[i]; //register
 			tbsqbox22_op_rw(d->udev, 0x80, 0, 0,
-						buf6, msg[0].len+2, TBSQBOX_WRITE_MSG);
-			msleep(3);
-
+						buf, msg[0].len+2, TBSQBOX_WRITE_MSG);
+			//msleep(3);
 			break;
-		}
-		case (TBSQBOX_RC_QUERY): {
+		case (TBSQBOX_RC_QUERY):
 			tbsqbox22_op_rw(d->udev, 0xb8, 0, 0,
-					buf6, 4, TBSQBOX_READ_MSG);
-			msg[0].buf[0] = buf6[2];
-			msg[0].buf[1] = buf6[3];
+					buf, 4, TBSQBOX_READ_MSG);
+			msg[0].buf[0] = buf[2];
+			msg[0].buf[1] = buf[3];
 			msleep(3);
 			//info("TBSQBOX_RC_QUERY %x %x %x %x\n",buf6[0],buf6[1],buf6[2],buf6[3]);
 			break;
-		}
-		case (TBSQBOX_VOLTAGE_CTRL): {
+		case (TBSQBOX_VOLTAGE_CTRL):
+			break;
+		default:
 			break;
 		}
-		}
 
+		break;
+	default:
 		break;
 	}
 
@@ -153,7 +139,6 @@ static u32 tbsqbox22_i2c_func(struct i2c_adapter *adapter)
 }
 
 
-
 static struct i2c_algorithm tbsqbox22_i2c_algo = {
 	.master_xfer = tbsqbox22_i2c_transfer,
 	.functionality = tbsqbox22_i2c_func,
@@ -163,23 +148,23 @@ static struct i2c_algorithm tbsqbox22_i2c_algo = {
 static int tbsqbox22_read_mac_address(struct dvb_usb_device *d, u8 mac[6])
 {
 	int i,ret;
-	u8 ibuf[3] = {0, 0,0};
+	u8 buf[3];
 	u8 eeprom[256], eepromline[16];
 
 	for (i = 0; i < 256; i++) {
-		ibuf[0]=1;//lenth
-		ibuf[1]=0xa0;//eeprom addr
-		ibuf[2]=i;//register
+		buf[0] = 1; //lenth
+		buf[1] = 0xa0; //eeprom addr
+		buf[2] = i; //register
 		ret = tbsqbox22_op_rw(d->udev, 0x90, 0, 0,
-					ibuf, 3, TBSQBOX_WRITE_MSG);
+					buf, 3, TBSQBOX_WRITE_MSG);
 		ret = tbsqbox22_op_rw(d->udev, 0x91, 0, 0,
-					ibuf, 1, TBSQBOX_READ_MSG);
+					buf, 1, TBSQBOX_READ_MSG);
 			if (ret < 0) {
 				err("read eeprom failed");
 				return -1;
 			} else {
-				eepromline[i%16] = ibuf[0];
-				eeprom[i] = ibuf[0];
+				eepromline[i % 16] = buf[0];
+				eeprom[i] = buf[0];
 			}
 			
 			if ((i % 16) == 15) {
