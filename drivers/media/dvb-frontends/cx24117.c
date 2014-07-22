@@ -195,7 +195,7 @@ struct cx24117_cmd {
 
 /* common to both fe's */
 struct cx24117_priv {
-	u8 demod_address;
+	struct cx24117_config *cfg;
 	struct i2c_adapter *i2c;
 	u8 skip_fw_load;
 	struct mutex fe_lock;
@@ -269,7 +269,7 @@ static struct cx24117_modfec {
 static int cx24117_writereg(struct cx24117_state *state, u8 reg, u8 data)
 {
 	u8 buf[] = { reg, data };
-	struct i2c_msg msg = { .addr = state->priv->demod_address,
+	struct i2c_msg msg = { .addr = state->priv->cfg->demod_address,
 		.flags = 0, .buf = buf, .len = 2 };
 	int ret;
 
@@ -301,7 +301,7 @@ static int cx24117_writecmd(struct cx24117_state *state,
 	buf[0] = CX24117_REG_COMMAND;
 	memcpy(&buf[1], cmd->args, cmd->len);
 
-	msg.addr = state->priv->demod_address;
+	msg.addr = state->priv->cfg->demod_address;
 	msg.flags = 0;
 	msg.len = cmd->len+1;
 	msg.buf = buf;
@@ -320,9 +320,9 @@ static int cx24117_readreg(struct cx24117_state *state, u8 reg)
 	int ret;
 	u8 recv = 0;
 	struct i2c_msg msg[] = {
-		{ .addr = state->priv->demod_address, .flags = 0,
+		{ .addr = state->priv->cfg->demod_address, .flags = 0,
 			.buf = &reg, .len = 1 },
-		{ .addr = state->priv->demod_address, .flags = I2C_M_RD,
+		{ .addr = state->priv->cfg->demod_address, .flags = I2C_M_RD,
 			.buf = &recv, .len = 1 }
 	};
 
@@ -345,9 +345,9 @@ static int cx24117_readregN(struct cx24117_state *state,
 {
 	int ret;
 	struct i2c_msg msg[] = {
-		{ .addr = state->priv->demod_address, .flags = 0,
+		{ .addr = state->priv->cfg->demod_address, .flags = 0,
 			.buf = &reg, .len = 1 },
-		{ .addr = state->priv->demod_address, .flags = I2C_M_RD,
+		{ .addr = state->priv->cfg->demod_address, .flags = I2C_M_RD,
 			.buf = buf, .len = len }
 	};
 
@@ -622,7 +622,7 @@ static int cx24117_load_firmware(struct dvb_frontend *fe,
 	memcpy(&buf[1], fw->data, fw->size);
 
 	/* prepare i2c message to send */
-	msg.addr = state->priv->demod_address;
+	msg.addr = state->priv->cfg->demod_address;
 	msg.flags = 0;
 	msg.len = fw->size + 1;
 	msg.buf = buf;
@@ -1184,7 +1184,7 @@ struct dvb_frontend *cx24117_attach(const struct cx24117_config *config,
 	case 1:
 		/* new priv instance */
 		priv->i2c = i2c;
-		priv->demod_address = config->demod_address;
+		priv->cfg = config;
 		mutex_init(&priv->fe_lock);
 		break;
 	default:
