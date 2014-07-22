@@ -297,13 +297,6 @@ static int si2168_set_frontend(struct dvb_frontend *fe)
 	if (ret)
 		goto err;
 
-	memcpy(cmd.args, "\x14\x00\x01\x10\x16\x00", 6);
-	cmd.wlen = 6;
-	cmd.rlen = 4;
-	ret = si2168_cmd_execute(s, &cmd);
-	if (ret)
-		goto err;
-
 	memcpy(cmd.args, "\x14\x00\x09\x10\xe3\x18", 6);
 	cmd.wlen = 6;
 	cmd.rlen = 4;
@@ -350,6 +343,7 @@ err:
 static int si2168_init(struct dvb_frontend *fe)
 {
 	struct si2168 *s = fe->demodulator_priv;
+	struct si2168_config *config = s->client->dev.platform_data;
 	int ret, len, remaining;
 	const struct firmware *fw = NULL;
 	u8 *fw_file;
@@ -478,6 +472,15 @@ static int si2168_init(struct dvb_frontend *fe)
 
 	dev_info(&s->client->dev, "%s: found a '%s' in warm state\n",
 			KBUILD_MODNAME, si2168_ops.info.name);
+
+	/* Set TSMODE */
+	memcpy(cmd.args, "\x14\x00\x01\x10\x10\x00", 6);
+	cmd.args[4] |= config->ts_mode;
+	cmd.wlen = 6;
+	cmd.rlen = 4;
+	ret = si2168_cmd_execute(s, &cmd);
+	if (ret)
+		goto err;
 
 	s->active = true;
 
