@@ -35,6 +35,7 @@ struct si2168 {
 	struct dvb_frontend fe;
 	fe_delivery_system_t delivery_system;
 	fe_status_t fe_status;
+	u8 ts_mode;
 	bool active;
 };
 

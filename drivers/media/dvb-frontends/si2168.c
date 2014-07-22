@@ -343,7 +343,6 @@ err:
 static int si2168_init(struct dvb_frontend *fe)
 {
 	struct si2168 *s = fe->demodulator_priv;
-	struct si2168_config *config = s->client->dev.platform_data;
 	int ret, len, remaining;
 	const struct firmware *fw = NULL;
 	u8 *fw_file;
@@ -460,7 +459,7 @@ static int si2168_init(struct dvb_frontend *fe)
 
 	/* Set TSMODE */
 	memcpy(cmd.args, "\x14\x00\x01\x10\x10\x00", 6);
-	cmd.args[4] |= config->ts_mode;
+	cmd.args[4] |= s->ts_mode;
 	cmd.wlen = 6;
 	cmd.rlen = 4;
 	ret = si2168_cmd_execute(s, &cmd);
@@ -619,6 +618,7 @@ static int si2168_probe(struct i2c_client *client,
 	}
 
 	s->client = client;
+	s->ts_mode = config->ts_mode;
 	mutex_init(&s->i2c_mutex);
 
 	/* create mux i2c adapter for tuner */
