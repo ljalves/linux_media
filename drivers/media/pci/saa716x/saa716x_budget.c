@@ -1086,10 +1086,6 @@ static struct saa716x_config saa716x_tbs6220_config = {
 #define SAA716x_MODEL_TBS6922		"TurboSight TBS 6922"
 #define SAA716x_DEV_TBS6922		"DVB-S/S2"
 
-static void tbs6922_reset_fe(struct dvb_frontend *fe)
-{
-}
-
 static void tbs6922_lnb_power(struct dvb_frontend *fe, int onoff)
 {
 	struct i2c_adapter *adapter = tas2101_get_i2c_adapter(fe, 0);
@@ -1109,7 +1105,7 @@ static void tbs6922_lnb_power(struct dvb_frontend *fe, int onoff)
 static struct tas2101_config tbs6922_cfg = {
 	.i2c_address   = 0x68,
 	.id            = ID_TAS2100,
-	.reset_demod   = tbs6922_reset_fe,
+	.reset_demod   = NULL,
 	.lnb_power     = tbs6922_lnb_power,
 	.init          = {0x10, 0x32, 0x54, 0x76, 0xb8, 0x9a, 0x33},
 };
