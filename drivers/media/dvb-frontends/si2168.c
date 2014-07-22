@@ -408,9 +408,8 @@ static int si2168_init(struct dvb_frontend *fe)
 		break;
 	default:
 		dev_err(&s->client->dev,
-				"%s: unkown chip version Si21%d-%c%c%c\n",
-				KBUILD_MODNAME, cmd.args[2], cmd.args[1],
-				cmd.args[3], cmd.args[4]);
+				"%s: unknown chip version: 0x%04x\n",
+				KBUILD_MODNAME, chip_id);
 		ret = -EINVAL;
 		goto err;
 	}
