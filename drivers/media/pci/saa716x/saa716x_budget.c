@@ -1583,7 +1583,7 @@ static struct saa716x_config saa716x_tbs6982se_config = {
 #define SAA716x_MODEL_TBS6984		"TurboSight TBS 6984"
 #define SAA716x_DEV_TBS6984		"DVB-S/S2"
 
-static int saa716x_tbs6984_init(struct saa716x_dev *saa716x)
+static void saa716x_tbs6984_init(struct saa716x_dev *saa716x)
 {
 	int i;
 	const u8 buf[] = {
@@ -1632,22 +1632,45 @@ static int saa716x_tbs6984_init(struct saa716x_dev *saa716x)
 	saa716x_gpio_set_output(saa716x, 5);	/* a2 */
 	saa716x_gpio_set_output(saa716x, 3);	/* a3 */
 
-	/* power on */
-	saa716x_gpio_write(saa716x, 19, 0); /* a0 */
-	saa716x_gpio_write(saa716x, 2, 0); /* a1 */
-	saa716x_gpio_write(saa716x, 5, 0); /* a2 */
-	saa716x_gpio_write(saa716x, 3, 0); /* a3 */
+	/* power off */
+	saa716x_gpio_write(saa716x, 19, 1); /* a0 */
+	saa716x_gpio_write(saa716x, 2, 1); /* a1 */
+	saa716x_gpio_write(saa716x, 5, 1); /* a2 */
+	saa716x_gpio_write(saa716x, 3, 1); /* a3 */
+}
 
-	/* done */
-	return 0;
+
+static void tbs6984_lnb_pwr(struct dvb_frontend *fe, int pin, int onoff)
+{
+	struct i2c_adapter *adapter = cx24117_get_i2c_adapter(fe);
+        struct saa716x_i2c *i2c = i2c_get_adapdata(adapter);
+        struct saa716x_dev *dev = i2c->saa716x;
+
+	/* lnb power, active low */
+	if (onoff)
+		saa716x_gpio_write(dev, pin , 0);
+	else
+		saa716x_gpio_write(dev, pin, 1);
+}
+
+void tbs6984_lnb_pwr0(struct dvb_frontend *fe, int demod, int onoff)
+{
+	tbs6984_lnb_pwr(fe, (demod == 0) ? 19 : 2, onoff);
+}
+
+void tbs6984_lnb_pwr1(struct dvb_frontend *fe, int demod, int onoff)
+{
+	tbs6984_lnb_pwr(fe, (demod == 0) ? 5 : 3, onoff);
 }
 
 static struct cx24117_config tbs6984_cx24117_cfg[] = {
 	{
 		.demod_address = 0x55,
+		.lnb_power = tbs6984_lnb_pwr0,
 	},
 	{
 		.demod_address = 0x05,
+		.lnb_power = tbs6984_lnb_pwr1,
 	},
 };
 

@@ -464,6 +464,7 @@ static struct cx24116_config tbs_cx24116_config = {
 
 static struct cx24117_config tbs_cx24117_config = {
 	.demod_address = 0x55,
+	.lnb_power = NULL,
 };
 
 static struct ds3000_config tevii_ds3000_config = {

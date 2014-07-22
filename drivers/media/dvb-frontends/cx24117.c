@@ -265,6 +265,12 @@ static struct cx24117_modfec {
 	 */
 };
 
+struct i2c_adapter *cx24117_get_i2c_adapter(struct dvb_frontend *fe)
+{
+	struct cx24117_state *state = fe->demodulator_priv;
+	return state->priv->i2c;
+}
+EXPORT_SYMBOL_GPL(cx24117_get_i2c_adapter);
 
 static int cx24117_writereg(struct cx24117_state *state, u8 reg, u8 data)
 {
@@ -908,7 +914,7 @@ static int cx24117_set_voltage(struct dvb_frontend *fe,
 {
 	struct cx24117_state *state = fe->demodulator_priv;
 	struct cx24117_cmd cmd;
-	int ret;
+	int ret = 0;
 	u8 reg = (state->demod == 0) ? 0x10 : 0x20;
 
 	dev_dbg(&state->priv->i2c->dev, "%s() demod%d %s\n",
@@ -916,6 +922,9 @@ static int cx24117_set_voltage(struct dvb_frontend *fe,
 		voltage == SEC_VOLTAGE_13 ? "SEC_VOLTAGE_13" :
 		voltage == SEC_VOLTAGE_18 ? "SEC_VOLTAGE_18" :
 		"SEC_VOLTAGE_OFF");
+
+	if (state->priv->cfg->lnb_power)
+		state->priv->cfg->lnb_power(fe, state->demod, 1);
 
 	/* Prepare a set GPIO logic level CMD */
 	cmd.args[0] = CMD_SET_GPIOOUT;
@@ -948,8 +957,12 @@ static int cx24117_set_voltage(struct dvb_frontend *fe,
 		msleep(20);
 	} else {
 		/* power off LNB */
-		cmd.args[1] = 0x00;
-		ret = cx24117_cmd_execute(fe, &cmd);
+		if (state->priv->cfg->lnb_power) {
+			state->priv->cfg->lnb_power(fe, state->demod, 0);
+		} else {
+			cmd.args[1] = 0x00;
+			ret = cx24117_cmd_execute(fe, &cmd);
+		}
 	}
 
 	return ret;
@@ -1164,7 +1177,7 @@ static void cx24117_release(struct dvb_frontend *fe)
 
 static struct dvb_frontend_ops cx24117_ops;
 
-struct dvb_frontend *cx24117_attach(const struct cx24117_config *config,
+struct dvb_frontend *cx24117_attach(struct cx24117_config *config,
 	struct i2c_adapter *i2c)
 {
 	struct cx24117_state *state = NULL;

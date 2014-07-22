@@ -28,15 +28,20 @@
 struct cx24117_config {
 	/* the demodulator's i2c address */
 	u8 demod_address;
+
+	/* lnb power control */
+	void (*lnb_power)(struct dvb_frontend *fe, int demod, int onoff);
 };
+
+struct i2c_adapter *cx24117_get_i2c_adapter(struct dvb_frontend *fe);
 
 #if IS_ENABLED(CONFIG_DVB_CX24117)
 extern struct dvb_frontend *cx24117_attach(
-	const struct cx24117_config *config,
+	struct cx24117_config *config,
 	struct i2c_adapter *i2c);
 #else
 static inline struct dvb_frontend *cx24117_attach(
-	const struct cx24117_config *config,
+	struct cx24117_config *config,
 	struct i2c_adapter *i2c)
 {
 	dev_warn(&i2c->dev, "%s: driver disabled by Kconfig\n", __func__);
