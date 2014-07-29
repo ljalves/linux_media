@@ -954,8 +954,8 @@ static int saa716x_tbs6285_frontend_attach(struct saa716x_adapter *adapter, int 
 	info.addr = ((count == 0) || (count == 2)) ? 0x64 : 0x66;
 	info.platform_data = &si2168_config;
 	request_module(info.type);
-	client = i2c_new_device( ((count == 0) || (count == 2)) ? 
-		&dev->i2c[count/2].i2c_adapter : &dev->i2c[(count-1)/2].i2c_adapter,
+	client = i2c_new_device( ((count == 0) || (count == 1)) ? 
+		&dev->i2c[1].i2c_adapter : &dev->i2c[0].i2c_adapter,
 		&info);
 	if (client == NULL || client->dev.driver == NULL) {
 		goto err;
