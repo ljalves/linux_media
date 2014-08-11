@@ -127,6 +127,7 @@ struct saa716x_adapter {
 struct saa716x_dev {
 	struct saa716x_config		*config;
 	struct pci_dev			*pdev;
+	struct module			*module;
 
 	int				num; /* device count */
 	int				verbose;
