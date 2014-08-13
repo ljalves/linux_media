@@ -99,7 +99,7 @@ int saa716x_dvb_init(struct saa716x_dev *saa716x)
 		dprintk(SAA716x_DEBUG, 1, "dvb_register_adapter");
 		if (dvb_register_adapter(&saa716x_adap->dvb_adapter,
 					 "SAA716x dvb adapter",
-					 THIS_MODULE,
+					 saa716x->module,
 					 &saa716x->pdev->dev,
 					 adapter_nr) < 0) {
 

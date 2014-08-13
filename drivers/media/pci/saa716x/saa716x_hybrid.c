@@ -63,6 +63,7 @@ static int saa716x_hybrid_pci_probe(struct pci_dev *pdev, const struct pci_devic
 	saa716x->verbose	= verbose;
 	saa716x->int_type	= int_type;
 	saa716x->pdev		= pdev;
+	saa716x->module		= THIS_MODULE;
 	saa716x->config		= (struct saa716x_config *) pci_id->driver_data;
 
 	err = saa716x_pci_init(saa716x);
