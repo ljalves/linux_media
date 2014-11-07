@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2013 Samsung Electronics Co., Ltd.
- * Author: Andrzej Haja <a.hajda@samsung.com>
+ * Author: Andrzej Hajda <a.hajda@samsung.com>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 as
@@ -34,6 +34,11 @@
 #define CLK_MOUT_CORE		19
 #define CLK_MOUT_APLL		20
 #define CLK_SCLK_HDMIPHY	22
+#define CLK_OUT_DMC		23
+#define CLK_OUT_TOP		24
+#define CLK_OUT_LEFTBUS		25
+#define CLK_OUT_RIGHTBUS	26
+#define CLK_OUT_CPU		27
 
 /* gate for special clocks (sclk) */
 #define CLK_SCLK_FIMC0		128
@@ -110,11 +115,11 @@
 #define CLK_SMMU_MFCR		275
 #define CLK_G3D			276
 #define CLK_G2D			277
-#define CLK_ROTATOR		278 /* Exynos4210 only */
-#define CLK_MDMA		279 /* Exynos4210 only */
-#define CLK_SMMU_G2D		280 /* Exynos4210 only */
-#define CLK_SMMU_ROTATOR	281 /* Exynos4210 only */
-#define CLK_SMMU_MDMA		282 /* Exynos4210 only */
+#define CLK_ROTATOR		278
+#define CLK_MDMA		279
+#define CLK_SMMU_G2D		280
+#define CLK_SMMU_ROTATOR	281
+#define CLK_SMMU_MDMA		282
 #define CLK_FIMD0		283
 #define CLK_MIE0		284
 #define CLK_MDNIE0		285 /* Exynos4412 only */
@@ -229,6 +234,26 @@
 #define CLK_MOUT_G3D1		393
 #define CLK_MOUT_G3D		394
 #define CLK_ACLK400_MCUISP	395 /* Exynos4x12 only */
+#define CLK_MOUT_HDMI		396
+#define CLK_MOUT_MIXER		397
+
+/* gate clocks - ppmu */
+#define CLK_PPMULEFT		400
+#define CLK_PPMURIGHT		401
+#define CLK_PPMUCAMIF		402
+#define CLK_PPMUTV		403
+#define CLK_PPMUMFC_L		404
+#define CLK_PPMUMFC_R		405
+#define CLK_PPMUG3D		406
+#define CLK_PPMUIMAGE		407
+#define CLK_PPMULCD0		408
+#define CLK_PPMULCD1		409 /* Exynos4210 only */
+#define CLK_PPMUFILE		410
+#define CLK_PPMUGPS		411
+#define CLK_PPMUDMC0		412
+#define CLK_PPMUDMC1		413
+#define CLK_PPMUCPU		414
+#define CLK_PPMUACP		415
 
 /* div clocks */
 #define CLK_DIV_ISP0		450 /* Exynos4x12 only */

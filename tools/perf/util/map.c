@@ -12,6 +12,8 @@
 #include "vdso.h"
 #include "build-id.h"
 #include "util.h"
+#include "debug.h"
+#include "machine.h"
 #include <linux/string.h>
 
 const char *map_type__name[MAP__NR_TYPES] = {
@@ -29,6 +31,7 @@ static inline int is_anon_memory(const char *filename)
 static inline int is_no_dso_memory(const char *filename)
 {
 	return !strncmp(filename, "[stack", 6) ||
+	       !strncmp(filename, "/SYSV",5)   ||
 	       !strcmp(filename, "[heap]");
 }
 
@@ -136,10 +139,10 @@ void map__init(struct map *map, enum map_type type,
 	map->erange_warned = false;
 }
 
-struct map *map__new(struct list_head *dsos__list, u64 start, u64 len,
+struct map *map__new(struct machine *machine, u64 start, u64 len,
 		     u64 pgoff, u32 pid, u32 d_maj, u32 d_min, u64 ino,
 		     u64 ino_gen, u32 prot, u32 flags, char *filename,
-		     enum map_type type)
+		     enum map_type type, struct thread *thread)
 {
 	struct map *map = malloc(sizeof(*map));
 
@@ -172,9 +175,9 @@ struct map *map__new(struct list_head *dsos__list, u64 start, u64 len,
 
 		if (vdso) {
 			pgoff = 0;
-			dso = vdso__dso_findnew(dsos__list);
+			dso = vdso__dso_findnew(machine, thread);
 		} else
-			dso = __dsos__findnew(dsos__list, filename);
+			dso = __dsos__findnew(&machine->user_dsos, filename);
 
 		if (dso == NULL)
 			goto out_delete;
@@ -454,6 +457,20 @@ void map_groups__exit(struct map_groups *mg)
 	}
 }
 
+bool map_groups__empty(struct map_groups *mg)
+{
+	int i;
+
+	for (i = 0; i < MAP__NR_TYPES; ++i) {
+		if (maps__first(&mg->maps[i]))
+			return false;
+		if (!list_empty(&mg->removed_maps[i]))
+			return false;
+	}
+
+	return true;
+}
+
 struct map_groups *map_groups__new(void)
 {
 	struct map_groups *mg = malloc(sizeof(*mg));
@@ -539,7 +556,7 @@ struct symbol *map_groups__find_symbol_by_name(struct map_groups *mg,
 
 int map_groups__find_ams(struct addr_map_symbol *ams, symbol_filter_t filter)
 {
-	if (ams->addr < ams->map->start || ams->addr > ams->map->end) {
+	if (ams->addr < ams->map->start || ams->addr >= ams->map->end) {
 		if (ams->map->groups == NULL)
 			return -1;
 		ams->map = map_groups__find(ams->map->groups, ams->map->type,
@@ -554,8 +571,8 @@ int map_groups__find_ams(struct addr_map_symbol *ams, symbol_filter_t filter)
 	return ams->sym ? 0 : -1;
 }
 
-size_t __map_groups__fprintf_maps(struct map_groups *mg,
-				  enum map_type type, int verbose, FILE *fp)
+size_t __map_groups__fprintf_maps(struct map_groups *mg, enum map_type type,
+				  FILE *fp)
 {
 	size_t printed = fprintf(fp, "%s:\n", map_type__name[type]);
 	struct rb_node *nd;
@@ -573,17 +590,16 @@ size_t __map_groups__fprintf_maps(struct map_groups *mg,
 	return printed;
 }
 
-size_t map_groups__fprintf_maps(struct map_groups *mg, int verbose, FILE *fp)
+static size_t map_groups__fprintf_maps(struct map_groups *mg, FILE *fp)
 {
 	size_t printed = 0, i;
 	for (i = 0; i < MAP__NR_TYPES; ++i)
-		printed += __map_groups__fprintf_maps(mg, i, verbose, fp);
+		printed += __map_groups__fprintf_maps(mg, i, fp);
 	return printed;
 }
 
 static size_t __map_groups__fprintf_removed_maps(struct map_groups *mg,
-						 enum map_type type,
-						 int verbose, FILE *fp)
+						 enum map_type type, FILE *fp)
 {
 	struct map *pos;
 	size_t printed = 0;
@@ -600,23 +616,23 @@ static size_t __map_groups__fprintf_removed_maps(struct map_groups *mg,
 }
 
 static size_t map_groups__fprintf_removed_maps(struct map_groups *mg,
-					       int verbose, FILE *fp)
+					       FILE *fp)
 {
 	size_t printed = 0, i;
 	for (i = 0; i < MAP__NR_TYPES; ++i)
-		printed += __map_groups__fprintf_removed_maps(mg, i, verbose, fp);
+		printed += __map_groups__fprintf_removed_maps(mg, i, fp);
 	return printed;
 }
 
-size_t map_groups__fprintf(struct map_groups *mg, int verbose, FILE *fp)
+size_t map_groups__fprintf(struct map_groups *mg, FILE *fp)
 {
-	size_t printed = map_groups__fprintf_maps(mg, verbose, fp);
+	size_t printed = map_groups__fprintf_maps(mg, fp);
 	printed += fprintf(fp, "Removed maps:\n");
-	return printed + map_groups__fprintf_removed_maps(mg, verbose, fp);
+	return printed + map_groups__fprintf_removed_maps(mg, fp);
 }
 
 int map_groups__fixup_overlappings(struct map_groups *mg, struct map *map,
-				   int verbose, FILE *fp)
+				   FILE *fp)
 {
 	struct rb_root *root = &mg->maps[map->type];
 	struct rb_node *next = rb_first(root);
@@ -648,7 +664,7 @@ int map_groups__fixup_overlappings(struct map_groups *mg, struct map *map,
 				goto move_map;
 			}
 
-			before->end = map->start - 1;
+			before->end = map->start;
 			map_groups__insert(mg, before);
 			if (verbose >= 2)
 				map__fprintf(before, fp);
@@ -662,7 +678,7 @@ int map_groups__fixup_overlappings(struct map_groups *mg, struct map *map,
 				goto move_map;
 			}
 
-			after->start = map->end + 1;
+			after->start = map->end;
 			map_groups__insert(mg, after);
 			if (verbose >= 2)
 				map__fprintf(after, fp);
@@ -736,7 +752,7 @@ struct map *maps__find(struct rb_root *maps, u64 ip)
 		m = rb_entry(parent, struct map, rb_node);
 		if (ip < m->start)
 			p = &(*p)->rb_left;
-		else if (ip > m->end)
+		else if (ip >= m->end)
 			p = &(*p)->rb_right;
 		else
 			return m;

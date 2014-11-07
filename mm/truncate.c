@@ -20,6 +20,7 @@
 #include <linux/buffer_head.h>	/* grr. try_to_release_page,
 				   do_invalidatepage */
 #include <linux/cleancache.h>
+#include <linux/rmap.h>
 #include "internal.h"
 
 static void clear_exceptional_entry(struct address_space *mapping,
@@ -281,7 +282,6 @@ void truncate_inode_pages_range(struct address_space *mapping,
 	while (index < end && pagevec_lookup_entries(&pvec, mapping, index,
 			min(end - index, (pgoff_t)PAGEVEC_SIZE),
 			indices)) {
-		mem_cgroup_uncharge_start();
 		for (i = 0; i < pagevec_count(&pvec); i++) {
 			struct page *page = pvec.pages[i];
 
@@ -307,7 +307,6 @@ void truncate_inode_pages_range(struct address_space *mapping,
 		}
 		pagevec_remove_exceptionals(&pvec);
 		pagevec_release(&pvec);
-		mem_cgroup_uncharge_end();
 		cond_resched();
 		index++;
 	}
@@ -355,26 +354,30 @@ void truncate_inode_pages_range(struct address_space *mapping,
 	for ( ; ; ) {
 		cond_resched();
 		if (!pagevec_lookup_entries(&pvec, mapping, index,
-			min(end - index, (pgoff_t)PAGEVEC_SIZE),
-			indices)) {
+			min(end - index, (pgoff_t)PAGEVEC_SIZE), indices)) {
+			/* If all gone from start onwards, we're done */
 			if (index == start)
 				break;
+			/* Otherwise restart to make sure all gone */
 			index = start;
 			continue;
 		}
 		if (index == start && indices[0] >= end) {
+			/* All gone out of hole to be punched, we're done */
 			pagevec_remove_exceptionals(&pvec);
 			pagevec_release(&pvec);
 			break;
 		}
-		mem_cgroup_uncharge_start();
 		for (i = 0; i < pagevec_count(&pvec); i++) {
 			struct page *page = pvec.pages[i];
 
 			/* We rely upon deletion not changing page->index */
 			index = indices[i];
-			if (index >= end)
+			if (index >= end) {
+				/* Restart punch to make sure all gone */
+				index = start - 1;
 				break;
+			}
 
 			if (radix_tree_exceptional_entry(page)) {
 				clear_exceptional_entry(mapping, index, page);
@@ -389,7 +392,6 @@ void truncate_inode_pages_range(struct address_space *mapping,
 		}
 		pagevec_remove_exceptionals(&pvec);
 		pagevec_release(&pvec);
-		mem_cgroup_uncharge_end();
 		index++;
 	}
 	cleancache_invalidate_inode(mapping);
@@ -488,7 +490,6 @@ unsigned long invalidate_mapping_pages(struct address_space *mapping,
 	while (index <= end && pagevec_lookup_entries(&pvec, mapping, index,
 			min(end - index, (pgoff_t)PAGEVEC_SIZE - 1) + 1,
 			indices)) {
-		mem_cgroup_uncharge_start();
 		for (i = 0; i < pagevec_count(&pvec); i++) {
 			struct page *page = pvec.pages[i];
 
@@ -517,7 +518,6 @@ unsigned long invalidate_mapping_pages(struct address_space *mapping,
 		}
 		pagevec_remove_exceptionals(&pvec);
 		pagevec_release(&pvec);
-		mem_cgroup_uncharge_end();
 		cond_resched();
 		index++;
 	}
@@ -548,7 +548,6 @@ invalidate_complete_page2(struct address_space *mapping, struct page *page)
 	BUG_ON(page_has_private(page));
 	__delete_from_page_cache(page, NULL);
 	spin_unlock_irq(&mapping->tree_lock);
-	mem_cgroup_uncharge_cache_page(page);
 
 	if (mapping->a_ops->freepage)
 		mapping->a_ops->freepage(page);
@@ -597,7 +596,6 @@ int invalidate_inode_pages2_range(struct address_space *mapping,
 	while (index <= end && pagevec_lookup_entries(&pvec, mapping, index,
 			min(end - index, (pgoff_t)PAGEVEC_SIZE - 1) + 1,
 			indices)) {
-		mem_cgroup_uncharge_start();
 		for (i = 0; i < pagevec_count(&pvec); i++) {
 			struct page *page = pvec.pages[i];
 
@@ -650,7 +648,6 @@ int invalidate_inode_pages2_range(struct address_space *mapping,
 		}
 		pagevec_remove_exceptionals(&pvec);
 		pagevec_release(&pvec);
-		mem_cgroup_uncharge_end();
 		cond_resched();
 		index++;
 	}
@@ -723,10 +720,66 @@ EXPORT_SYMBOL(truncate_pagecache);
  */
 void truncate_setsize(struct inode *inode, loff_t newsize)
 {
+	loff_t oldsize = inode->i_size;
+
 	i_size_write(inode, newsize);
+	if (newsize > oldsize)
+		pagecache_isize_extended(inode, oldsize, newsize);
 	truncate_pagecache(inode, newsize);
 }
 EXPORT_SYMBOL(truncate_setsize);
+
+/**
+ * pagecache_isize_extended - update pagecache after extension of i_size
+ * @inode:	inode for which i_size was extended
+ * @from:	original inode size
+ * @to:		new inode size
+ *
+ * Handle extension of inode size either caused by extending truncate or by
+ * write starting after current i_size. We mark the page straddling current
+ * i_size RO so that page_mkwrite() is called on the nearest write access to
+ * the page.  This way filesystem can be sure that page_mkwrite() is called on
+ * the page before user writes to the page via mmap after the i_size has been
+ * changed.
+ *
+ * The function must be called after i_size is updated so that page fault
+ * coming after we unlock the page will already see the new i_size.
+ * The function must be called while we still hold i_mutex - this not only
+ * makes sure i_size is stable but also that userspace cannot observe new
+ * i_size value before we are prepared to store mmap writes at new inode size.
+ */
+void pagecache_isize_extended(struct inode *inode, loff_t from, loff_t to)
+{
+	int bsize = 1 << inode->i_blkbits;
+	loff_t rounded_from;
+	struct page *page;
+	pgoff_t index;
+
+	WARN_ON(!mutex_is_locked(&inode->i_mutex));
+	WARN_ON(to > inode->i_size);
+
+	if (from >= to || bsize == PAGE_CACHE_SIZE)
+		return;
+	/* Page straddling @from will not have any hole block created? */
+	rounded_from = round_up(from, bsize);
+	if (to <= rounded_from || !(rounded_from & (PAGE_CACHE_SIZE - 1)))
+		return;
+
+	index = from >> PAGE_CACHE_SHIFT;
+	page = find_lock_page(inode->i_mapping, index);
+	/* Page not cached? Nothing to do */
+	if (!page)
+		return;
+	/*
+	 * See clear_page_dirty_for_io() for details why set_page_dirty()
+	 * is needed.
+	 */
+	if (page_mkclean(page))
+		set_page_dirty(page);
+	unlock_page(page);
+	page_cache_release(page);
+}
+EXPORT_SYMBOL(pagecache_isize_extended);
 
 /**
  * truncate_pagecache_range - unmap and remove pagecache that is hole-punched

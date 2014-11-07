@@ -45,6 +45,7 @@
 #include <linux/efi.h>
 
 #include <asm/fixmap.h>
+#include <asm/cpu.h>
 #include <asm/cputype.h>
 #include <asm/elf.h>
 #include <asm/cputable.h>
@@ -219,6 +220,8 @@ static void __init setup_processor(void)
 	sprintf(init_utsname()->machine, ELF_PLATFORM);
 	elf_hwcap = 0;
 
+	cpuinfo_store_boot_cpu();
+
 	/*
 	 * Check for sane CTR_EL0.CWG value.
 	 */
@@ -362,11 +365,6 @@ u64 __cpu_logical_map[NR_CPUS] = { [0 ... NR_CPUS-1] = INVALID_HWID };
 
 void __init setup_arch(char **cmdline_p)
 {
-	/*
-	 * Unmask asynchronous aborts early to catch possible system errors.
-	 */
-	local_async_enable();
-
 	setup_processor();
 
 	setup_machine_fdt(__fdt_pointer);
@@ -381,6 +379,12 @@ void __init setup_arch(char **cmdline_p)
 	early_ioremap_init();
 
 	parse_early_param();
+
+	/*
+	 *  Unmask asynchronous aborts after bringing up possible earlycon.
+	 * (Report possible System Errors once we can report this occurred)
+	 */
+	local_async_enable();
 
 	efi_init();
 	arm64_memblock_init();
@@ -417,14 +421,12 @@ static int __init arm64_device_init(void)
 }
 arch_initcall_sync(arm64_device_init);
 
-static DEFINE_PER_CPU(struct cpu, cpu_data);
-
 static int __init topology_init(void)
 {
 	int i;
 
 	for_each_possible_cpu(i) {
-		struct cpu *cpu = &per_cpu(cpu_data, i);
+		struct cpu *cpu = &per_cpu(cpu_data.cpu, i);
 		cpu->hotpluggable = 1;
 		register_cpu(cpu, i);
 	}

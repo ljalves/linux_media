@@ -191,6 +191,9 @@
 	pmu_system_controller: system-controller@10040000 {
 		compatible = "samsung,exynos5250-pmu", "syscon";
 		reg = <0x10040000 0x5000>;
+		clock-names = "clkout16";
+		clocks = <&clock CLK_FIN_PLL>;
+		#clock-cells = <1>;
 	};
 
 	sysreg_system_controller: syscon@10050000 {
@@ -597,21 +600,6 @@
 		port@0 {
 			reg = <0>;
 			phys = <&usb2_phy_gen 1>;
-		};
-	};
-
-	usb2_phy: usbphy@12130000 {
-		compatible = "samsung,exynos5250-usb2phy";
-		reg = <0x12130000 0x100>;
-		clocks = <&clock CLK_FIN_PLL>, <&clock CLK_USB2>;
-		clock-names = "ext_xtal", "usbhost";
-		#address-cells = <1>;
-		#size-cells = <1>;
-		ranges;
-
-		usbphy-sys {
-			reg = <0x10040704 0x8>,
-			      <0x10050230 0x4>;
 		};
 	};
 

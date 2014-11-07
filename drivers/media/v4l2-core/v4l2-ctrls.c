@@ -796,6 +796,8 @@ const char *v4l2_ctrl_get_name(u32 id)
 	case V4L2_CID_AUTO_FOCUS_STOP:		return "Auto Focus, Stop";
 	case V4L2_CID_AUTO_FOCUS_STATUS:	return "Auto Focus, Status";
 	case V4L2_CID_AUTO_FOCUS_RANGE:		return "Auto Focus, Range";
+	case V4L2_CID_PAN_SPEED:		return "Pan, Speed";
+	case V4L2_CID_TILT_SPEED:		return "Tilt, Speed";
 
 	/* FM Radio Modulator controls */
 	/* Keep the order of the 'case's the same as in v4l2-controls.h! */
@@ -805,6 +807,15 @@ const char *v4l2_ctrl_get_name(u32 id)
 	case V4L2_CID_RDS_TX_PTY:		return "RDS Program Type";
 	case V4L2_CID_RDS_TX_PS_NAME:		return "RDS PS Name";
 	case V4L2_CID_RDS_TX_RADIO_TEXT:	return "RDS Radio Text";
+	case V4L2_CID_RDS_TX_MONO_STEREO:	return "RDS Stereo";
+	case V4L2_CID_RDS_TX_ARTIFICIAL_HEAD:	return "RDS Artificial Head";
+	case V4L2_CID_RDS_TX_COMPRESSED:	return "RDS Compressed";
+	case V4L2_CID_RDS_TX_DYNAMIC_PTY:	return "RDS Dynamic PTY";
+	case V4L2_CID_RDS_TX_TRAFFIC_ANNOUNCEMENT: return "RDS Traffic Announcement";
+	case V4L2_CID_RDS_TX_TRAFFIC_PROGRAM:	return "RDS Traffic Program";
+	case V4L2_CID_RDS_TX_MUSIC_SPEECH:	return "RDS Music";
+	case V4L2_CID_RDS_TX_ALT_FREQS_ENABLE:	return "RDS Enable Alt Frequencies";
+	case V4L2_CID_RDS_TX_ALT_FREQS:		return "RDS Alternate Frequencies";
 	case V4L2_CID_AUDIO_LIMITER_ENABLED:	return "Audio Limiter Feature Enabled";
 	case V4L2_CID_AUDIO_LIMITER_RELEASE_TIME: return "Audio Limiter Release Time";
 	case V4L2_CID_AUDIO_LIMITER_DEVIATION:	return "Audio Limiter Deviation";
@@ -850,6 +861,10 @@ const char *v4l2_ctrl_get_name(u32 id)
 	case V4L2_CID_VBLANK:			return "Vertical Blanking";
 	case V4L2_CID_HBLANK:			return "Horizontal Blanking";
 	case V4L2_CID_ANALOGUE_GAIN:		return "Analogue Gain";
+	case V4L2_CID_TEST_PATTERN_RED:		return "Red Pixel Value";
+	case V4L2_CID_TEST_PATTERN_GREENR:	return "Green (Red) Pixel Value";
+	case V4L2_CID_TEST_PATTERN_BLUE:	return "Blue Pixel Value";
+	case V4L2_CID_TEST_PATTERN_GREENB:	return "Green (Blue) Pixel Value";
 
 	/* Image processing controls */
 	/* Keep the order of the 'case's the same as in v4l2-controls.h! */
@@ -872,7 +887,6 @@ const char *v4l2_ctrl_get_name(u32 id)
 	case V4L2_CID_FM_RX_CLASS:		return "FM Radio Receiver Controls";
 	case V4L2_CID_TUNE_DEEMPHASIS:		return "De-Emphasis";
 	case V4L2_CID_RDS_RECEPTION:		return "RDS Reception";
-
 	case V4L2_CID_RF_TUNER_CLASS:		return "RF Tuner Controls";
 	case V4L2_CID_RF_TUNER_LNA_GAIN_AUTO:	return "LNA Gain, Auto";
 	case V4L2_CID_RF_TUNER_LNA_GAIN:	return "LNA Gain";
@@ -883,6 +897,12 @@ const char *v4l2_ctrl_get_name(u32 id)
 	case V4L2_CID_RF_TUNER_BANDWIDTH_AUTO:	return "Bandwidth, Auto";
 	case V4L2_CID_RF_TUNER_BANDWIDTH:	return "Bandwidth";
 	case V4L2_CID_RF_TUNER_PLL_LOCK:	return "PLL Lock";
+	case V4L2_CID_RDS_RX_PTY:		return "RDS Program Type";
+	case V4L2_CID_RDS_RX_PS_NAME:		return "RDS PS Name";
+	case V4L2_CID_RDS_RX_RADIO_TEXT:	return "RDS Radio Text";
+	case V4L2_CID_RDS_RX_TRAFFIC_ANNOUNCEMENT: return "RDS Traffic Announcement";
+	case V4L2_CID_RDS_RX_TRAFFIC_PROGRAM:	return "RDS Traffic Program";
+	case V4L2_CID_RDS_RX_MUSIC_SPEECH:	return "RDS Music";
 
 	/* Detection controls */
 	/* Keep the order of the 'case's the same as in v4l2-controls.h! */
@@ -891,7 +911,6 @@ const char *v4l2_ctrl_get_name(u32 id)
 	case V4L2_CID_DETECT_MD_GLOBAL_THRESHOLD: return "MD Global Threshold";
 	case V4L2_CID_DETECT_MD_THRESHOLD_GRID:	return "MD Threshold Grid";
 	case V4L2_CID_DETECT_MD_REGION_GRID:	return "MD Region Grid";
-
 	default:
 		return NULL;
 	}
@@ -946,6 +965,17 @@ void v4l2_ctrl_fill(u32 id, const char **name, enum v4l2_ctrl_type *type,
 	case V4L2_CID_RF_TUNER_IF_GAIN_AUTO:
 	case V4L2_CID_RF_TUNER_BANDWIDTH_AUTO:
 	case V4L2_CID_RF_TUNER_PLL_LOCK:
+	case V4L2_CID_RDS_TX_MONO_STEREO:
+	case V4L2_CID_RDS_TX_ARTIFICIAL_HEAD:
+	case V4L2_CID_RDS_TX_COMPRESSED:
+	case V4L2_CID_RDS_TX_DYNAMIC_PTY:
+	case V4L2_CID_RDS_TX_TRAFFIC_ANNOUNCEMENT:
+	case V4L2_CID_RDS_TX_TRAFFIC_PROGRAM:
+	case V4L2_CID_RDS_TX_MUSIC_SPEECH:
+	case V4L2_CID_RDS_TX_ALT_FREQS_ENABLE:
+	case V4L2_CID_RDS_RX_TRAFFIC_ANNOUNCEMENT:
+	case V4L2_CID_RDS_RX_TRAFFIC_PROGRAM:
+	case V4L2_CID_RDS_RX_MUSIC_SPEECH:
 		*type = V4L2_CTRL_TYPE_BOOLEAN;
 		*min = 0;
 		*max = *step = 1;
@@ -1018,6 +1048,8 @@ void v4l2_ctrl_fill(u32 id, const char **name, enum v4l2_ctrl_type *type,
 		break;
 	case V4L2_CID_RDS_TX_PS_NAME:
 	case V4L2_CID_RDS_TX_RADIO_TEXT:
+	case V4L2_CID_RDS_RX_PS_NAME:
+	case V4L2_CID_RDS_RX_RADIO_TEXT:
 		*type = V4L2_CTRL_TYPE_STRING;
 		break;
 	case V4L2_CID_ISO_SENSITIVITY:
@@ -1089,6 +1121,9 @@ void v4l2_ctrl_fill(u32 id, const char **name, enum v4l2_ctrl_type *type,
 	case V4L2_CID_DETECT_MD_THRESHOLD_GRID:
 		*type = V4L2_CTRL_TYPE_U16;
 		break;
+	case V4L2_CID_RDS_TX_ALT_FREQS:
+		*type = V4L2_CTRL_TYPE_U32;
+		break;
 	default:
 		*type = V4L2_CTRL_TYPE_INTEGER;
 		break;
@@ -1146,6 +1181,12 @@ void v4l2_ctrl_fill(u32 id, const char **name, enum v4l2_ctrl_type *type,
 	case V4L2_CID_DV_TX_RXSENSE:
 	case V4L2_CID_DV_TX_EDID_PRESENT:
 	case V4L2_CID_DV_RX_POWER_PRESENT:
+	case V4L2_CID_RDS_RX_PTY:
+	case V4L2_CID_RDS_RX_PS_NAME:
+	case V4L2_CID_RDS_RX_RADIO_TEXT:
+	case V4L2_CID_RDS_RX_TRAFFIC_ANNOUNCEMENT:
+	case V4L2_CID_RDS_RX_TRAFFIC_PROGRAM:
+	case V4L2_CID_RDS_RX_MUSIC_SPEECH:
 		*flags |= V4L2_CTRL_FLAG_READ_ONLY;
 		break;
 	case V4L2_CID_RF_TUNER_PLL_LOCK:
@@ -1209,6 +1250,8 @@ static bool std_equal(const struct v4l2_ctrl *ctrl, u32 idx,
 		return ptr1.p_u8[idx] == ptr2.p_u8[idx];
 	case V4L2_CTRL_TYPE_U16:
 		return ptr1.p_u16[idx] == ptr2.p_u16[idx];
+	case V4L2_CTRL_TYPE_U32:
+		return ptr1.p_u32[idx] == ptr2.p_u32[idx];
 	default:
 		if (ctrl->is_int)
 			return ptr1.p_s32[idx] == ptr2.p_s32[idx];
@@ -1241,6 +1284,9 @@ static void std_init(const struct v4l2_ctrl *ctrl, u32 idx,
 		break;
 	case V4L2_CTRL_TYPE_U16:
 		ptr.p_u16[idx] = ctrl->default_value;
+		break;
+	case V4L2_CTRL_TYPE_U32:
+		ptr.p_u32[idx] = ctrl->default_value;
 		break;
 	default:
 		idx *= ctrl->elem_size;
@@ -1289,6 +1335,9 @@ static void std_log(const struct v4l2_ctrl *ctrl)
 	case V4L2_CTRL_TYPE_U16:
 		pr_cont("%u", (unsigned)*ptr.p_u16);
 		break;
+	case V4L2_CTRL_TYPE_U32:
+		pr_cont("%u", (unsigned)*ptr.p_u32);
+		break;
 	default:
 		pr_cont("unknown type %d", ctrl->type);
 		break;
@@ -1304,14 +1353,14 @@ static void std_log(const struct v4l2_ctrl *ctrl)
 ({								\
 	offset_type offset;					\
 	if ((ctrl)->maximum >= 0 &&				\
-	    val >= (ctrl)->maximum - ((ctrl)->step / 2))	\
+	    val >= (ctrl)->maximum - (s32)((ctrl)->step / 2))	\
 		val = (ctrl)->maximum;				\
 	else							\
-		val += (ctrl)->step / 2;			\
+		val += (s32)((ctrl)->step / 2);			\
 	val = clamp_t(typeof(val), val,				\
 		      (ctrl)->minimum, (ctrl)->maximum);	\
 	offset = (val) - (ctrl)->minimum;			\
-	offset = (ctrl)->step * (offset / (s32)(ctrl)->step);	\
+	offset = (ctrl)->step * (offset / (u32)(ctrl)->step);	\
 	val = (ctrl)->minimum + offset;				\
 	0;							\
 })
@@ -1333,10 +1382,10 @@ static int std_validate(const struct v4l2_ctrl *ctrl, u32 idx,
 		 * the u64 divide that needs special care.
 		 */
 		val = ptr.p_s64[idx];
-		if (ctrl->maximum >= 0 && val >= ctrl->maximum - ctrl->step / 2)
+		if (ctrl->maximum >= 0 && val >= ctrl->maximum - (s64)(ctrl->step / 2))
 			val = ctrl->maximum;
 		else
-			val += ctrl->step / 2;
+			val += (s64)(ctrl->step / 2);
 		val = clamp_t(s64, val, ctrl->minimum, ctrl->maximum);
 		offset = val - ctrl->minimum;
 		do_div(offset, ctrl->step);
@@ -1346,6 +1395,8 @@ static int std_validate(const struct v4l2_ctrl *ctrl, u32 idx,
 		return ROUND_TO_RANGE(ptr.p_u8[idx], u8, ctrl);
 	case V4L2_CTRL_TYPE_U16:
 		return ROUND_TO_RANGE(ptr.p_u16[idx], u16, ctrl);
+	case V4L2_CTRL_TYPE_U32:
+		return ROUND_TO_RANGE(ptr.p_u32[idx], u32, ctrl);
 
 	case V4L2_CTRL_TYPE_BOOLEAN:
 		ptr.p_s32[idx] = !!ptr.p_s32[idx];
@@ -1578,6 +1629,7 @@ static int check_range(enum v4l2_ctrl_type type,
 		/* fall through */
 	case V4L2_CTRL_TYPE_U8:
 	case V4L2_CTRL_TYPE_U16:
+	case V4L2_CTRL_TYPE_U32:
 	case V4L2_CTRL_TYPE_INTEGER:
 	case V4L2_CTRL_TYPE_INTEGER64:
 		if (step == 0 || min > max || def < min || def > max)
@@ -1606,10 +1658,8 @@ static int check_range(enum v4l2_ctrl_type type,
 }
 
 /* Validate a new control */
-static int validate_new(const struct v4l2_ctrl *ctrl,
-			struct v4l2_ext_control *c)
+static int validate_new(const struct v4l2_ctrl *ctrl, union v4l2_ctrl_ptr p_new)
 {
-	union v4l2_ctrl_ptr ptr;
 	unsigned idx;
 	int err = 0;
 
@@ -1622,19 +1672,14 @@ static int validate_new(const struct v4l2_ctrl *ctrl,
 		case V4L2_CTRL_TYPE_BOOLEAN:
 		case V4L2_CTRL_TYPE_BUTTON:
 		case V4L2_CTRL_TYPE_CTRL_CLASS:
-			ptr.p_s32 = &c->value;
-			return ctrl->type_ops->validate(ctrl, 0, ptr);
-
 		case V4L2_CTRL_TYPE_INTEGER64:
-			ptr.p_s64 = &c->value64;
-			return ctrl->type_ops->validate(ctrl, 0, ptr);
+			return ctrl->type_ops->validate(ctrl, 0, p_new);
 		default:
 			break;
 		}
 	}
-	ptr.p = c->ptr;
-	for (idx = 0; !err && idx < c->size / ctrl->elem_size; idx++)
-		err = ctrl->type_ops->validate(ctrl, idx, ptr);
+	for (idx = 0; !err && idx < ctrl->elems; idx++)
+		err = ctrl->type_ops->validate(ctrl, idx, p_new);
 	return err;
 }
 
@@ -1892,6 +1937,9 @@ static struct v4l2_ctrl *v4l2_ctrl_new(struct v4l2_ctrl_handler *hdl,
 		break;
 	case V4L2_CTRL_TYPE_U16:
 		elem_size = sizeof(u16);
+		break;
+	case V4L2_CTRL_TYPE_U32:
+		elem_size = sizeof(u32);
 		break;
 	default:
 		if (type < V4L2_CTRL_COMPOUND_TYPES)
@@ -2957,6 +3005,7 @@ static int validate_ctrls(struct v4l2_ext_controls *cs,
 	cs->error_idx = cs->count;
 	for (i = 0; i < cs->count; i++) {
 		struct v4l2_ctrl *ctrl = helpers[i].ctrl;
+		union v4l2_ctrl_ptr p_new;
 
 		cs->error_idx = i;
 
@@ -2970,7 +3019,17 @@ static int validate_ctrls(struct v4l2_ext_controls *cs,
 		   best-effort to avoid that. */
 		if (set && (ctrl->flags & V4L2_CTRL_FLAG_GRABBED))
 			return -EBUSY;
-		ret = validate_new(ctrl, &cs->controls[i]);
+		/*
+		 * Skip validation for now if the payload needs to be copied
+		 * from userspace into kernelspace. We'll validate those later.
+		 */
+		if (ctrl->is_ptr)
+			continue;
+		if (ctrl->type == V4L2_CTRL_TYPE_INTEGER64)
+			p_new.p_s64 = &cs->controls[i].value64;
+		else
+			p_new.p_s32 = &cs->controls[i].value;
+		ret = validate_new(ctrl, p_new);
 		if (ret)
 			return ret;
 	}
@@ -3065,7 +3124,11 @@ static int try_set_ext_ctrls(struct v4l2_fh *fh, struct v4l2_ctrl_handler *hdl,
 		/* Copy the new caller-supplied control values.
 		   user_to_new() sets 'is_new' to 1. */
 		do {
-			ret = user_to_new(cs->controls + idx, helpers[idx].ctrl);
+			struct v4l2_ctrl *ctrl = helpers[idx].ctrl;
+
+			ret = user_to_new(cs->controls + idx, ctrl);
+			if (!ret && ctrl->is_ptr)
+				ret = validate_new(ctrl, ctrl->p_new);
 			idx = helpers[idx].next;
 		} while (!ret && idx);
 
@@ -3115,32 +3178,29 @@ int v4l2_subdev_s_ext_ctrls(struct v4l2_subdev *sd, struct v4l2_ext_controls *cs
 EXPORT_SYMBOL(v4l2_subdev_s_ext_ctrls);
 
 /* Helper function for VIDIOC_S_CTRL compatibility */
-static int set_ctrl(struct v4l2_fh *fh, struct v4l2_ctrl *ctrl,
-		    struct v4l2_ext_control *c, u32 ch_flags)
+static int set_ctrl(struct v4l2_fh *fh, struct v4l2_ctrl *ctrl, u32 ch_flags)
 {
 	struct v4l2_ctrl *master = ctrl->cluster[0];
+	int ret;
 	int i;
-
-	/* Compound controls are not supported. The user_to_new() and
-	 * cur_to_user() calls below would need to be modified not to access
-	 * userspace memory when called from set_ctrl().
-	 */
-	if (ctrl->is_ptr)
-		return -EINVAL;
 
 	/* Reset the 'is_new' flags of the cluster */
 	for (i = 0; i < master->ncontrols; i++)
 		if (master->cluster[i])
 			master->cluster[i]->is_new = 0;
 
+	ret = validate_new(ctrl, ctrl->p_new);
+	if (ret)
+		return ret;
+
 	/* For autoclusters with volatiles that are switched from auto to
 	   manual mode we have to update the current volatile values since
 	   those will become the initial manual values after such a switch. */
 	if (master->is_auto && master->has_volatiles && ctrl == master &&
-	    !is_cur_manual(master) && c->value == master->manual_mode_value)
+	    !is_cur_manual(master) && ctrl->val == master->manual_mode_value)
 		update_from_auto_cluster(master);
 
-	user_to_new(c, ctrl);
+	ctrl->is_new = 1;
 	return try_or_set_cluster(fh, master, true, ch_flags);
 }
 
@@ -3148,15 +3208,14 @@ static int set_ctrl(struct v4l2_fh *fh, struct v4l2_ctrl *ctrl,
 static int set_ctrl_lock(struct v4l2_fh *fh, struct v4l2_ctrl *ctrl,
 			 struct v4l2_ext_control *c)
 {
-	int ret = validate_new(ctrl, c);
+	int ret;
 
-	if (!ret) {
-		v4l2_ctrl_lock(ctrl);
-		ret = set_ctrl(fh, ctrl, c, 0);
-		if (!ret)
-			cur_to_user(c, ctrl);
-		v4l2_ctrl_unlock(ctrl);
-	}
+	v4l2_ctrl_lock(ctrl);
+	user_to_new(c, ctrl);
+	ret = set_ctrl(fh, ctrl, 0);
+	if (!ret)
+		cur_to_user(c, ctrl);
+	v4l2_ctrl_unlock(ctrl);
 	return ret;
 }
 
@@ -3164,7 +3223,7 @@ int v4l2_s_ctrl(struct v4l2_fh *fh, struct v4l2_ctrl_handler *hdl,
 					struct v4l2_control *control)
 {
 	struct v4l2_ctrl *ctrl = v4l2_ctrl_find(hdl, control->id);
-	struct v4l2_ext_control c;
+	struct v4l2_ext_control c = { control->id };
 	int ret;
 
 	if (ctrl == NULL || !ctrl->is_int)
@@ -3188,39 +3247,36 @@ EXPORT_SYMBOL(v4l2_subdev_s_ctrl);
 
 int __v4l2_ctrl_s_ctrl(struct v4l2_ctrl *ctrl, s32 val)
 {
-	struct v4l2_ext_control c;
-	int rval;
-
 	lockdep_assert_held(ctrl->handler->lock);
 
 	/* It's a driver bug if this happens. */
 	WARN_ON(!ctrl->is_int);
-	c.value = val;
-	rval = set_ctrl(NULL, ctrl, &c, 0);
-	if (!rval)
-		cur_to_user(&c, ctrl);
-
-	return rval;
+	ctrl->val = val;
+	return set_ctrl(NULL, ctrl, 0);
 }
 EXPORT_SYMBOL(__v4l2_ctrl_s_ctrl);
 
 int __v4l2_ctrl_s_ctrl_int64(struct v4l2_ctrl *ctrl, s64 val)
 {
-	struct v4l2_ext_control c;
-	int rval;
-
 	lockdep_assert_held(ctrl->handler->lock);
 
 	/* It's a driver bug if this happens. */
 	WARN_ON(ctrl->is_ptr || ctrl->type != V4L2_CTRL_TYPE_INTEGER64);
-	c.value64 = val;
-	rval = set_ctrl(NULL, ctrl, &c, 0);
-	if (!rval)
-		cur_to_user(&c, ctrl);
-
-	return rval;
+	*ctrl->p_new.p_s64 = val;
+	return set_ctrl(NULL, ctrl, 0);
 }
 EXPORT_SYMBOL(__v4l2_ctrl_s_ctrl_int64);
+
+int __v4l2_ctrl_s_ctrl_string(struct v4l2_ctrl *ctrl, const char *s)
+{
+	lockdep_assert_held(ctrl->handler->lock);
+
+	/* It's a driver bug if this happens. */
+	WARN_ON(ctrl->type != V4L2_CTRL_TYPE_STRING);
+	strlcpy(ctrl->p_new.p_char, s, ctrl->maximum + 1);
+	return set_ctrl(NULL, ctrl, 0);
+}
+EXPORT_SYMBOL(__v4l2_ctrl_s_ctrl_string);
 
 void v4l2_ctrl_notify(struct v4l2_ctrl *ctrl, v4l2_ctrl_notify_fnc notify, void *priv)
 {
@@ -3241,8 +3297,8 @@ EXPORT_SYMBOL(v4l2_ctrl_notify);
 int __v4l2_ctrl_modify_range(struct v4l2_ctrl *ctrl,
 			s64 min, s64 max, u64 step, s64 def)
 {
+	bool changed;
 	int ret;
-	struct v4l2_ext_control c;
 
 	lockdep_assert_held(ctrl->handler->lock);
 
@@ -3255,6 +3311,7 @@ int __v4l2_ctrl_modify_range(struct v4l2_ctrl *ctrl,
 	case V4L2_CTRL_TYPE_BITMASK:
 	case V4L2_CTRL_TYPE_U8:
 	case V4L2_CTRL_TYPE_U16:
+	case V4L2_CTRL_TYPE_U32:
 		if (ctrl->is_array)
 			return -EINVAL;
 		ret = check_range(ctrl->type, min, max, step, def);
@@ -3268,11 +3325,20 @@ int __v4l2_ctrl_modify_range(struct v4l2_ctrl *ctrl,
 	ctrl->maximum = max;
 	ctrl->step = step;
 	ctrl->default_value = def;
-	c.value = *ctrl->p_cur.p_s32;
-	if (validate_new(ctrl, &c))
-		c.value = def;
-	if (c.value != *ctrl->p_cur.p_s32)
-		ret = set_ctrl(NULL, ctrl, &c, V4L2_EVENT_CTRL_CH_RANGE);
+	cur_to_new(ctrl);
+	if (validate_new(ctrl, ctrl->p_new)) {
+		if (ctrl->type == V4L2_CTRL_TYPE_INTEGER64)
+			*ctrl->p_new.p_s64 = def;
+		else
+			*ctrl->p_new.p_s32 = def;
+	}
+
+	if (ctrl->type == V4L2_CTRL_TYPE_INTEGER64)
+		changed = *ctrl->p_new.p_s64 != *ctrl->p_cur.p_s64;
+	else
+		changed = *ctrl->p_new.p_s32 != *ctrl->p_cur.p_s32;
+	if (changed)
+		ret = set_ctrl(NULL, ctrl, V4L2_EVENT_CTRL_CH_RANGE);
 	else
 		send_event(NULL, ctrl, V4L2_EVENT_CTRL_CH_RANGE);
 	return ret;

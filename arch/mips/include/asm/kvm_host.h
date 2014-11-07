@@ -96,11 +96,6 @@
 #define CAUSEB_DC			27
 #define CAUSEF_DC			(_ULCAST_(1) << 27)
 
-struct kvm;
-struct kvm_run;
-struct kvm_vcpu;
-struct kvm_interrupt;
-
 extern atomic_t kvm_mips_instance;
 extern pfn_t(*kvm_mips_gfn_to_pfn) (struct kvm *kvm, gfn_t gfn);
 extern void (*kvm_mips_release_pfn_clean) (pfn_t pfn);
@@ -359,13 +354,17 @@ enum emulation_result {
 #define MIPS3_PG_FRAME		0x3fffffc0
 
 #define VPN2_MASK		0xffffe000
-#define TLB_IS_GLOBAL(x)	(((x).tlb_lo0 & MIPS3_PG_G) &&	\
+#define TLB_IS_GLOBAL(x)	(((x).tlb_lo0 & MIPS3_PG_G) &&		\
 				 ((x).tlb_lo1 & MIPS3_PG_G))
 #define TLB_VPN2(x)		((x).tlb_hi & VPN2_MASK)
 #define TLB_ASID(x)		((x).tlb_hi & ASID_MASK)
-#define TLB_IS_VALID(x, va)	(((va) & (1 << PAGE_SHIFT))	\
-				 ? ((x).tlb_lo1 & MIPS3_PG_V)	\
+#define TLB_IS_VALID(x, va)	(((va) & (1 << PAGE_SHIFT))		\
+				 ? ((x).tlb_lo1 & MIPS3_PG_V)		\
 				 : ((x).tlb_lo0 & MIPS3_PG_V))
+#define TLB_HI_VPN2_HIT(x, y)	((TLB_VPN2(x) & ~(x).tlb_mask) ==	\
+				 ((y) & VPN2_MASK & ~(x).tlb_mask))
+#define TLB_HI_ASID_HIT(x, y)	(TLB_IS_GLOBAL(x) ||			\
+				 TLB_ASID(x) == ((y) & ASID_MASK))
 
 struct kvm_mips_tlb {
 	long tlb_mask;
@@ -760,8 +759,19 @@ extern int kvm_mips_trans_mtc0(uint32_t inst, uint32_t *opc,
 			       struct kvm_vcpu *vcpu);
 
 /* Misc */
-extern int kvm_mips_dump_stats(struct kvm_vcpu *vcpu);
+extern void kvm_mips_dump_stats(struct kvm_vcpu *vcpu);
 extern unsigned long kvm_mips_get_ramsize(struct kvm *kvm);
 
+static inline void kvm_arch_hardware_disable(void) {}
+static inline void kvm_arch_hardware_unsetup(void) {}
+static inline void kvm_arch_sync_events(struct kvm *kvm) {}
+static inline void kvm_arch_free_memslot(struct kvm *kvm,
+		struct kvm_memory_slot *free, struct kvm_memory_slot *dont) {}
+static inline void kvm_arch_memslots_updated(struct kvm *kvm) {}
+static inline void kvm_arch_flush_shadow_all(struct kvm *kvm) {}
+static inline void kvm_arch_flush_shadow_memslot(struct kvm *kvm,
+		struct kvm_memory_slot *slot) {}
+static inline void kvm_arch_vcpu_uninit(struct kvm_vcpu *vcpu) {}
+static inline void kvm_arch_sched_in(struct kvm_vcpu *vcpu, int cpu) {}
 
 #endif /* __MIPS_KVM_HOST_H__ */

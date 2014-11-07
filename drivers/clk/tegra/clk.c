@@ -19,7 +19,8 @@
 #include <linux/of.h>
 #include <linux/clk/tegra.h>
 #include <linux/reset-controller.h>
-#include <linux/tegra-soc.h>
+
+#include <soc/tegra/fuse.h>
 
 #include "clk.h"
 
@@ -206,8 +207,13 @@ void __init tegra_init_from_table(struct tegra_clk_init_table *tbl,
 
 	for (; tbl->clk_id < clk_max; tbl++) {
 		clk = clks[tbl->clk_id];
-		if (IS_ERR_OR_NULL(clk))
-			return;
+		if (IS_ERR_OR_NULL(clk)) {
+			pr_err("%s: invalid entry %ld in clks array for id %d\n",
+			       __func__, PTR_ERR(clk), tbl->clk_id);
+			WARN_ON(1);
+
+			continue;
+		}
 
 		if (tbl->parent_id < clk_max) {
 			struct clk *parent = clks[tbl->parent_id];
@@ -277,6 +283,12 @@ void __init tegra_register_devclks(struct tegra_devclk *dev_clks, int num)
 	for (i = 0; i < num; i++, dev_clks++)
 		clk_register_clkdev(clks[dev_clks->dt_id], dev_clks->con_id,
 				dev_clks->dev_id);
+
+	for (i = 0; i < clk_num; i++) {
+		if (!IS_ERR_OR_NULL(clks[i]))
+			clk_register_clkdev(clks[i], __clk_get_name(clks[i]),
+				"tegra-clk-debug");
+	}
 }
 
 struct clk ** __init tegra_lookup_dt_id(int clk_id,

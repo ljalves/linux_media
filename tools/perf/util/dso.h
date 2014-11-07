@@ -5,6 +5,7 @@
 #include <linux/rbtree.h>
 #include <stdbool.h>
 #include <linux/types.h>
+#include <linux/bitops.h>
 #include "map.h"
 #include "build-id.h"
 
@@ -40,6 +41,23 @@ enum dso_swap_type {
 	DSO_SWAP__YES,
 };
 
+enum dso_data_status {
+	DSO_DATA_STATUS_ERROR	= -1,
+	DSO_DATA_STATUS_UNKNOWN	= 0,
+	DSO_DATA_STATUS_OK	= 1,
+};
+
+enum dso_data_status_seen {
+	DSO_DATA_STATUS_SEEN_ITRACE,
+};
+
+enum dso_type {
+	DSO__TYPE_UNKNOWN,
+	DSO__TYPE_64BIT,
+	DSO__TYPE_32BIT,
+	DSO__TYPE_X32BIT,
+};
+
 #define DSO__SWAP(dso, type, val)			\
 ({							\
 	type ____r = val;				\
@@ -72,8 +90,18 @@ struct dso_cache {
 	char data[0];
 };
 
+/*
+ * DSOs are put into both a list for fast iteration and rbtree for fast
+ * long name lookup.
+ */
+struct dsos {
+	struct list_head head;
+	struct rb_root	 root;	/* rbtree root sorted by long name */
+};
+
 struct dso {
 	struct list_head node;
+	struct rb_node	 rb_node;	/* rbtree node sorted by long name */
 	struct rb_root	 symbols[MAP__NR_TYPES];
 	struct rb_root	 symbol_names[MAP__NR_TYPES];
 	void		 *a2l;
@@ -90,6 +118,7 @@ struct dso {
 	u8		 annotate_warned:1;
 	u8		 short_name_allocated:1;
 	u8		 long_name_allocated:1;
+	u8		 is_64_bit:1;
 	u8		 sorted_by_name;
 	u8		 loaded;
 	u8		 rel;
@@ -103,6 +132,8 @@ struct dso {
 	struct {
 		struct rb_root	 cache;
 		int		 fd;
+		int		 status;
+		u32		 status_seen;
 		size_t		 file_size;
 		struct list_head open_entry;
 	} data;
@@ -153,6 +184,7 @@ int dso__read_binary_type_filename(const struct dso *dso, enum dso_binary_type t
  * The dso__data_* external interface provides following functions:
  *   dso__data_fd
  *   dso__data_close
+ *   dso__data_size
  *   dso__data_read_offset
  *   dso__data_read_addr
  *
@@ -190,20 +222,22 @@ int dso__read_binary_type_filename(const struct dso *dso, enum dso_binary_type t
 int dso__data_fd(struct dso *dso, struct machine *machine);
 void dso__data_close(struct dso *dso);
 
+off_t dso__data_size(struct dso *dso, struct machine *machine);
 ssize_t dso__data_read_offset(struct dso *dso, struct machine *machine,
 			      u64 offset, u8 *data, ssize_t size);
 ssize_t dso__data_read_addr(struct dso *dso, struct map *map,
 			    struct machine *machine, u64 addr,
 			    u8 *data, ssize_t size);
+bool dso__data_status_seen(struct dso *dso, enum dso_data_status_seen by);
 
 struct map *dso__new_map(const char *name);
 struct dso *dso__kernel_findnew(struct machine *machine, const char *name,
 				const char *short_name, int dso_type);
 
-void dsos__add(struct list_head *head, struct dso *dso);
-struct dso *dsos__find(const struct list_head *head, const char *name,
+void dsos__add(struct dsos *dsos, struct dso *dso);
+struct dso *dsos__find(const struct dsos *dsos, const char *name,
 		       bool cmp_short);
-struct dso *__dsos__findnew(struct list_head *head, const char *name);
+struct dso *__dsos__findnew(struct dsos *dsos, const char *name);
 bool __dsos__read_build_ids(struct list_head *head, bool with_hits);
 
 size_t __dsos__fprintf_buildid(struct list_head *head, FILE *fp,
@@ -228,5 +262,7 @@ static inline bool dso__is_kcore(struct dso *dso)
 }
 
 void dso__free_a2l(struct dso *dso);
+
+enum dso_type dso__type(struct dso *dso, struct machine *machine);
 
 #endif /* __PERF_DSO */

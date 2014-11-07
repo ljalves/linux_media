@@ -18,7 +18,6 @@ config BLACKFIN
 	select HAVE_FTRACE_MCOUNT_RECORD
 	select HAVE_FUNCTION_GRAPH_TRACER
 	select HAVE_FUNCTION_TRACER
-	select HAVE_FUNCTION_TRACE_MCOUNT_TEST
 	select HAVE_IDE
 	select HAVE_KERNEL_GZIP if RAMKERNEL
 	select HAVE_KERNEL_BZIP2 if RAMKERNEL
@@ -672,7 +671,7 @@ config TICKSOURCE_CORETMR
 	default y
 endmenu
 
-menu "Clock souce"
+menu "Clock source"
 	depends on GENERIC_CLOCKEVENTS
 config CYCLES_CLOCKSOURCE
 	bool "CYCLES"

@@ -822,7 +822,6 @@ static void blkcg_css_free(struct cgroup_subsys_state *css)
 static struct cgroup_subsys_state *
 blkcg_css_alloc(struct cgroup_subsys_state *parent_css)
 {
-	static atomic64_t id_seq = ATOMIC64_INIT(0);
 	struct blkcg *blkcg;
 
 	if (!parent_css) {
@@ -836,7 +835,6 @@ blkcg_css_alloc(struct cgroup_subsys_state *parent_css)
 
 	blkcg->cfq_weight = CFQ_WEIGHT_DEFAULT;
 	blkcg->cfq_leaf_weight = CFQ_WEIGHT_DEFAULT;
-	blkcg->id = atomic64_inc_return(&id_seq); /* root is 0, start from 1 */
 done:
 	spin_lock_init(&blkcg->lock);
 	INIT_RADIX_TREE(&blkcg->blkg_tree, GFP_ATOMIC);
@@ -928,7 +926,15 @@ struct cgroup_subsys blkio_cgrp_subsys = {
 	.css_offline = blkcg_css_offline,
 	.css_free = blkcg_css_free,
 	.can_attach = blkcg_can_attach,
-	.base_cftypes = blkcg_files,
+	.legacy_cftypes = blkcg_files,
+#ifdef CONFIG_MEMCG
+	/*
+	 * This ensures that, if available, memcg is automatically enabled
+	 * together on the default hierarchy so that the owner cgroup can
+	 * be retrieved from writeback pages.
+	 */
+	.depends_on = 1 << memory_cgrp_id,
+#endif
 };
 EXPORT_SYMBOL_GPL(blkio_cgrp_subsys);
 
@@ -1120,7 +1126,8 @@ int blkcg_policy_register(struct blkcg_policy *pol)
 
 	/* everything is in place, add intf files for the new policy */
 	if (pol->cftypes)
-		WARN_ON(cgroup_add_cftypes(&blkio_cgrp_subsys, pol->cftypes));
+		WARN_ON(cgroup_add_legacy_cftypes(&blkio_cgrp_subsys,
+						  pol->cftypes));
 	ret = 0;
 out_unlock:
 	mutex_unlock(&blkcg_pol_mutex);

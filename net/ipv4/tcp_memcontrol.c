@@ -32,7 +32,7 @@ int tcp_init_cgroup(struct mem_cgroup *memcg, struct cgroup_subsys *ss)
 		res_parent = &parent_cg->memory_allocated;
 
 	res_counter_init(&cg_proto->memory_allocated, res_parent);
-	percpu_counter_init(&cg_proto->sockets_allocated, 0);
+	percpu_counter_init(&cg_proto->sockets_allocated, 0, GFP_KERNEL);
 
 	return 0;
 }
@@ -222,7 +222,7 @@ static struct cftype tcp_files[] = {
 
 static int __init tcp_memcontrol_init(void)
 {
-	WARN_ON(cgroup_add_cftypes(&memory_cgrp_subsys, tcp_files));
+	WARN_ON(cgroup_add_legacy_cftypes(&memory_cgrp_subsys, tcp_files));
 	return 0;
 }
 __initcall(tcp_memcontrol_init);

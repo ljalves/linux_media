@@ -517,11 +517,7 @@ void page_unlock_anon_vma_read(struct anon_vma *anon_vma)
 static inline unsigned long
 __vma_address(struct page *page, struct vm_area_struct *vma)
 {
-	pgoff_t pgoff = page->index << (PAGE_CACHE_SHIFT - PAGE_SHIFT);
-
-	if (unlikely(is_vm_hugetlb_page(vma)))
-		pgoff = page->index << huge_page_order(page_hstate(page));
-
+	pgoff_t pgoff = page_to_pgoff(page);
 	return vma->vm_start + ((pgoff - vma->vm_pgoff) << PAGE_SHIFT);
 }
 
@@ -531,7 +527,7 @@ vma_address(struct page *page, struct vm_area_struct *vma)
 	unsigned long address = __vma_address(page, vma);
 
 	/* page should be within @vma mapping range */
-	VM_BUG_ON(address < vma->vm_start || address >= vma->vm_end);
+	VM_BUG_ON_VMA(address < vma->vm_start || address >= vma->vm_end, vma);
 
 	return address;
 }
@@ -901,7 +897,7 @@ void page_move_anon_rmap(struct page *page,
 	struct anon_vma *anon_vma = vma->anon_vma;
 
 	VM_BUG_ON_PAGE(!PageLocked(page), page);
-	VM_BUG_ON(!anon_vma);
+	VM_BUG_ON_VMA(!anon_vma, vma);
 	VM_BUG_ON_PAGE(page->index != linear_page_index(vma, address), page);
 
 	anon_vma = (void *) anon_vma + PAGE_MAPPING_ANON;
@@ -1028,7 +1024,7 @@ void do_page_add_anon_rmap(struct page *page,
 void page_add_new_anon_rmap(struct page *page,
 	struct vm_area_struct *vma, unsigned long address)
 {
-	VM_BUG_ON(address < vma->vm_start || address >= vma->vm_end);
+	VM_BUG_ON_VMA(address < vma->vm_start || address >= vma->vm_end, vma);
 	SetPageSwapBacked(page);
 	atomic_set(&page->_mapcount, 0); /* increment count (starts at -1) */
 	if (PageTransHuge(page))
@@ -1036,25 +1032,6 @@ void page_add_new_anon_rmap(struct page *page,
 	__mod_zone_page_state(page_zone(page), NR_ANON_PAGES,
 			hpage_nr_pages(page));
 	__page_set_anon_rmap(page, vma, address, 1);
-
-	VM_BUG_ON_PAGE(PageLRU(page), page);
-	if (likely((vma->vm_flags & (VM_LOCKED | VM_SPECIAL)) != VM_LOCKED)) {
-		SetPageActive(page);
-		lru_cache_add(page);
-		return;
-	}
-
-	if (!TestSetPageMlocked(page)) {
-		/*
-		 * We use the irq-unsafe __mod_zone_page_stat because this
-		 * counter is not modified from interrupt context, and the pte
-		 * lock is held(spinlock), which implies preemption disabled.
-		 */
-		__mod_zone_page_state(page_zone(page), NR_MLOCK,
-				    hpage_nr_pages(page));
-		count_vm_event(UNEVICTABLE_PGMLOCKED);
-	}
-	add_page_to_unevictable_list(page);
 }
 
 /**
@@ -1112,7 +1089,6 @@ void page_remove_rmap(struct page *page)
 	if (unlikely(PageHuge(page)))
 		goto out;
 	if (anon) {
-		mem_cgroup_uncharge_page(page);
 		if (PageTransHuge(page))
 			__dec_zone_page_state(page,
 					      NR_ANON_TRANSPARENT_HUGEPAGES);
@@ -1379,7 +1355,11 @@ static int try_to_unmap_cluster(unsigned long cursor, unsigned int *mapcount,
 			continue;	/* don't unmap */
 		}
 
-		if (ptep_clear_flush_young_notify(vma, address, pte))
+		/*
+		 * No need for _notify because we're within an
+		 * mmu_notifier_invalidate_range_ {start|end} scope.
+		 */
+		if (ptep_clear_flush_young(vma, address, pte))
 			continue;
 
 		/* Nuke the page table entry. */
@@ -1639,7 +1619,7 @@ static struct anon_vma *rmap_walk_anon_lock(struct page *page,
 static int rmap_walk_anon(struct page *page, struct rmap_walk_control *rwc)
 {
 	struct anon_vma *anon_vma;
-	pgoff_t pgoff = page->index << (PAGE_CACHE_SHIFT - PAGE_SHIFT);
+	pgoff_t pgoff = page_to_pgoff(page);
 	struct anon_vma_chain *avc;
 	int ret = SWAP_AGAIN;
 
@@ -1680,7 +1660,7 @@ static int rmap_walk_anon(struct page *page, struct rmap_walk_control *rwc)
 static int rmap_walk_file(struct page *page, struct rmap_walk_control *rwc)
 {
 	struct address_space *mapping = page->mapping;
-	pgoff_t pgoff = page->index << compound_order(page);
+	pgoff_t pgoff = page_to_pgoff(page);
 	struct vm_area_struct *vma;
 	int ret = SWAP_AGAIN;
 
@@ -1690,7 +1670,7 @@ static int rmap_walk_file(struct page *page, struct rmap_walk_control *rwc)
 	 * structure at mapping cannot be freed and reused yet,
 	 * so we can safely take mapping->i_mmap_mutex.
 	 */
-	VM_BUG_ON(!PageLocked(page));
+	VM_BUG_ON_PAGE(!PageLocked(page), page);
 
 	if (!mapping)
 		return ret;

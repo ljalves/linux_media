@@ -37,6 +37,7 @@ struct si2168 {
 	fe_status_t fe_status;
 	u8 ts_mode;
 	bool active;
+	bool fw_loaded;
 };
 
 /* firmare command struct */

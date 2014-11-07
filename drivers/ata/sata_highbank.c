@@ -512,7 +512,7 @@ static int ahci_highbank_probe(struct platform_device *pdev)
 		return rc;
 
 
-	ahci_save_initial_config(dev, hpriv, 0, 0);
+	ahci_save_initial_config(dev, hpriv);
 
 	/* prepare host */
 	if (hpriv->cap & HOST_CAP_NCQ)
@@ -568,8 +568,7 @@ static int ahci_highbank_probe(struct platform_device *pdev)
 	ahci_init_controller(host);
 	ahci_print_info(host, "platform");
 
-	rc = ata_host_activate(host, irq, ahci_interrupt, 0,
-					&ahci_highbank_platform_sht);
+	rc = ahci_host_activate(host, irq, &ahci_highbank_platform_sht);
 	if (rc)
 		goto err0;
 

@@ -125,8 +125,8 @@ int iwlagn_mac_setup_register(struct iwl_priv *priv,
 	 */
 
 	if (priv->nvm_data->sku_cap_11n_enable)
-		hw->flags |= IEEE80211_HW_SUPPORTS_DYNAMIC_SMPS |
-			     IEEE80211_HW_SUPPORTS_STATIC_SMPS;
+		hw->wiphy->features |= NL80211_FEATURE_DYNAMIC_SMPS |
+				       NL80211_FEATURE_STATIC_SMPS;
 
 	/*
 	 * Enable 11w if advertised by firmware and software crypto
@@ -1495,9 +1495,10 @@ static int iwlagn_mac_change_interface(struct ieee80211_hw *hw,
 
 static int iwlagn_mac_hw_scan(struct ieee80211_hw *hw,
 			      struct ieee80211_vif *vif,
-			      struct cfg80211_scan_request *req)
+			      struct ieee80211_scan_request *hw_req)
 {
 	struct iwl_priv *priv = IWL_MAC80211_GET_DVM(hw);
+	struct cfg80211_scan_request *req = &hw_req->req;
 	int ret;
 
 	IWL_DEBUG_MAC80211(priv, "enter\n");

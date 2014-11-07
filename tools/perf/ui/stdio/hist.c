@@ -395,9 +395,11 @@ size_t hists__fprintf(struct hists *hists, bool show_header, int max_rows,
 
 	init_rem_hits();
 
-
 	perf_hpp__for_each_format(fmt)
 		perf_hpp__reset_width(fmt, hists);
+
+	if (symbol_conf.col_width_list_str)
+		perf_hpp__set_user_width(symbol_conf.col_width_list_str);
 
 	if (!show_header)
 		goto print_entries;
@@ -479,7 +481,7 @@ print_entries:
 
 		if (h->ms.map == NULL && verbose > 1) {
 			__map_groups__fprintf_maps(h->thread->mg,
-						   MAP__FUNCTION, verbose, fp);
+						   MAP__FUNCTION, fp);
 			fprintf(fp, "%.10s end\n", graph_dotted_line);
 		}
 	}

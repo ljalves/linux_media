@@ -45,9 +45,9 @@ do { \
 	  d_args); \
 } while (0)
 
-static inline int __cpu_is_stopped(struct kvm_vcpu *vcpu)
+static inline int is_vcpu_stopped(struct kvm_vcpu *vcpu)
 {
-	return atomic_read(&vcpu->arch.sie_block->cpuflags) & CPUSTAT_STOP_INT;
+	return atomic_read(&vcpu->arch.sie_block->cpuflags) & CPUSTAT_STOPPED;
 }
 
 static inline int kvm_is_ucontrol(struct kvm *kvm)
@@ -70,7 +70,7 @@ static inline u32 kvm_s390_get_prefix(struct kvm_vcpu *vcpu)
 static inline void kvm_s390_set_prefix(struct kvm_vcpu *vcpu, u32 prefix)
 {
 	vcpu->arch.sie_block->prefix = prefix >> GUEST_PREFIX_SHIFT;
-	vcpu->arch.sie_block->ihcpu  = 0xffff;
+	kvm_make_request(KVM_REQ_TLB_FLUSH, vcpu);
 	kvm_make_request(KVM_REQ_MMU_RELOAD, vcpu);
 }
 
@@ -129,11 +129,16 @@ static inline void kvm_s390_set_psw_cc(struct kvm_vcpu *vcpu, unsigned long cc)
 	vcpu->arch.sie_block->gpsw.mask |= cc << 44;
 }
 
+/* are cpu states controlled by user space */
+static inline int kvm_s390_user_cpu_state_ctrl(struct kvm *kvm)
+{
+	return kvm->arch.user_cpu_state_ctrl != 0;
+}
+
 int kvm_s390_handle_wait(struct kvm_vcpu *vcpu);
+void kvm_s390_vcpu_wakeup(struct kvm_vcpu *vcpu);
 enum hrtimer_restart kvm_s390_idle_wakeup(struct hrtimer *timer);
-void kvm_s390_tasklet(unsigned long parm);
-void kvm_s390_deliver_pending_interrupts(struct kvm_vcpu *vcpu);
-void kvm_s390_deliver_pending_machine_checks(struct kvm_vcpu *vcpu);
+int __must_check kvm_s390_deliver_pending_interrupts(struct kvm_vcpu *vcpu);
 void kvm_s390_clear_local_irqs(struct kvm_vcpu *vcpu);
 void kvm_s390_clear_float_irqs(struct kvm *kvm);
 int __must_check kvm_s390_inject_vm(struct kvm *kvm,
@@ -222,6 +227,7 @@ int kvm_cpu_has_interrupt(struct kvm_vcpu *vcpu);
 int psw_extint_disabled(struct kvm_vcpu *vcpu);
 void kvm_s390_destroy_adapters(struct kvm *kvm);
 int kvm_s390_si_ext_call_pending(struct kvm_vcpu *vcpu);
+extern struct kvm_device_ops kvm_flic_ops;
 
 /* implemented in guestdbg.c */
 void kvm_s390_backup_guest_per_regs(struct kvm_vcpu *vcpu);

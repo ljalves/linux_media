@@ -1,6 +1,4 @@
 /*
- *  linux/arch/arm/common/gic.c
- *
  *  Copyright (C) 2002 ARM Limited, All Rights Reserved.
  *
  * This program is free software; you can redistribute it and/or modify
@@ -47,6 +45,7 @@
 #include <asm/exception.h>
 #include <asm/smp_plat.h>
 
+#include "irq-gic-common.h"
 #include "irqchip.h"
 
 union gic_base {
@@ -103,7 +102,7 @@ static struct gic_chip_data gic_data[MAX_GIC_NR] __read_mostly;
 #ifdef CONFIG_GIC_NON_BANKED
 static void __iomem *gic_get_percpu_base(union gic_base *base)
 {
-	return *__this_cpu_ptr(base->percpu_base);
+	return raw_cpu_read(*base->percpu_base);
 }
 
 static void __iomem *gic_get_common_base(union gic_base *base)
@@ -189,12 +188,6 @@ static int gic_set_type(struct irq_data *d, unsigned int type)
 {
 	void __iomem *base = gic_dist_base(d);
 	unsigned int gicirq = gic_irq(d);
-	u32 enablemask = 1 << (gicirq % 32);
-	u32 enableoff = (gicirq / 32) * 4;
-	u32 confmask = 0x2 << ((gicirq % 16) * 2);
-	u32 confoff = (gicirq / 16) * 4;
-	bool enabled = false;
-	u32 val;
 
 	/* Interrupt configuration for SGIs can't be changed */
 	if (gicirq < 16)
@@ -208,25 +201,7 @@ static int gic_set_type(struct irq_data *d, unsigned int type)
 	if (gic_arch_extn.irq_set_type)
 		gic_arch_extn.irq_set_type(d, type);
 
-	val = readl_relaxed(base + GIC_DIST_CONFIG + confoff);
-	if (type == IRQ_TYPE_LEVEL_HIGH)
-		val &= ~confmask;
-	else if (type == IRQ_TYPE_EDGE_RISING)
-		val |= confmask;
-
-	/*
-	 * As recommended by the spec, disable the interrupt before changing
-	 * the configuration
-	 */
-	if (readl_relaxed(base + GIC_DIST_ENABLE_SET + enableoff) & enablemask) {
-		writel_relaxed(enablemask, base + GIC_DIST_ENABLE_CLEAR + enableoff);
-		enabled = true;
-	}
-
-	writel_relaxed(val, base + GIC_DIST_CONFIG + confoff);
-
-	if (enabled)
-		writel_relaxed(enablemask, base + GIC_DIST_ENABLE_SET + enableoff);
+	gic_configure_irq(gicirq, type, base, NULL);
 
 	raw_spin_unlock(&irq_controller_lock);
 
@@ -295,8 +270,7 @@ static void __exception_irq_entry gic_handle_irq(struct pt_regs *regs)
 		irqnr = irqstat & GICC_IAR_INT_ID_MASK;
 
 		if (likely(irqnr > 15 && irqnr < 1021)) {
-			irqnr = irq_find_mapping(gic->domain, irqnr);
-			handle_IRQ(irqnr, regs);
+			handle_domain_irq(gic->domain, irqnr, regs);
 			continue;
 		}
 		if (irqnr < 16) {
@@ -323,8 +297,8 @@ static void gic_handle_cascade_irq(unsigned int irq, struct irq_desc *desc)
 	status = readl_relaxed(gic_data_cpu_base(chip_data) + GIC_CPU_INTACK);
 	raw_spin_unlock(&irq_controller_lock);
 
-	gic_irq = (status & 0x3ff);
-	if (gic_irq == 1023)
+	gic_irq = (status & GICC_IAR_INT_ID_MASK);
+	if (gic_irq == GICC_INT_SPURIOUS)
 		goto out;
 
 	cascade_irq = irq_find_mapping(chip_data->domain, gic_irq);
@@ -378,6 +352,21 @@ static u8 gic_get_cpumask(struct gic_chip_data *gic)
 	return mask;
 }
 
+static void gic_cpu_if_up(void)
+{
+	void __iomem *cpu_base = gic_data_cpu_base(&gic_data[0]);
+	u32 bypass = 0;
+
+	/*
+	* Preserve bypass disable bits to be written back later
+	*/
+	bypass = readl(cpu_base + GIC_CPU_CTRL);
+	bypass &= GICC_DIS_BYPASS_MASK;
+
+	writel_relaxed(bypass | GICC_ENABLE, cpu_base + GIC_CPU_CTRL);
+}
+
+
 static void __init gic_dist_init(struct gic_chip_data *gic)
 {
 	unsigned int i;
@@ -385,13 +374,7 @@ static void __init gic_dist_init(struct gic_chip_data *gic)
 	unsigned int gic_irqs = gic->gic_irqs;
 	void __iomem *base = gic_data_dist_base(gic);
 
-	writel_relaxed(0, base + GIC_DIST_CTRL);
-
-	/*
-	 * Set all global interrupts to be level triggered, active low.
-	 */
-	for (i = 32; i < gic_irqs; i += 16)
-		writel_relaxed(0, base + GIC_DIST_CONFIG + i * 4 / 16);
+	writel_relaxed(GICD_DISABLE, base + GIC_DIST_CTRL);
 
 	/*
 	 * Set all global interrupts to this CPU only.
@@ -402,20 +385,9 @@ static void __init gic_dist_init(struct gic_chip_data *gic)
 	for (i = 32; i < gic_irqs; i += 4)
 		writel_relaxed(cpumask, base + GIC_DIST_TARGET + i * 4 / 4);
 
-	/*
-	 * Set priority on all global interrupts.
-	 */
-	for (i = 32; i < gic_irqs; i += 4)
-		writel_relaxed(0xa0a0a0a0, base + GIC_DIST_PRI + i * 4 / 4);
+	gic_dist_config(base, gic_irqs, NULL);
 
-	/*
-	 * Disable all interrupts.  Leave the PPI and SGIs alone
-	 * as these enables are banked registers.
-	 */
-	for (i = 32; i < gic_irqs; i += 32)
-		writel_relaxed(0xffffffff, base + GIC_DIST_ENABLE_CLEAR + i * 4 / 32);
-
-	writel_relaxed(1, base + GIC_DIST_CTRL);
+	writel_relaxed(GICD_ENABLE, base + GIC_DIST_CTRL);
 }
 
 static void gic_cpu_init(struct gic_chip_data *gic)
@@ -440,27 +412,20 @@ static void gic_cpu_init(struct gic_chip_data *gic)
 		if (i != cpu)
 			gic_cpu_map[i] &= ~cpu_mask;
 
-	/*
-	 * Deal with the banked PPI and SGI interrupts - disable all
-	 * PPI interrupts, ensure all SGI interrupts are enabled.
-	 */
-	writel_relaxed(0xffff0000, dist_base + GIC_DIST_ENABLE_CLEAR);
-	writel_relaxed(0x0000ffff, dist_base + GIC_DIST_ENABLE_SET);
+	gic_cpu_config(dist_base, NULL);
 
-	/*
-	 * Set priority on PPI and SGI interrupts
-	 */
-	for (i = 0; i < 32; i += 4)
-		writel_relaxed(0xa0a0a0a0, dist_base + GIC_DIST_PRI + i * 4 / 4);
-
-	writel_relaxed(0xf0, base + GIC_CPU_PRIMASK);
-	writel_relaxed(1, base + GIC_CPU_CTRL);
+	writel_relaxed(GICC_INT_PRI_THRESHOLD, base + GIC_CPU_PRIMASK);
+	gic_cpu_if_up();
 }
 
 void gic_cpu_if_down(void)
 {
 	void __iomem *cpu_base = gic_data_cpu_base(&gic_data[0]);
-	writel_relaxed(0, cpu_base + GIC_CPU_CTRL);
+	u32 val = 0;
+
+	val = readl(cpu_base + GIC_CPU_CTRL);
+	val &= ~GICC_ENABLE;
+	writel_relaxed(val, cpu_base + GIC_CPU_CTRL);
 }
 
 #ifdef CONFIG_CPU_PM
@@ -520,14 +485,14 @@ static void gic_dist_restore(unsigned int gic_nr)
 	if (!dist_base)
 		return;
 
-	writel_relaxed(0, dist_base + GIC_DIST_CTRL);
+	writel_relaxed(GICD_DISABLE, dist_base + GIC_DIST_CTRL);
 
 	for (i = 0; i < DIV_ROUND_UP(gic_irqs, 16); i++)
 		writel_relaxed(gic_data[gic_nr].saved_spi_conf[i],
 			dist_base + GIC_DIST_CONFIG + i * 4);
 
 	for (i = 0; i < DIV_ROUND_UP(gic_irqs, 4); i++)
-		writel_relaxed(0xa0a0a0a0,
+		writel_relaxed(GICD_INT_DEF_PRI_X4,
 			dist_base + GIC_DIST_PRI + i * 4);
 
 	for (i = 0; i < DIV_ROUND_UP(gic_irqs, 4); i++)
@@ -538,7 +503,7 @@ static void gic_dist_restore(unsigned int gic_nr)
 		writel_relaxed(gic_data[gic_nr].saved_spi_enable[i],
 			dist_base + GIC_DIST_ENABLE_SET + i * 4);
 
-	writel_relaxed(1, dist_base + GIC_DIST_CTRL);
+	writel_relaxed(GICD_ENABLE, dist_base + GIC_DIST_CTRL);
 }
 
 static void gic_cpu_save(unsigned int gic_nr)
@@ -557,11 +522,11 @@ static void gic_cpu_save(unsigned int gic_nr)
 	if (!dist_base || !cpu_base)
 		return;
 
-	ptr = __this_cpu_ptr(gic_data[gic_nr].saved_ppi_enable);
+	ptr = raw_cpu_ptr(gic_data[gic_nr].saved_ppi_enable);
 	for (i = 0; i < DIV_ROUND_UP(32, 32); i++)
 		ptr[i] = readl_relaxed(dist_base + GIC_DIST_ENABLE_SET + i * 4);
 
-	ptr = __this_cpu_ptr(gic_data[gic_nr].saved_ppi_conf);
+	ptr = raw_cpu_ptr(gic_data[gic_nr].saved_ppi_conf);
 	for (i = 0; i < DIV_ROUND_UP(32, 16); i++)
 		ptr[i] = readl_relaxed(dist_base + GIC_DIST_CONFIG + i * 4);
 
@@ -583,19 +548,20 @@ static void gic_cpu_restore(unsigned int gic_nr)
 	if (!dist_base || !cpu_base)
 		return;
 
-	ptr = __this_cpu_ptr(gic_data[gic_nr].saved_ppi_enable);
+	ptr = raw_cpu_ptr(gic_data[gic_nr].saved_ppi_enable);
 	for (i = 0; i < DIV_ROUND_UP(32, 32); i++)
 		writel_relaxed(ptr[i], dist_base + GIC_DIST_ENABLE_SET + i * 4);
 
-	ptr = __this_cpu_ptr(gic_data[gic_nr].saved_ppi_conf);
+	ptr = raw_cpu_ptr(gic_data[gic_nr].saved_ppi_conf);
 	for (i = 0; i < DIV_ROUND_UP(32, 16); i++)
 		writel_relaxed(ptr[i], dist_base + GIC_DIST_CONFIG + i * 4);
 
 	for (i = 0; i < DIV_ROUND_UP(32, 4); i++)
-		writel_relaxed(0xa0a0a0a0, dist_base + GIC_DIST_PRI + i * 4);
+		writel_relaxed(GICD_INT_DEF_PRI_X4,
+					dist_base + GIC_DIST_PRI + i * 4);
 
-	writel_relaxed(0xf0, cpu_base + GIC_CPU_PRIMASK);
-	writel_relaxed(1, cpu_base + GIC_CPU_CTRL);
+	writel_relaxed(GICC_INT_PRI_THRESHOLD, cpu_base + GIC_CPU_PRIMASK);
+	gic_cpu_if_up();
 }
 
 static int gic_notifier(struct notifier_block *self, unsigned long cmd,	void *v)
@@ -920,7 +886,7 @@ static int gic_routable_irq_domain_xlate(struct irq_domain *d,
 	return 0;
 }
 
-const struct irq_domain_ops gic_default_routable_irq_domain_ops = {
+static const struct irq_domain_ops gic_default_routable_irq_domain_ops = {
 	.map = gic_routable_irq_domain_map,
 	.unmap = gic_routable_irq_domain_unmap,
 	.xlate = gic_routable_irq_domain_xlate,

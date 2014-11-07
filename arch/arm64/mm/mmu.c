@@ -32,6 +32,7 @@
 #include <asm/setup.h>
 #include <asm/sizes.h>
 #include <asm/tlb.h>
+#include <asm/memblock.h>
 #include <asm/mmu_context.h>
 
 #include "mm.h"
@@ -93,7 +94,7 @@ static int __init early_cachepolicy(char *p)
 	 */
 	asm volatile(
 	"	mrs	%0, mair_el1\n"
-	"	bfi	%0, %1, #%2, #8\n"
+	"	bfi	%0, %1, %2, #8\n"
 	"	msr	mair_el1, %0\n"
 	"	isb\n"
 	: "=&r" (tmp)
@@ -204,9 +205,16 @@ static void __init alloc_init_pud(pgd_t *pgd, unsigned long addr,
 				  unsigned long end, unsigned long phys,
 				  int map_io)
 {
-	pud_t *pud = pud_offset(pgd, addr);
+	pud_t *pud;
 	unsigned long next;
 
+	if (pgd_none(*pgd)) {
+		pud = early_alloc(PTRS_PER_PUD * sizeof(pud_t));
+		pgd_populate(&init_mm, pgd, pud);
+	}
+	BUG_ON(pgd_bad(*pgd));
+
+	pud = pud_offset(pgd, addr);
 	do {
 		next = pud_addr_end(addr, end);
 
@@ -289,11 +297,15 @@ static void __init map_mem(void)
 	 * create_mapping requires puds, pmds and ptes to be allocated from
 	 * memory addressable from the initial direct kernel mapping.
 	 *
-	 * The initial direct kernel mapping, located at swapper_pg_dir,
-	 * gives us PGDIR_SIZE memory starting from PHYS_OFFSET (which must be
-	 * aligned to 2MB as per Documentation/arm64/booting.txt).
+	 * The initial direct kernel mapping, located at swapper_pg_dir, gives
+	 * us PUD_SIZE (4K pages) or PMD_SIZE (64K pages) memory starting from
+	 * PHYS_OFFSET (which must be aligned to 2MB as per
+	 * Documentation/arm64/booting.txt).
 	 */
-	limit = PHYS_OFFSET + PGDIR_SIZE;
+	if (IS_ENABLED(CONFIG_ARM64_64K_PAGES))
+		limit = PHYS_OFFSET + PMD_SIZE;
+	else
+		limit = PHYS_OFFSET + PUD_SIZE;
 	memblock_set_current_limit(limit);
 
 	/* map all the memory banks */

@@ -89,7 +89,8 @@ static int __init uefi_init(void)
 	 */
 	if (efi.systab->hdr.signature != EFI_SYSTEM_TABLE_SIGNATURE) {
 		pr_err("System table signature incorrect\n");
-		return -EINVAL;
+		retval = -EINVAL;
+		goto out;
 	}
 	if ((efi.systab->hdr.revision >> 16) < 2)
 		pr_warn("Warning: EFI system table version %d.%02d, expected 2.00 or greater\n",
@@ -103,6 +104,7 @@ static int __init uefi_init(void)
 		for (i = 0; i < (int) sizeof(vendor) - 1 && *c16; ++i)
 			vendor[i] = c16[i];
 		vendor[i] = '\0';
+		early_memunmap(c16, sizeof(vendor));
 	}
 
 	pr_info("EFI v%u.%.02u by %s\n",
@@ -113,28 +115,10 @@ static int __init uefi_init(void)
 	if (retval == 0)
 		set_bit(EFI_CONFIG_TABLES, &efi.flags);
 
-	early_memunmap(c16, sizeof(vendor));
+out:
 	early_memunmap(efi.systab,  sizeof(efi_system_table_t));
-
 	return retval;
 }
-
-static __initdata char memory_type_name[][32] = {
-	{"Reserved"},
-	{"Loader Code"},
-	{"Loader Data"},
-	{"Boot Code"},
-	{"Boot Data"},
-	{"Runtime Code"},
-	{"Runtime Data"},
-	{"Conventional Memory"},
-	{"Unusable Memory"},
-	{"ACPI Reclaim Memory"},
-	{"ACPI Memory NVS"},
-	{"Memory Mapped I/O"},
-	{"MMIO Port Space"},
-	{"PAL Code"},
-};
 
 /*
  * Return true for RAM regions we want to permanently reserve.
@@ -166,10 +150,13 @@ static __init void reserve_regions(void)
 		paddr = md->phys_addr;
 		npages = md->num_pages;
 
-		if (uefi_debug)
-			pr_info("  0x%012llx-0x%012llx [%s]",
+		if (uefi_debug) {
+			char buf[64];
+
+			pr_info("  0x%012llx-0x%012llx %s",
 				paddr, paddr + (npages << EFI_PAGE_SHIFT) - 1,
-				memory_type_name[md->type]);
+				efi_md_typeattr_format(buf, sizeof(buf), md));
+		}
 
 		memrange_efi_to_native(&paddr, &npages);
 		size = npages << PAGE_SHIFT;
@@ -188,6 +175,8 @@ static __init void reserve_regions(void)
 		if (uefi_debug)
 			pr_cont("\n");
 	}
+
+	set_bit(EFI_MEMMAP, &efi.flags);
 }
 
 
@@ -391,11 +380,16 @@ static int __init arm64_enter_virtual_mode(void)
 		return -1;
 	}
 
-	pr_info("Remapping and enabling EFI services.\n");
-
-	/* replace early memmap mapping with permanent mapping */
 	mapsize = memmap.map_end - memmap.map;
 	early_memunmap(memmap.map, mapsize);
+
+	if (efi_runtime_disabled()) {
+		pr_info("EFI runtime services will be disabled.\n");
+		return -1;
+	}
+
+	pr_info("Remapping and enabling EFI services.\n");
+	/* replace early memmap mapping with permanent mapping */
 	memmap.map = (__force void *)ioremap_cache((phys_addr_t)memmap.phys_map,
 						   mapsize);
 	memmap.map_end = memmap.map + mapsize;
@@ -414,13 +408,24 @@ static int __init arm64_enter_virtual_mode(void)
 	for_each_efi_memory_desc(&memmap, md) {
 		if (!(md->attribute & EFI_MEMORY_RUNTIME))
 			continue;
-		if (remap_region(md, &virt_md))
-			++count;
+		if (!remap_region(md, &virt_md))
+			goto err_unmap;
+		++count;
 	}
 
 	efi.systab = (__force void *)efi_lookup_mapped_addr(efi_system_table);
-	if (efi.systab)
-		set_bit(EFI_SYSTEM_TABLES, &efi.flags);
+	if (!efi.systab) {
+		/*
+		 * If we have no virtual mapping for the System Table at this
+		 * point, the memory map doesn't cover the physical offset where
+		 * it resides. This means the System Table will be inaccessible
+		 * to Runtime Services themselves once the virtual mapping is
+		 * installed.
+		 */
+		pr_err("Failed to remap EFI System Table -- buggy firmware?\n");
+		goto err_unmap;
+	}
+	set_bit(EFI_SYSTEM_TABLES, &efi.flags);
 
 	local_irq_save(flags);
 	cpu_switch_mm(idmap_pg_dir, &init_mm);
@@ -449,21 +454,20 @@ static int __init arm64_enter_virtual_mode(void)
 
 	/* Set up runtime services function pointers */
 	runtime = efi.systab->runtime;
-	efi.get_time = runtime->get_time;
-	efi.set_time = runtime->set_time;
-	efi.get_wakeup_time = runtime->get_wakeup_time;
-	efi.set_wakeup_time = runtime->set_wakeup_time;
-	efi.get_variable = runtime->get_variable;
-	efi.get_next_variable = runtime->get_next_variable;
-	efi.set_variable = runtime->set_variable;
-	efi.query_variable_info = runtime->query_variable_info;
-	efi.update_capsule = runtime->update_capsule;
-	efi.query_capsule_caps = runtime->query_capsule_caps;
-	efi.get_next_high_mono_count = runtime->get_next_high_mono_count;
-	efi.reset_system = runtime->reset_system;
-
+	efi_native_runtime_setup();
 	set_bit(EFI_RUNTIME_SERVICES, &efi.flags);
 
+	efi.runtime_version = efi.systab->hdr.revision;
+
 	return 0;
+
+err_unmap:
+	/* unmap all mappings that succeeded: there are 'count' of those */
+	for (virt_md = virtmap; count--; virt_md += memmap.desc_size) {
+		md = virt_md;
+		iounmap((__force void __iomem *)md->virt_addr);
+	}
+	kfree(virtmap);
+	return -1;
 }
 early_initcall(arm64_enter_virtual_mode);

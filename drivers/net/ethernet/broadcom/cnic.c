@@ -1,13 +1,15 @@
-/* cnic.c: Broadcom CNIC core network driver.
+/* cnic.c: QLogic CNIC core network driver.
  *
  * Copyright (c) 2006-2014 Broadcom Corporation
+ * Copyright (c) 2014 QLogic Corporation
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
  * the Free Software Foundation.
  *
  * Original skeleton written by: John(Zongxi) Chen (zongxi@broadcom.com)
- * Modified and maintained by: Michael Chan <mchan@broadcom.com>
+ * Previously modified and maintained by: Michael Chan <mchan@broadcom.com>
+ * Maintained By: Dept-HSGLinuxNICDev@qlogic.com
  */
 
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
@@ -29,7 +31,7 @@
 #include <linux/if_vlan.h>
 #include <linux/prefetch.h>
 #include <linux/random.h>
-#if defined(CONFIG_VLAN_8021Q) || defined(CONFIG_VLAN_8021Q_MODULE)
+#if IS_ENABLED(CONFIG_VLAN_8021Q)
 #define BCM_VLAN 1
 #endif
 #include <net/ip.h>
@@ -56,11 +58,11 @@
 #define CNIC_MODULE_NAME	"cnic"
 
 static char version[] =
-	"Broadcom NetXtreme II CNIC Driver " CNIC_MODULE_NAME " v" CNIC_MODULE_VERSION " (" CNIC_MODULE_RELDATE ")\n";
+	"QLogic NetXtreme II CNIC Driver " CNIC_MODULE_NAME " v" CNIC_MODULE_VERSION " (" CNIC_MODULE_RELDATE ")\n";
 
 MODULE_AUTHOR("Michael Chan <mchan@broadcom.com> and John(Zongxi) "
 	      "Chen (zongxi@broadcom.com");
-MODULE_DESCRIPTION("Broadcom NetXtreme II CNIC Driver");
+MODULE_DESCRIPTION("QLogic NetXtreme II CNIC Driver");
 MODULE_LICENSE("GPL");
 MODULE_VERSION(CNIC_MODULE_VERSION);
 
@@ -381,7 +383,7 @@ static int cnic_iscsi_nl_msg_recv(struct cnic_dev *dev, u32 msg_type,
 			break;
 
 		rcu_read_lock();
-		if (!rcu_dereference(cp->ulp_ops[CNIC_ULP_L4])) {
+		if (!rcu_access_pointer(cp->ulp_ops[CNIC_ULP_L4])) {
 			rc = -ENODEV;
 			rcu_read_unlock();
 			break;
@@ -525,7 +527,7 @@ int cnic_unregister_driver(int ulp_type)
 	list_for_each_entry(dev, &cnic_dev_list, list) {
 		struct cnic_local *cp = dev->cnic_priv;
 
-		if (rcu_dereference(cp->ulp_ops[ulp_type])) {
+		if (rcu_access_pointer(cp->ulp_ops[ulp_type])) {
 			pr_err("%s: Type %d still has devices registered\n",
 			       __func__, ulp_type);
 			read_unlock(&cnic_dev_lock);
@@ -573,7 +575,7 @@ static int cnic_register_device(struct cnic_dev *dev, int ulp_type,
 		mutex_unlock(&cnic_lock);
 		return -EAGAIN;
 	}
-	if (rcu_dereference(cp->ulp_ops[ulp_type])) {
+	if (rcu_access_pointer(cp->ulp_ops[ulp_type])) {
 		pr_err("%s: Type %d has already been registered to this device\n",
 		       __func__, ulp_type);
 		mutex_unlock(&cnic_lock);
@@ -3683,7 +3685,7 @@ static int cnic_get_v4_route(struct sockaddr_in *dst_addr,
 static int cnic_get_v6_route(struct sockaddr_in6 *dst_addr,
 			     struct dst_entry **dst)
 {
-#if defined(CONFIG_IPV6) || (defined(CONFIG_IPV6_MODULE) && defined(MODULE))
+#if IS_ENABLED(CONFIG_IPV6)
 	struct flowi6 fl6;
 
 	memset(&fl6, 0, sizeof(fl6));

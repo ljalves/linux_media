@@ -21,7 +21,7 @@
 
 #include "dvb_usb_common.h"
 
-int dvb_usbv2_disable_rc_polling;
+static int dvb_usbv2_disable_rc_polling;
 module_param_named(disable_rc_polling, dvb_usbv2_disable_rc_polling, int, 0644);
 MODULE_PARM_DESC(disable_rc_polling,
 		"disable remote control polling (default: 0)");
@@ -164,7 +164,7 @@ static int dvb_usbv2_remote_init(struct dvb_usb_device *d)
 	dev->driver_name = (char *) d->props->driver_name;
 	dev->map_name = d->rc.map_name;
 	dev->driver_type = d->rc.driver_type;
-	rc_set_allowed_protocols(dev, d->rc.allowed_protos);
+	dev->allowed_protocols = d->rc.allowed_protos;
 	dev->change_protocol = d->rc.change_protocol;
 	dev->priv = d;
 
@@ -253,13 +253,6 @@ static int dvb_usbv2_adapter_stream_exit(struct dvb_usb_adapter *adap)
 	return usb_urb_exitv2(&adap->stream);
 }
 
-static int wait_schedule(void *ptr)
-{
-	schedule();
-
-	return 0;
-}
-
 static int dvb_usb_start_feed(struct dvb_demux_feed *dvbdmxfeed)
 {
 	struct dvb_usb_adapter *adap = dvbdmxfeed->demux->priv;
@@ -273,8 +266,7 @@ static int dvb_usb_start_feed(struct dvb_demux_feed *dvbdmxfeed)
 			dvbdmxfeed->pid, dvbdmxfeed->index);
 
 	/* wait init is done */
-	wait_on_bit(&adap->state_bits, ADAP_INIT, wait_schedule,
-			TASK_UNINTERRUPTIBLE);
+	wait_on_bit(&adap->state_bits, ADAP_INIT, TASK_UNINTERRUPTIBLE);
 
 	if (adap->active_fe == -1)
 		return -EINVAL;
@@ -568,7 +560,7 @@ static int dvb_usb_fe_sleep(struct dvb_frontend *fe)
 
 	if (!adap->suspend_resume_active) {
 		set_bit(ADAP_SLEEP, &adap->state_bits);
-		wait_on_bit(&adap->state_bits, ADAP_STREAMING, wait_schedule,
+		wait_on_bit(&adap->state_bits, ADAP_STREAMING,
 				TASK_UNINTERRUPTIBLE);
 	}
 
@@ -672,14 +664,32 @@ err:
 
 static int dvb_usbv2_adapter_frontend_exit(struct dvb_usb_adapter *adap)
 {
-	int i;
-	dev_dbg(&adap_to_d(adap)->udev->dev, "%s: adap=%d\n", __func__,
-			adap->id);
+	int ret, i;
+	struct dvb_usb_device *d = adap_to_d(adap);
+
+	dev_dbg(&d->udev->dev, "%s: adap=%d\n", __func__, adap->id);
 
 	for (i = MAX_NO_OF_FE_PER_ADAP - 1; i >= 0; i--) {
 		if (adap->fe[i]) {
 			dvb_unregister_frontend(adap->fe[i]);
 			dvb_frontend_detach(adap->fe[i]);
+		}
+	}
+
+	if (d->props->tuner_detach) {
+		ret = d->props->tuner_detach(adap);
+		if (ret < 0) {
+			dev_dbg(&d->udev->dev, "%s: tuner_detach() failed=%d\n",
+					__func__, ret);
+		}
+	}
+
+	if (d->props->frontend_detach) {
+		ret = d->props->frontend_detach(adap);
+		if (ret < 0) {
+			dev_dbg(&d->udev->dev,
+					"%s: frontend_detach() failed=%d\n",
+					__func__, ret);
 		}
 	}
 
@@ -770,9 +780,9 @@ static int dvb_usbv2_adapter_exit(struct dvb_usb_device *d)
 
 	for (i = MAX_NO_OF_ADAPTER_PER_DEVICE - 1; i >= 0; i--) {
 		if (d->adapter[i].props) {
-			dvb_usbv2_adapter_frontend_exit(&d->adapter[i]);
 			dvb_usbv2_adapter_dvb_exit(&d->adapter[i]);
 			dvb_usbv2_adapter_stream_exit(&d->adapter[i]);
+			dvb_usbv2_adapter_frontend_exit(&d->adapter[i]);
 		}
 	}
 

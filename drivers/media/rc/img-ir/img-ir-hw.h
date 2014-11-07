@@ -162,10 +162,17 @@ struct img_ir_decoder {
 	struct img_ir_control		control;
 
 	/* scancode logic */
-	int (*scancode)(int len, u64 raw, int *scancode, u64 protocols);
+	int (*scancode)(int len, u64 raw, enum rc_type *protocol,
+			u32 *scancode, u64 enabled_protocols);
 	int (*filter)(const struct rc_scancode_filter *in,
 		      struct img_ir_filter *out, u64 protocols);
 };
+
+extern struct img_ir_decoder img_ir_nec;
+extern struct img_ir_decoder img_ir_jvc;
+extern struct img_ir_decoder img_ir_sony;
+extern struct img_ir_decoder img_ir_sharp;
+extern struct img_ir_decoder img_ir_sanyo;
 
 /**
  * struct img_ir_reg_timings - Reg values for decoder timings at clock rate.

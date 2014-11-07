@@ -7,13 +7,14 @@
 #include "util.h"
 #include "debug.h"
 #include "comm.h"
+#include "unwind.h"
 
 int thread__init_map_groups(struct thread *thread, struct machine *machine)
 {
 	struct thread *leader;
 	pid_t pid = thread->pid_;
 
-	if (pid == thread->tid) {
+	if (pid == thread->tid || pid == -1) {
 		thread->mg = map_groups__new();
 	} else {
 		leader = machine__findnew_thread(machine, pid, pid);
@@ -34,19 +35,24 @@ struct thread *thread__new(pid_t pid, pid_t tid)
 		thread->pid_ = pid;
 		thread->tid = tid;
 		thread->ppid = -1;
+		thread->cpu = -1;
 		INIT_LIST_HEAD(&thread->comm_list);
+
+		if (unwind__prepare_access(thread) < 0)
+			goto err_thread;
 
 		comm_str = malloc(32);
 		if (!comm_str)
 			goto err_thread;
 
 		snprintf(comm_str, 32, ":%d", tid);
-		comm = comm__new(comm_str, 0);
+		comm = comm__new(comm_str, 0, false);
 		free(comm_str);
 		if (!comm)
 			goto err_thread;
 
 		list_add(&comm->list, &thread->comm_list);
+
 	}
 
 	return thread;
@@ -60,12 +66,15 @@ void thread__delete(struct thread *thread)
 {
 	struct comm *comm, *tmp;
 
-	map_groups__put(thread->mg);
-	thread->mg = NULL;
+	if (thread->mg) {
+		map_groups__put(thread->mg);
+		thread->mg = NULL;
+	}
 	list_for_each_entry_safe(comm, tmp, &thread->comm_list, list) {
 		list_del(&comm->list);
 		comm__free(comm);
 	}
+	unwind__finish_access(thread);
 
 	free(thread);
 }
@@ -78,19 +87,33 @@ struct comm *thread__comm(const struct thread *thread)
 	return list_first_entry(&thread->comm_list, struct comm, list);
 }
 
+struct comm *thread__exec_comm(const struct thread *thread)
+{
+	struct comm *comm, *last = NULL;
+
+	list_for_each_entry(comm, &thread->comm_list, list) {
+		if (comm->exec)
+			return comm;
+		last = comm;
+	}
+
+	return last;
+}
+
 /* CHECKME: time should always be 0 if event aren't ordered */
-int thread__set_comm(struct thread *thread, const char *str, u64 timestamp)
+int __thread__set_comm(struct thread *thread, const char *str, u64 timestamp,
+		       bool exec)
 {
 	struct comm *new, *curr = thread__comm(thread);
 	int err;
 
 	/* Override latest entry if it had no specific time coverage */
-	if (!curr->start) {
-		err = comm__override(curr, str, timestamp);
+	if (!curr->start && !curr->exec) {
+		err = comm__override(curr, str, timestamp, exec);
 		if (err)
 			return err;
 	} else {
-		new = comm__new(str, timestamp);
+		new = comm__new(str, timestamp, exec);
 		if (!new)
 			return -ENOMEM;
 		list_add(&new->list, &thread->comm_list);
@@ -127,12 +150,12 @@ int thread__comm_len(struct thread *thread)
 size_t thread__fprintf(struct thread *thread, FILE *fp)
 {
 	return fprintf(fp, "Thread %d %s\n", thread->tid, thread__comm_str(thread)) +
-	       map_groups__fprintf(thread->mg, verbose, fp);
+	       map_groups__fprintf(thread->mg, fp);
 }
 
 void thread__insert_map(struct thread *thread, struct map *map)
 {
-	map_groups__fixup_overlappings(thread->mg, map, verbose, stderr);
+	map_groups__fixup_overlappings(thread->mg, map, stderr);
 	map_groups__insert(thread->mg, map);
 }
 

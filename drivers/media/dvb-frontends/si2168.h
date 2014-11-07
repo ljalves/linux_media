@@ -39,7 +39,7 @@ struct si2168_config {
 	u8 ts_mode;
 };
 
-#define SI2168_TSMODE_PARALLEL	0x06
-#define SI2168_TSMODE_SERIAL	0x03
+#define SI2168_TS_PARALLEL	0x06
+#define SI2168_TS_SERIAL	0x03
 
 #endif

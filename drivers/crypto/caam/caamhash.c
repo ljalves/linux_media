@@ -137,13 +137,20 @@ struct caam_hash_state {
 /* Common job descriptor seq in/out ptr routines */
 
 /* Map state->caam_ctx, and append seq_out_ptr command that points to it */
-static inline void map_seq_out_ptr_ctx(u32 *desc, struct device *jrdev,
-				       struct caam_hash_state *state,
-				       int ctx_len)
+static inline int map_seq_out_ptr_ctx(u32 *desc, struct device *jrdev,
+				      struct caam_hash_state *state,
+				      int ctx_len)
 {
 	state->ctx_dma = dma_map_single(jrdev, state->caam_ctx,
 					ctx_len, DMA_FROM_DEVICE);
+	if (dma_mapping_error(jrdev, state->ctx_dma)) {
+		dev_err(jrdev, "unable to map ctx\n");
+		return -ENOMEM;
+	}
+
 	append_seq_out_ptr(desc, state->ctx_dma, ctx_len, 0);
+
+	return 0;
 }
 
 /* Map req->result, and append seq_out_ptr command that points to it */
@@ -201,14 +208,19 @@ try_buf_map_to_sec4_sg(struct device *jrdev, struct sec4_sg_entry *sec4_sg,
 }
 
 /* Map state->caam_ctx, and add it to link table */
-static inline void ctx_map_to_sec4_sg(u32 *desc, struct device *jrdev,
-				      struct caam_hash_state *state,
-				      int ctx_len,
-				      struct sec4_sg_entry *sec4_sg,
-				      u32 flag)
+static inline int ctx_map_to_sec4_sg(u32 *desc, struct device *jrdev,
+				     struct caam_hash_state *state, int ctx_len,
+				     struct sec4_sg_entry *sec4_sg, u32 flag)
 {
 	state->ctx_dma = dma_map_single(jrdev, state->caam_ctx, ctx_len, flag);
+	if (dma_mapping_error(jrdev, state->ctx_dma)) {
+		dev_err(jrdev, "unable to map ctx\n");
+		return -ENOMEM;
+	}
+
 	dma_to_sec4_sg_one(sec4_sg, state->ctx_dma, ctx_len, 0);
+
+	return 0;
 }
 
 /* Common shared descriptor commands */
@@ -487,10 +499,10 @@ static int hash_digest_key(struct caam_hash_ctx *ctx, const u8 *key_in,
 			       digestsize, 1);
 #endif
 	}
-	*keylen = digestsize;
-
 	dma_unmap_single(jrdev, src_dma, *keylen, DMA_TO_DEVICE);
 	dma_unmap_single(jrdev, dst_dma, digestsize, DMA_FROM_DEVICE);
+
+	*keylen = digestsize;
 
 	kfree(desc);
 
@@ -706,7 +718,7 @@ static void ahash_done_ctx_src(struct device *jrdev, u32 *desc, u32 err,
 	if (err)
 		caam_jr_strstatus(jrdev, err);
 
-	ahash_unmap_ctx(jrdev, edesc, req, digestsize, DMA_FROM_DEVICE);
+	ahash_unmap_ctx(jrdev, edesc, req, digestsize, DMA_TO_DEVICE);
 	kfree(edesc);
 
 #ifdef DEBUG
@@ -741,7 +753,7 @@ static void ahash_done_ctx_dst(struct device *jrdev, u32 *desc, u32 err,
 	if (err)
 		caam_jr_strstatus(jrdev, err);
 
-	ahash_unmap_ctx(jrdev, edesc, req, ctx->ctx_len, DMA_TO_DEVICE);
+	ahash_unmap_ctx(jrdev, edesc, req, ctx->ctx_len, DMA_FROM_DEVICE);
 	kfree(edesc);
 
 #ifdef DEBUG
@@ -808,12 +820,11 @@ static int ahash_update_ctx(struct ahash_request *req)
 		edesc->sec4_sg_bytes = sec4_sg_bytes;
 		edesc->sec4_sg = (void *)edesc + sizeof(struct ahash_edesc) +
 				 DESC_JOB_IO_LEN;
-		edesc->sec4_sg_dma = dma_map_single(jrdev, edesc->sec4_sg,
-						     sec4_sg_bytes,
-						     DMA_TO_DEVICE);
 
-		ctx_map_to_sec4_sg(desc, jrdev, state, ctx->ctx_len,
-				   edesc->sec4_sg, DMA_BIDIRECTIONAL);
+		ret = ctx_map_to_sec4_sg(desc, jrdev, state, ctx->ctx_len,
+					 edesc->sec4_sg, DMA_BIDIRECTIONAL);
+		if (ret)
+			return ret;
 
 		state->buf_dma = try_buf_map_to_sec4_sg(jrdev,
 							edesc->sec4_sg + 1,
@@ -825,8 +836,9 @@ static int ahash_update_ctx(struct ahash_request *req)
 					   edesc->sec4_sg + sec4_sg_src_index,
 					   chained);
 			if (*next_buflen) {
-				sg_copy_part(next_buf, req->src, to_hash -
-					     *buflen, req->nbytes);
+				scatterwalk_map_and_copy(next_buf, req->src,
+							 to_hash - *buflen,
+							 *next_buflen, 0);
 				state->current_buf = !state->current_buf;
 			}
 		} else {
@@ -838,6 +850,14 @@ static int ahash_update_ctx(struct ahash_request *req)
 		desc = edesc->hw_desc;
 		init_job_desc_shared(desc, ptr, sh_len, HDR_SHARE_DEFER |
 				     HDR_REVERSE);
+
+		edesc->sec4_sg_dma = dma_map_single(jrdev, edesc->sec4_sg,
+						     sec4_sg_bytes,
+						     DMA_TO_DEVICE);
+		if (dma_mapping_error(jrdev, edesc->sec4_sg_dma)) {
+			dev_err(jrdev, "unable to map S/G table\n");
+			return -ENOMEM;
+		}
 
 		append_seq_in_ptr(desc, edesc->sec4_sg_dma, ctx->ctx_len +
 				       to_hash, LDST_SGF);
@@ -859,7 +879,8 @@ static int ahash_update_ctx(struct ahash_request *req)
 			kfree(edesc);
 		}
 	} else if (*next_buflen) {
-		sg_copy(buf + *buflen, req->src, req->nbytes);
+		scatterwalk_map_and_copy(buf + *buflen, req->src, 0,
+					 req->nbytes, 0);
 		*buflen = *next_buflen;
 		*next_buflen = last_buflen;
 	}
@@ -911,23 +932,34 @@ static int ahash_final_ctx(struct ahash_request *req)
 	edesc->sec4_sg_bytes = sec4_sg_bytes;
 	edesc->sec4_sg = (void *)edesc + sizeof(struct ahash_edesc) +
 			 DESC_JOB_IO_LEN;
-	edesc->sec4_sg_dma = dma_map_single(jrdev, edesc->sec4_sg,
-					    sec4_sg_bytes, DMA_TO_DEVICE);
 	edesc->src_nents = 0;
 
-	ctx_map_to_sec4_sg(desc, jrdev, state, ctx->ctx_len, edesc->sec4_sg,
-			   DMA_TO_DEVICE);
+	ret = ctx_map_to_sec4_sg(desc, jrdev, state, ctx->ctx_len,
+				 edesc->sec4_sg, DMA_TO_DEVICE);
+	if (ret)
+		return ret;
 
 	state->buf_dma = try_buf_map_to_sec4_sg(jrdev, edesc->sec4_sg + 1,
 						buf, state->buf_dma, buflen,
 						last_buflen);
 	(edesc->sec4_sg + sec4_sg_bytes - 1)->len |= SEC4_SG_LEN_FIN;
 
+	edesc->sec4_sg_dma = dma_map_single(jrdev, edesc->sec4_sg,
+					    sec4_sg_bytes, DMA_TO_DEVICE);
+	if (dma_mapping_error(jrdev, edesc->sec4_sg_dma)) {
+		dev_err(jrdev, "unable to map S/G table\n");
+		return -ENOMEM;
+	}
+
 	append_seq_in_ptr(desc, edesc->sec4_sg_dma, ctx->ctx_len + buflen,
 			  LDST_SGF);
 
 	edesc->dst_dma = map_seq_out_ptr_result(desc, jrdev, req->result,
 						digestsize);
+	if (dma_mapping_error(jrdev, edesc->dst_dma)) {
+		dev_err(jrdev, "unable to map dst\n");
+		return -ENOMEM;
+	}
 
 #ifdef DEBUG
 	print_hex_dump(KERN_ERR, "jobdesc@"__stringify(__LINE__)": ",
@@ -989,11 +1021,11 @@ static int ahash_finup_ctx(struct ahash_request *req)
 	edesc->sec4_sg_bytes = sec4_sg_bytes;
 	edesc->sec4_sg = (void *)edesc + sizeof(struct ahash_edesc) +
 			 DESC_JOB_IO_LEN;
-	edesc->sec4_sg_dma = dma_map_single(jrdev, edesc->sec4_sg,
-					    sec4_sg_bytes, DMA_TO_DEVICE);
 
-	ctx_map_to_sec4_sg(desc, jrdev, state, ctx->ctx_len, edesc->sec4_sg,
-			   DMA_TO_DEVICE);
+	ret = ctx_map_to_sec4_sg(desc, jrdev, state, ctx->ctx_len,
+				 edesc->sec4_sg, DMA_TO_DEVICE);
+	if (ret)
+		return ret;
 
 	state->buf_dma = try_buf_map_to_sec4_sg(jrdev, edesc->sec4_sg + 1,
 						buf, state->buf_dma, buflen,
@@ -1002,11 +1034,22 @@ static int ahash_finup_ctx(struct ahash_request *req)
 	src_map_to_sec4_sg(jrdev, req->src, src_nents, edesc->sec4_sg +
 			   sec4_sg_src_index, chained);
 
+	edesc->sec4_sg_dma = dma_map_single(jrdev, edesc->sec4_sg,
+					    sec4_sg_bytes, DMA_TO_DEVICE);
+	if (dma_mapping_error(jrdev, edesc->sec4_sg_dma)) {
+		dev_err(jrdev, "unable to map S/G table\n");
+		return -ENOMEM;
+	}
+
 	append_seq_in_ptr(desc, edesc->sec4_sg_dma, ctx->ctx_len +
 			       buflen + req->nbytes, LDST_SGF);
 
 	edesc->dst_dma = map_seq_out_ptr_result(desc, jrdev, req->result,
 						digestsize);
+	if (dma_mapping_error(jrdev, edesc->dst_dma)) {
+		dev_err(jrdev, "unable to map dst\n");
+		return -ENOMEM;
+	}
 
 #ifdef DEBUG
 	print_hex_dump(KERN_ERR, "jobdesc@"__stringify(__LINE__)": ",
@@ -1056,8 +1099,7 @@ static int ahash_digest(struct ahash_request *req)
 	}
 	edesc->sec4_sg = (void *)edesc + sizeof(struct ahash_edesc) +
 			  DESC_JOB_IO_LEN;
-	edesc->sec4_sg_dma = dma_map_single(jrdev, edesc->sec4_sg,
-					    sec4_sg_bytes, DMA_TO_DEVICE);
+	edesc->sec4_sg_bytes = sec4_sg_bytes;
 	edesc->src_nents = src_nents;
 	edesc->chained = chained;
 
@@ -1067,6 +1109,12 @@ static int ahash_digest(struct ahash_request *req)
 
 	if (src_nents) {
 		sg_to_sec4_sg_last(req->src, src_nents, edesc->sec4_sg, 0);
+		edesc->sec4_sg_dma = dma_map_single(jrdev, edesc->sec4_sg,
+					    sec4_sg_bytes, DMA_TO_DEVICE);
+		if (dma_mapping_error(jrdev, edesc->sec4_sg_dma)) {
+			dev_err(jrdev, "unable to map S/G table\n");
+			return -ENOMEM;
+		}
 		src_dma = edesc->sec4_sg_dma;
 		options = LDST_SGF;
 	} else {
@@ -1077,6 +1125,10 @@ static int ahash_digest(struct ahash_request *req)
 
 	edesc->dst_dma = map_seq_out_ptr_result(desc, jrdev, req->result,
 						digestsize);
+	if (dma_mapping_error(jrdev, edesc->dst_dma)) {
+		dev_err(jrdev, "unable to map dst\n");
+		return -ENOMEM;
+	}
 
 #ifdef DEBUG
 	print_hex_dump(KERN_ERR, "jobdesc@"__stringify(__LINE__)": ",
@@ -1125,11 +1177,19 @@ static int ahash_final_no_ctx(struct ahash_request *req)
 	init_job_desc_shared(desc, ptr, sh_len, HDR_SHARE_DEFER | HDR_REVERSE);
 
 	state->buf_dma = dma_map_single(jrdev, buf, buflen, DMA_TO_DEVICE);
+	if (dma_mapping_error(jrdev, state->buf_dma)) {
+		dev_err(jrdev, "unable to map src\n");
+		return -ENOMEM;
+	}
 
 	append_seq_in_ptr(desc, state->buf_dma, buflen, 0);
 
 	edesc->dst_dma = map_seq_out_ptr_result(desc, jrdev, req->result,
 						digestsize);
+	if (dma_mapping_error(jrdev, edesc->dst_dma)) {
+		dev_err(jrdev, "unable to map dst\n");
+		return -ENOMEM;
+	}
 	edesc->src_nents = 0;
 
 #ifdef DEBUG
@@ -1197,17 +1257,16 @@ static int ahash_update_no_ctx(struct ahash_request *req)
 		edesc->sec4_sg_bytes = sec4_sg_bytes;
 		edesc->sec4_sg = (void *)edesc + sizeof(struct ahash_edesc) +
 				 DESC_JOB_IO_LEN;
-		edesc->sec4_sg_dma = dma_map_single(jrdev, edesc->sec4_sg,
-						    sec4_sg_bytes,
-						    DMA_TO_DEVICE);
+		edesc->dst_dma = 0;
 
 		state->buf_dma = buf_map_to_sec4_sg(jrdev, edesc->sec4_sg,
 						    buf, *buflen);
 		src_map_to_sec4_sg(jrdev, req->src, src_nents,
 				   edesc->sec4_sg + 1, chained);
 		if (*next_buflen) {
-			sg_copy_part(next_buf, req->src, to_hash - *buflen,
-				    req->nbytes);
+			scatterwalk_map_and_copy(next_buf, req->src,
+						 to_hash - *buflen,
+						 *next_buflen, 0);
 			state->current_buf = !state->current_buf;
 		}
 
@@ -1216,9 +1275,19 @@ static int ahash_update_no_ctx(struct ahash_request *req)
 		init_job_desc_shared(desc, ptr, sh_len, HDR_SHARE_DEFER |
 				     HDR_REVERSE);
 
+		edesc->sec4_sg_dma = dma_map_single(jrdev, edesc->sec4_sg,
+						    sec4_sg_bytes,
+						    DMA_TO_DEVICE);
+		if (dma_mapping_error(jrdev, edesc->sec4_sg_dma)) {
+			dev_err(jrdev, "unable to map S/G table\n");
+			return -ENOMEM;
+		}
+
 		append_seq_in_ptr(desc, edesc->sec4_sg_dma, to_hash, LDST_SGF);
 
-		map_seq_out_ptr_ctx(desc, jrdev, state, ctx->ctx_len);
+		ret = map_seq_out_ptr_ctx(desc, jrdev, state, ctx->ctx_len);
+		if (ret)
+			return ret;
 
 #ifdef DEBUG
 		print_hex_dump(KERN_ERR, "jobdesc@"__stringify(__LINE__)": ",
@@ -1238,7 +1307,8 @@ static int ahash_update_no_ctx(struct ahash_request *req)
 			kfree(edesc);
 		}
 	} else if (*next_buflen) {
-		sg_copy(buf + *buflen, req->src, req->nbytes);
+		scatterwalk_map_and_copy(buf + *buflen, req->src, 0,
+					 req->nbytes, 0);
 		*buflen = *next_buflen;
 		*next_buflen = 0;
 	}
@@ -1297,8 +1367,6 @@ static int ahash_finup_no_ctx(struct ahash_request *req)
 	edesc->sec4_sg_bytes = sec4_sg_bytes;
 	edesc->sec4_sg = (void *)edesc + sizeof(struct ahash_edesc) +
 			 DESC_JOB_IO_LEN;
-	edesc->sec4_sg_dma = dma_map_single(jrdev, edesc->sec4_sg,
-					    sec4_sg_bytes, DMA_TO_DEVICE);
 
 	state->buf_dma = try_buf_map_to_sec4_sg(jrdev, edesc->sec4_sg, buf,
 						state->buf_dma, buflen,
@@ -1307,11 +1375,22 @@ static int ahash_finup_no_ctx(struct ahash_request *req)
 	src_map_to_sec4_sg(jrdev, req->src, src_nents, edesc->sec4_sg + 1,
 			   chained);
 
+	edesc->sec4_sg_dma = dma_map_single(jrdev, edesc->sec4_sg,
+					    sec4_sg_bytes, DMA_TO_DEVICE);
+	if (dma_mapping_error(jrdev, edesc->sec4_sg_dma)) {
+		dev_err(jrdev, "unable to map S/G table\n");
+		return -ENOMEM;
+	}
+
 	append_seq_in_ptr(desc, edesc->sec4_sg_dma, buflen +
 			       req->nbytes, LDST_SGF);
 
 	edesc->dst_dma = map_seq_out_ptr_result(desc, jrdev, req->result,
 						digestsize);
+	if (dma_mapping_error(jrdev, edesc->dst_dma)) {
+		dev_err(jrdev, "unable to map dst\n");
+		return -ENOMEM;
+	}
 
 #ifdef DEBUG
 	print_hex_dump(KERN_ERR, "jobdesc@"__stringify(__LINE__)": ",
@@ -1338,9 +1417,9 @@ static int ahash_update_first(struct ahash_request *req)
 	struct device *jrdev = ctx->jrdev;
 	gfp_t flags = (req->base.flags & (CRYPTO_TFM_REQ_MAY_BACKLOG |
 		       CRYPTO_TFM_REQ_MAY_SLEEP)) ? GFP_KERNEL : GFP_ATOMIC;
-	u8 *next_buf = state->buf_0 + state->current_buf *
-		       CAAM_MAX_HASH_BLOCK_SIZE;
-	int *next_buflen = &state->buflen_0 + state->current_buf;
+	u8 *next_buf = state->current_buf ? state->buf_1 : state->buf_0;
+	int *next_buflen = state->current_buf ?
+		&state->buflen_1 : &state->buflen_0;
 	int to_hash;
 	u32 *sh_desc = ctx->sh_desc_update_first, *desc;
 	dma_addr_t ptr = ctx->sh_desc_update_first_dma;
@@ -1380,13 +1459,19 @@ static int ahash_update_first(struct ahash_request *req)
 		edesc->sec4_sg_bytes = sec4_sg_bytes;
 		edesc->sec4_sg = (void *)edesc + sizeof(struct ahash_edesc) +
 				 DESC_JOB_IO_LEN;
-		edesc->sec4_sg_dma = dma_map_single(jrdev, edesc->sec4_sg,
-						    sec4_sg_bytes,
-						    DMA_TO_DEVICE);
+		edesc->dst_dma = 0;
 
 		if (src_nents) {
 			sg_to_sec4_sg_last(req->src, src_nents,
 					   edesc->sec4_sg, 0);
+			edesc->sec4_sg_dma = dma_map_single(jrdev,
+							    edesc->sec4_sg,
+							    sec4_sg_bytes,
+							    DMA_TO_DEVICE);
+			if (dma_mapping_error(jrdev, edesc->sec4_sg_dma)) {
+				dev_err(jrdev, "unable to map S/G table\n");
+				return -ENOMEM;
+			}
 			src_dma = edesc->sec4_sg_dma;
 			options = LDST_SGF;
 		} else {
@@ -1395,7 +1480,8 @@ static int ahash_update_first(struct ahash_request *req)
 		}
 
 		if (*next_buflen)
-			sg_copy_part(next_buf, req->src, to_hash, req->nbytes);
+			scatterwalk_map_and_copy(next_buf, req->src, to_hash,
+						 *next_buflen, 0);
 
 		sh_len = desc_len(sh_desc);
 		desc = edesc->hw_desc;
@@ -1404,7 +1490,9 @@ static int ahash_update_first(struct ahash_request *req)
 
 		append_seq_in_ptr(desc, src_dma, to_hash, options);
 
-		map_seq_out_ptr_ctx(desc, jrdev, state, ctx->ctx_len);
+		ret = map_seq_out_ptr_ctx(desc, jrdev, state, ctx->ctx_len);
+		if (ret)
+			return ret;
 
 #ifdef DEBUG
 		print_hex_dump(KERN_ERR, "jobdesc@"__stringify(__LINE__)": ",
@@ -1428,7 +1516,8 @@ static int ahash_update_first(struct ahash_request *req)
 		state->update = ahash_update_no_ctx;
 		state->finup = ahash_finup_no_ctx;
 		state->final = ahash_final_no_ctx;
-		sg_copy(next_buf, req->src, req->nbytes);
+		scatterwalk_map_and_copy(next_buf, req->src, 0,
+					 req->nbytes, 0);
 	}
 #ifdef DEBUG
 	print_hex_dump(KERN_ERR, "next buf@"__stringify(__LINE__)": ",
@@ -1453,6 +1542,7 @@ static int ahash_init(struct ahash_request *req)
 	state->final = ahash_final_no_ctx;
 
 	state->current_buf = 0;
+	state->buf_dma = 0;
 
 	return 0;
 }
@@ -1787,7 +1877,35 @@ caam_hash_alloc(struct caam_hash_template *template,
 
 static int __init caam_algapi_hash_init(void)
 {
+	struct device_node *dev_node;
+	struct platform_device *pdev;
+	struct device *ctrldev;
+	void *priv;
 	int i = 0, err = 0;
+
+	dev_node = of_find_compatible_node(NULL, NULL, "fsl,sec-v4.0");
+	if (!dev_node) {
+		dev_node = of_find_compatible_node(NULL, NULL, "fsl,sec4.0");
+		if (!dev_node)
+			return -ENODEV;
+	}
+
+	pdev = of_find_device_by_node(dev_node);
+	if (!pdev) {
+		of_node_put(dev_node);
+		return -ENODEV;
+	}
+
+	ctrldev = &pdev->dev;
+	priv = dev_get_drvdata(ctrldev);
+	of_node_put(dev_node);
+
+	/*
+	 * If priv is NULL, it's probably because the caam driver wasn't
+	 * properly initialized (e.g. RNG4 init failed). Thus, bail out here.
+	 */
+	if (!priv)
+		return -ENODEV;
 
 	INIT_LIST_HEAD(&hash_list);
 

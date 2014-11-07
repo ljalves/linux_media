@@ -123,21 +123,12 @@ resource_size_t pcibios_window_alignment(struct pci_bus *bus,
 
 void pcibios_reset_secondary_bus(struct pci_dev *dev)
 {
-	u16 ctrl;
-
 	if (ppc_md.pcibios_reset_secondary_bus) {
 		ppc_md.pcibios_reset_secondary_bus(dev);
 		return;
 	}
 
-	pci_read_config_word(dev, PCI_BRIDGE_CONTROL, &ctrl);
-	ctrl |= PCI_BRIDGE_CTL_BUS_RESET;
-	pci_write_config_word(dev, PCI_BRIDGE_CONTROL, ctrl);
-	msleep(2);
-
-	ctrl &= ~PCI_BRIDGE_CTL_BUS_RESET;
-	pci_write_config_word(dev, PCI_BRIDGE_CONTROL, ctrl);
-	ssleep(1);
+	pci_reset_secondary_bus(dev);
 }
 
 static resource_size_t pcibios_io_size(const struct pci_controller *hose)
@@ -756,7 +747,11 @@ void pci_process_bridge_OF_ranges(struct pci_controller *hose,
 			break;
 		}
 		if (res != NULL) {
-			of_pci_range_to_resource(&range, dev, res);
+			res->name = dev->full_name;
+			res->flags = range.flags;
+			res->start = range.cpu_addr;
+			res->end = range.cpu_addr + range.size - 1;
+			res->parent = res->child = res->sibling = NULL;
 		}
 	}
 }
@@ -1149,7 +1144,7 @@ static int reparent_resources(struct resource *parent,
  *	    as well.
  */
 
-void pcibios_allocate_bus_resources(struct pci_bus *bus)
+static void pcibios_allocate_bus_resources(struct pci_bus *bus)
 {
 	struct pci_bus *b;
 	int i;
@@ -1570,7 +1565,6 @@ EARLY_PCI_OP(write, byte, u8)
 EARLY_PCI_OP(write, word, u16)
 EARLY_PCI_OP(write, dword, u32)
 
-extern int pci_bus_find_capability (struct pci_bus *bus, unsigned int devfn, int cap);
 int early_find_capability(struct pci_controller *hose, int bus, int devfn,
 			  int cap)
 {

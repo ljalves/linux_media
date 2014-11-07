@@ -206,6 +206,8 @@ void __init exynos5260_cmu_register_one(struct device_node *np,
 	if (cmu->clk_regs)
 		exynos5260_clk_sleep_init(reg_base, cmu->clk_regs,
 			cmu->nr_clk_regs);
+
+	samsung_clk_of_add_provider(np, ctx);
 }
 
 
@@ -1579,7 +1581,7 @@ struct samsung_fixed_rate_clock fixed_rate_clks[] __initdata = {
 	FRATE(PHYCLK_HDMI_LINK_O_TMDS_CLKHI, "phyclk_hdmi_link_o_tmds_clkhi",
 			NULL, CLK_IS_ROOT, 125000000),
 	FRATE(PHYCLK_MIPI_DPHY_4L_M_TXBYTECLKHS,
-			"phyclk_mipi_dphy_4l_m_txbyteclkhs" , NULL,
+			"phyclk_mipi_dphy_4l_m_txbyte_clkhs" , NULL,
 			CLK_IS_ROOT, 187500000),
 	FRATE(PHYCLK_DPTX_PHY_O_REF_CLK_24M, "phyclk_dptx_phy_o_ref_clk_24m",
 			NULL, CLK_IS_ROOT, 24000000),

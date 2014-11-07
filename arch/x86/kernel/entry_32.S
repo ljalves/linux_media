@@ -425,8 +425,8 @@ sysenter_do_call:
 	cmpl $(NR_syscalls), %eax
 	jae sysenter_badsys
 	call *sys_call_table(,%eax,4)
-	movl %eax,PT_EAX(%esp)
 sysenter_after_call:
+	movl %eax,PT_EAX(%esp)
 	LOCKDEP_SYS_EXIT
 	DISABLE_INTERRUPTS(CLBR_ANY)
 	TRACE_IRQS_OFF
@@ -449,12 +449,11 @@ sysenter_audit:
 	jnz syscall_trace_entry
 	addl $4,%esp
 	CFI_ADJUST_CFA_OFFSET -4
-	/* %esi already in 8(%esp)	   6th arg: 4th syscall arg */
-	/* %edx already in 4(%esp)	   5th arg: 3rd syscall arg */
-	/* %ecx already in 0(%esp)	   4th arg: 2nd syscall arg */
-	movl %ebx,%ecx			/* 3rd arg: 1st syscall arg */
-	movl %eax,%edx			/* 2nd arg: syscall number */
-	movl $AUDIT_ARCH_I386,%eax	/* 1st arg: audit arch */
+	movl %esi,4(%esp)		/* 5th arg: 4th syscall arg */
+	movl %edx,(%esp)		/* 4th arg: 3rd syscall arg */
+	/* %ecx already in %ecx		   3rd arg: 2nd syscall arg */
+	movl %ebx,%edx			/* 2nd arg: 1st syscall arg */
+	/* %eax already in %eax		   1st arg: syscall number */
 	call __audit_syscall_entry
 	pushl_cfi %ebx
 	movl PT_EAX(%esp),%eax		/* reload syscall number */
@@ -502,6 +501,7 @@ ENTRY(system_call)
 	jae syscall_badsys
 syscall_call:
 	call *sys_call_table(,%eax,4)
+syscall_after_call:
 	movl %eax,PT_EAX(%esp)		# store the return value
 syscall_exit:
 	LOCKDEP_SYS_EXIT
@@ -675,14 +675,14 @@ syscall_fault:
 END(syscall_fault)
 
 syscall_badsys:
-	movl $-ENOSYS,PT_EAX(%esp)
-	jmp syscall_exit
+	movl $-ENOSYS,%eax
+	jmp syscall_after_call
 END(syscall_badsys)
 
 sysenter_badsys:
-	movl $-ENOSYS,PT_EAX(%esp)
+	movl $-ENOSYS,%eax
 	jmp sysenter_after_call
-END(syscall_badsys)
+END(sysenter_badsys)
 	CFI_ENDPROC
 
 .macro FIXUP_ESPFIX_STACK
@@ -1058,9 +1058,6 @@ ENTRY(mcount)
 END(mcount)
 
 ENTRY(ftrace_caller)
-	cmpl $0, function_trace_stop
-	jne  ftrace_stub
-
 	pushl %eax
 	pushl %ecx
 	pushl %edx
@@ -1092,8 +1089,6 @@ END(ftrace_caller)
 
 ENTRY(ftrace_regs_caller)
 	pushf	/* push flags before compare (in cs location) */
-	cmpl $0, function_trace_stop
-	jne ftrace_restore_flags
 
 	/*
 	 * i386 does not save SS and ESP when coming from kernel.
@@ -1152,7 +1147,6 @@ GLOBAL(ftrace_regs_call)
 	popf			/* Pop flags at end (no addl to corrupt flags) */
 	jmp ftrace_ret
 
-ftrace_restore_flags:
 	popf
 	jmp  ftrace_stub
 #else /* ! CONFIG_DYNAMIC_FTRACE */
@@ -1160,9 +1154,6 @@ ftrace_restore_flags:
 ENTRY(mcount)
 	cmpl $__PAGE_OFFSET, %esp
 	jb ftrace_stub		/* Paging not enabled yet? */
-
-	cmpl $0, function_trace_stop
-	jne  ftrace_stub
 
 	cmpl $ftrace_stub, ftrace_trace_function
 	jnz trace

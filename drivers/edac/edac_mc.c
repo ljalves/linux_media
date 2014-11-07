@@ -33,9 +33,6 @@
 #include <asm/edac.h>
 #include "edac_core.h"
 #include "edac_module.h"
-
-#define CREATE_TRACE_POINTS
-#define TRACE_INCLUDE_PATH ../../include/ras
 #include <ras/ras_event.h>
 
 /* lock to memory controller's control array */
@@ -131,7 +128,7 @@ static void edac_mc_dump_mci(struct mem_ctl_info *mci)
 /*
  * keep those in sync with the enum mem_type
  */
-const char *edac_mem_types[] = {
+const char * const edac_mem_types[] = {
 	"Empty csrow",
 	"Reserved csrow type",
 	"Unknown csrow type",

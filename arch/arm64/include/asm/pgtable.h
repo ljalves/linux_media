@@ -33,9 +33,16 @@
 
 /*
  * VMALLOC and SPARSEMEM_VMEMMAP ranges.
+ *
+ * VMEMAP_SIZE: allows the whole VA space to be covered by a struct page array
+ *	(rounded up to PUD_SIZE).
+ * VMALLOC_START: beginning of the kernel VA space
+ * VMALLOC_END: extends to the available space below vmmemmap, PCI I/O space,
+ *	fixed mappings and modules
  */
+#define VMEMMAP_SIZE		ALIGN((1UL << (VA_BITS - PAGE_SHIFT)) * sizeof(struct page), PUD_SIZE)
 #define VMALLOC_START		(UL(0xffffffffffffffff) << VA_BITS)
-#define VMALLOC_END		(PAGE_OFFSET - UL(0x400000000) - SZ_64K)
+#define VMALLOC_END		(PAGE_OFFSET - PUD_SIZE - VMEMMAP_SIZE - SZ_64K)
 
 #define vmemmap			((struct page *)(VMALLOC_END + SZ_64K))
 
@@ -44,13 +51,8 @@
 #ifndef __ASSEMBLY__
 extern void __pte_error(const char *file, int line, unsigned long val);
 extern void __pmd_error(const char *file, int line, unsigned long val);
+extern void __pud_error(const char *file, int line, unsigned long val);
 extern void __pgd_error(const char *file, int line, unsigned long val);
-
-#define pte_ERROR(pte)		__pte_error(__FILE__, __LINE__, pte_val(pte))
-#ifndef CONFIG_ARM64_64K_PAGES
-#define pmd_ERROR(pmd)		__pmd_error(__FILE__, __LINE__, pmd_val(pmd))
-#endif
-#define pgd_ERROR(pgd)		__pgd_error(__FILE__, __LINE__, pgd_val(pgd))
 
 #ifdef CONFIG_SMP
 #define PROT_DEFAULT		(PTE_TYPE_PAGE | PTE_AF | PTE_SHARED)
@@ -77,7 +79,7 @@ extern void __pgd_error(const char *file, int line, unsigned long val);
 #define PAGE_HYP_DEVICE		__pgprot(PROT_DEVICE_nGnRE | PTE_HYP)
 
 #define PAGE_S2			__pgprot(PROT_DEFAULT | PTE_S2_MEMATTR(MT_S2_NORMAL) | PTE_S2_RDONLY)
-#define PAGE_S2_DEVICE		__pgprot(PROT_DEFAULT | PTE_S2_MEMATTR(MT_S2_DEVICE_nGnRE) | PTE_S2_RDWR | PTE_UXN)
+#define PAGE_S2_DEVICE		__pgprot(PROT_DEFAULT | PTE_S2_MEMATTR(MT_S2_DEVICE_nGnRE) | PTE_S2_RDONLY | PTE_UXN)
 
 #define PAGE_NONE		__pgprot(((_PAGE_DEFAULT) & ~PTE_TYPE_MASK) | PTE_PROT_NONE | PTE_PXN | PTE_UXN)
 #define PAGE_SHARED		__pgprot(_PAGE_DEFAULT | PTE_USER | PTE_NG | PTE_PXN | PTE_UXN | PTE_WRITE)
@@ -112,6 +114,8 @@ extern void __pgd_error(const char *file, int line, unsigned long val);
 extern struct page *empty_zero_page;
 #define ZERO_PAGE(vaddr)	(empty_zero_page)
 
+#define pte_ERROR(pte)		__pte_error(__FILE__, __LINE__, pte_val(pte))
+
 #define pte_pfn(pte)		((pte_val(pte) & PHYS_MASK) >> PAGE_SHIFT)
 
 #define pfn_pte(pfn,prot)	(__pte(((phys_addr_t)(pfn) << PAGE_SHIFT) | pgprot_val(prot)))
@@ -119,6 +123,10 @@ extern struct page *empty_zero_page;
 #define pte_none(pte)		(!pte_val(pte))
 #define pte_clear(mm,addr,ptep)	set_pte(ptep, __pte(0))
 #define pte_page(pte)		(pfn_to_page(pte_pfn(pte)))
+
+/* Find an entry in the third-level page table. */
+#define pte_index(addr)		(((addr) >> PAGE_SHIFT) & (PTRS_PER_PTE - 1))
+
 #define pte_offset_kernel(dir,addr)	(pmd_page_vaddr(*(dir)) + pte_index(addr))
 
 #define pte_offset_map(dir,addr)	pte_offset_kernel((dir), (addr))
@@ -138,52 +146,68 @@ extern struct page *empty_zero_page;
 
 #define pte_valid_user(pte) \
 	((pte_val(pte) & (PTE_VALID | PTE_USER)) == (PTE_VALID | PTE_USER))
+#define pte_valid_not_user(pte) \
+	((pte_val(pte) & (PTE_VALID | PTE_USER)) == PTE_VALID)
+
+static inline pte_t clear_pte_bit(pte_t pte, pgprot_t prot)
+{
+	pte_val(pte) &= ~pgprot_val(prot);
+	return pte;
+}
+
+static inline pte_t set_pte_bit(pte_t pte, pgprot_t prot)
+{
+	pte_val(pte) |= pgprot_val(prot);
+	return pte;
+}
 
 static inline pte_t pte_wrprotect(pte_t pte)
 {
-	pte_val(pte) &= ~PTE_WRITE;
-	return pte;
+	return clear_pte_bit(pte, __pgprot(PTE_WRITE));
 }
 
 static inline pte_t pte_mkwrite(pte_t pte)
 {
-	pte_val(pte) |= PTE_WRITE;
-	return pte;
+	return set_pte_bit(pte, __pgprot(PTE_WRITE));
 }
 
 static inline pte_t pte_mkclean(pte_t pte)
 {
-	pte_val(pte) &= ~PTE_DIRTY;
-	return pte;
+	return clear_pte_bit(pte, __pgprot(PTE_DIRTY));
 }
 
 static inline pte_t pte_mkdirty(pte_t pte)
 {
-	pte_val(pte) |= PTE_DIRTY;
-	return pte;
+	return set_pte_bit(pte, __pgprot(PTE_DIRTY));
 }
 
 static inline pte_t pte_mkold(pte_t pte)
 {
-	pte_val(pte) &= ~PTE_AF;
-	return pte;
+	return clear_pte_bit(pte, __pgprot(PTE_AF));
 }
 
 static inline pte_t pte_mkyoung(pte_t pte)
 {
-	pte_val(pte) |= PTE_AF;
-	return pte;
+	return set_pte_bit(pte, __pgprot(PTE_AF));
 }
 
 static inline pte_t pte_mkspecial(pte_t pte)
 {
-	pte_val(pte) |= PTE_SPECIAL;
-	return pte;
+	return set_pte_bit(pte, __pgprot(PTE_SPECIAL));
 }
 
 static inline void set_pte(pte_t *ptep, pte_t pte)
 {
 	*ptep = pte;
+
+	/*
+	 * Only if the new pte is valid and kernel, otherwise TLB maintenance
+	 * or update_mmu_cache() have the necessary barriers.
+	 */
+	if (pte_valid_not_user(pte)) {
+		dsb(ishst);
+		isb();
+	}
 }
 
 extern void __sync_icache_dcache(pte_t pteval, unsigned long addr);
@@ -220,6 +244,16 @@ static inline void set_pte_at(struct mm_struct *mm, unsigned long addr,
 
 #define __HAVE_ARCH_PTE_SPECIAL
 
+static inline pte_t pud_pte(pud_t pud)
+{
+	return __pte(pud_val(pud));
+}
+
+static inline pmd_t pud_pmd(pud_t pud)
+{
+	return __pmd(pud_val(pud));
+}
+
 static inline pte_t pmd_pte(pmd_t pmd)
 {
 	return __pte(pmd_val(pmd));
@@ -237,7 +271,13 @@ static inline pmd_t pte_pmd(pte_t pte)
 #ifdef CONFIG_TRANSPARENT_HUGEPAGE
 #define pmd_trans_huge(pmd)	(pmd_val(pmd) && !(pmd_val(pmd) & PMD_TABLE_BIT))
 #define pmd_trans_splitting(pmd)	pte_special(pmd_pte(pmd))
-#endif
+#ifdef CONFIG_HAVE_RCU_TABLE_FREE
+#define __HAVE_ARCH_PMDP_SPLITTING_FLUSH
+struct vm_area_struct;
+void pmdp_splitting_flush(struct vm_area_struct *vma, unsigned long address,
+			  pmd_t *pmdp);
+#endif /* CONFIG_HAVE_RCU_TABLE_FREE */
+#endif /* CONFIG_TRANSPARENT_HUGEPAGE */
 
 #define pmd_young(pmd)		pte_young(pmd_pte(pmd))
 #define pmd_wrprotect(pmd)	pte_pmd(pte_wrprotect(pmd_pte(pmd)))
@@ -258,6 +298,7 @@ static inline pmd_t pte_pmd(pte_t pte)
 #define mk_pmd(page,prot)	pfn_pmd(page_to_pfn(page),prot)
 
 #define pmd_page(pmd)           pfn_to_page(__phys_to_pfn(pmd_val(pmd) & PHYS_MASK))
+#define pud_write(pud)		pte_write(pud_pte(pud))
 #define pud_pfn(pud)		(((pud_val(pud) & PUD_MASK) & PHYS_MASK) >> PAGE_SHIFT)
 
 #define set_pmd_at(mm, addr, pmdp, pmd)	set_pte_at(mm, addr, (pte_t *)pmdp, pmd_pte(pmd))
@@ -277,6 +318,8 @@ static inline int has_transparent_hugepage(void)
 	__pgprot_modify(prot, PTE_ATTRINDX_MASK, PTE_ATTRINDX(MT_DEVICE_nGnRnE) | PTE_PXN | PTE_UXN)
 #define pgprot_writecombine(prot) \
 	__pgprot_modify(prot, PTE_ATTRINDX_MASK, PTE_ATTRINDX(MT_NORMAL_NC) | PTE_PXN | PTE_UXN)
+#define pgprot_device(prot) \
+	__pgprot_modify(prot, PTE_ATTRINDX_MASK, PTE_ATTRINDX(MT_DEVICE_nGnRE) | PTE_PXN | PTE_UXN)
 #define __HAVE_PHYS_MEM_ACCESS_PROT
 struct file;
 extern pgprot_t phys_mem_access_prot(struct file *file, unsigned long pfn,
@@ -303,6 +346,7 @@ static inline void set_pmd(pmd_t *pmdp, pmd_t pmd)
 {
 	*pmdp = pmd;
 	dsb(ishst);
+	isb();
 }
 
 static inline void pmd_clear(pmd_t *pmdp)
@@ -323,7 +367,9 @@ static inline pte_t *pmd_page_vaddr(pmd_t pmd)
  */
 #define mk_pte(page,prot)	pfn_pte(page_to_pfn(page),prot)
 
-#ifndef CONFIG_ARM64_64K_PAGES
+#if CONFIG_ARM64_PGTABLE_LEVELS > 2
+
+#define pmd_ERROR(pmd)		__pmd_error(__FILE__, __LINE__, pmd_val(pmd))
 
 #define pud_none(pud)		(!pud_val(pud))
 #define pud_bad(pud)		(!(pud_val(pud) & 2))
@@ -333,6 +379,7 @@ static inline void set_pud(pud_t *pudp, pud_t pud)
 {
 	*pudp = pud;
 	dsb(ishst);
+	isb();
 }
 
 static inline void pud_clear(pud_t *pudp)
@@ -345,7 +392,53 @@ static inline pmd_t *pud_page_vaddr(pud_t pud)
 	return __va(pud_val(pud) & PHYS_MASK & (s32)PAGE_MASK);
 }
 
-#endif	/* CONFIG_ARM64_64K_PAGES */
+/* Find an entry in the second-level page table. */
+#define pmd_index(addr)		(((addr) >> PMD_SHIFT) & (PTRS_PER_PMD - 1))
+
+static inline pmd_t *pmd_offset(pud_t *pud, unsigned long addr)
+{
+	return (pmd_t *)pud_page_vaddr(*pud) + pmd_index(addr);
+}
+
+#define pud_page(pud)           pmd_page(pud_pmd(pud))
+
+#endif	/* CONFIG_ARM64_PGTABLE_LEVELS > 2 */
+
+#if CONFIG_ARM64_PGTABLE_LEVELS > 3
+
+#define pud_ERROR(pud)		__pud_error(__FILE__, __LINE__, pud_val(pud))
+
+#define pgd_none(pgd)		(!pgd_val(pgd))
+#define pgd_bad(pgd)		(!(pgd_val(pgd) & 2))
+#define pgd_present(pgd)	(pgd_val(pgd))
+
+static inline void set_pgd(pgd_t *pgdp, pgd_t pgd)
+{
+	*pgdp = pgd;
+	dsb(ishst);
+}
+
+static inline void pgd_clear(pgd_t *pgdp)
+{
+	set_pgd(pgdp, __pgd(0));
+}
+
+static inline pud_t *pgd_page_vaddr(pgd_t pgd)
+{
+	return __va(pgd_val(pgd) & PHYS_MASK & (s32)PAGE_MASK);
+}
+
+/* Find an entry in the frst-level page table. */
+#define pud_index(addr)		(((addr) >> PUD_SHIFT) & (PTRS_PER_PUD - 1))
+
+static inline pud_t *pud_offset(pgd_t *pgd, unsigned long addr)
+{
+	return (pud_t *)pgd_page_vaddr(*pgd) + pud_index(addr);
+}
+
+#endif  /* CONFIG_ARM64_PGTABLE_LEVELS > 3 */
+
+#define pgd_ERROR(pgd)		__pgd_error(__FILE__, __LINE__, pgd_val(pgd))
 
 /* to find an entry in a page-table-directory */
 #define pgd_index(addr)		(((addr) >> PGDIR_SHIFT) & (PTRS_PER_PGD - 1))
@@ -354,18 +447,6 @@ static inline pmd_t *pud_page_vaddr(pud_t pud)
 
 /* to find an entry in a kernel page-table-directory */
 #define pgd_offset_k(addr)	pgd_offset(&init_mm, addr)
-
-/* Find an entry in the second-level page table.. */
-#ifndef CONFIG_ARM64_64K_PAGES
-#define pmd_index(addr)		(((addr) >> PMD_SHIFT) & (PTRS_PER_PMD - 1))
-static inline pmd_t *pmd_offset(pud_t *pud, unsigned long addr)
-{
-	return (pmd_t *)pud_page_vaddr(*pud) + pmd_index(addr);
-}
-#endif
-
-/* Find an entry in the third-level page table.. */
-#define pte_index(addr)		(((addr) >> PAGE_SHIFT) & (PTRS_PER_PTE - 1))
 
 static inline pte_t pte_modify(pte_t pte, pgprot_t newprot)
 {
@@ -382,9 +463,6 @@ static inline pmd_t pmd_modify(pmd_t pmd, pgprot_t newprot)
 
 extern pgd_t swapper_pg_dir[PTRS_PER_PGD];
 extern pgd_t idmap_pg_dir[PTRS_PER_PGD];
-
-#define SWAPPER_DIR_SIZE	(3 * PAGE_SIZE)
-#define IDMAP_DIR_SIZE		(2 * PAGE_SIZE)
 
 /*
  * Encode and decode a swap entry:

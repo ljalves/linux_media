@@ -870,7 +870,8 @@ should set this to 0.</entry>
 	      If the application sets this to 0 for an output stream, then
 	      <structfield>bytesused</structfield> will be set to the size of the
 	      plane (see the <structfield>length</structfield> field of this struct)
-	      by the driver.</entry>
+	      by the driver. Note that the actual image data starts at
+	      <structfield>data_offset</structfield> which may not be 0.</entry>
 	  </row>
 	  <row>
 	    <entry>__u32</entry>
@@ -919,6 +920,10 @@ should set this to 0.</entry>
 	    <entry>Offset in bytes to video data in the plane.
 	      Drivers must set this field when <structfield>type</structfield>
 	      refers to an input stream, applications when it refers to an output stream.
+	      Note that data_offset is included in <structfield>bytesused</structfield>.
+	      So the size of the image in the plane is
+	      <structfield>bytesused</structfield>-<structfield>data_offset</structfield> at
+	      offset <structfield>data_offset</structfield> from the start of the plane.
 	    </entry>
 	  </row>
 	  <row>
@@ -1417,7 +1422,10 @@ one of the <constant>V4L2_FIELD_NONE</constant>,
 <constant>V4L2_FIELD_BOTTOM</constant>, or
 <constant>V4L2_FIELD_INTERLACED</constant> formats is acceptable.
 Drivers choose depending on hardware capabilities or e.&nbsp;g. the
-requested image size, and return the actual field order. &v4l2-buffer;
+requested image size, and return the actual field order. Drivers must
+never return <constant>V4L2_FIELD_ANY</constant>. If multiple
+field orders are possible the driver must choose one of the possible
+field orders during &VIDIOC-S-FMT; or &VIDIOC-TRY-FMT;. &v4l2-buffer;
 <structfield>field</structfield> can never be
 <constant>V4L2_FIELD_ANY</constant>.</entry>
 	  </row>

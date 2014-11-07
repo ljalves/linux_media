@@ -1303,7 +1303,7 @@ static const struct ixgbe_reg_test reg_test_82599[] = {
 	{ IXGBE_RAL(0), 16, TABLE64_TEST_LO, 0xFFFFFFFF, 0xFFFFFFFF },
 	{ IXGBE_RAL(0), 16, TABLE64_TEST_HI, 0x8001FFFF, 0x800CFFFF },
 	{ IXGBE_MTA(0), 128, TABLE32_TEST, 0xFFFFFFFF, 0xFFFFFFFF },
-	{ 0, 0, 0, 0 }
+	{ .reg = 0 }
 };
 
 /* default 82598 register test */
@@ -1331,7 +1331,7 @@ static const struct ixgbe_reg_test reg_test_82598[] = {
 	{ IXGBE_RAL(0), 16, TABLE64_TEST_LO, 0xFFFFFFFF, 0xFFFFFFFF },
 	{ IXGBE_RAL(0), 16, TABLE64_TEST_HI, 0x800CFFFF, 0x800CFFFF },
 	{ IXGBE_MTA(0), 128, TABLE32_TEST, 0xFFFFFFFF, 0xFFFFFFFF },
-	{ 0, 0, 0, 0 }
+	{ .reg = 0 }
 };
 
 static bool reg_pattern_test(struct ixgbe_adapter *adapter, u64 *data, int reg,
@@ -1408,7 +1408,6 @@ static int ixgbe_reg_test(struct ixgbe_adapter *adapter, u64 *data)
 	default:
 		*data = 1;
 		return 1;
-		break;
 	}
 
 	/*
@@ -2268,7 +2267,6 @@ static int ixgbe_set_coalesce(struct net_device *netdev,
 	if (adapter->q_vector[0]->tx.count && adapter->q_vector[0]->rx.count)
 		adapter->tx_itr_setting = adapter->rx_itr_setting;
 
-#if IS_ENABLED(CONFIG_BQL)
 	/* detect ITR changes that require update of TXDCTL.WTHRESH */
 	if ((adapter->tx_itr_setting != 1) &&
 	    (adapter->tx_itr_setting < IXGBE_100K_ITR)) {
@@ -2280,7 +2278,7 @@ static int ixgbe_set_coalesce(struct net_device *netdev,
 		    (tx_itr_prev < IXGBE_100K_ITR))
 			need_reset = true;
 	}
-#endif
+
 	/* check the old value and enable RSC if necessary */
 	need_reset |= ixgbe_update_rsc(adapter);
 
@@ -2518,7 +2516,7 @@ static int ixgbe_update_ethtool_fdir_entry(struct ixgbe_adapter *adapter,
 
 	/* add filter to the list */
 	if (parent)
-		hlist_add_after(&parent->fdir_node, &input->fdir_node);
+		hlist_add_behind(&input->fdir_node, &parent->fdir_node);
 	else
 		hlist_add_head(&input->fdir_node,
 			       &adapter->fdir_filter_list);
@@ -2866,7 +2864,6 @@ static int ixgbe_get_ts_info(struct net_device *dev,
 		break;
 	default:
 		return ethtool_op_get_ts_info(dev, info);
-		break;
 	}
 	return 0;
 }

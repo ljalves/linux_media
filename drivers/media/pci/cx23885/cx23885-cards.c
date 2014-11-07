@@ -13,10 +13,6 @@
  *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  *
  *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with this program; if not, write to the Free Software
- *  Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  */
 
 #include <linux/init.h>
@@ -619,7 +615,12 @@ struct cx23885_board cx23885_boards[] = {
 	},
 	[CX23885_BOARD_HAUPPAUGE_HVR4400] = {
 		.name		= "Hauppauge WinTV-HVR4400",
+		.porta		= CX23885_ANALOG_VIDEO,
 		.portb		= CX23885_MPEG_DVB,
+		.portc		= CX23885_MPEG_DVB,
+		.tuner_type	= TUNER_NXP_TDA18271,
+		.tuner_addr	= 0x60, /* 0xc0 >> 1 */
+		.tuner_bus	= 1,
 	},
 	[CX23885_BOARD_AVERMEDIA_HC81R] = {
 		.name		= "AVerTV Hybrid Express Slim HC81R",
@@ -650,6 +651,11 @@ struct cx23885_board cx23885_boards[] = {
 			.amux   = CX25840_AUDIO6,
 		} },
 	},
+	[CX23885_BOARD_DVICO_FUSIONHDTV_DVB_T_DUAL_EXP2] = {
+		.name		= "DViCO FusionHDTV DVB-T Dual Express2",
+		.portb		= CX23885_MPEG_DVB,
+		.portc		= CX23885_MPEG_DVB,
+	},
 	[CX23885_BOARD_HAUPPAUGE_IMPACTVCBE] = {
 		.name		= "Hauppauge ImpactVCB-e",
 		.tuner_type	= TUNER_ABSENT,
@@ -668,6 +674,23 @@ struct cx23885_board cx23885_boards[] = {
 				  CX25840_SVIDEO_ON,
 			.amux   = CX25840_AUDIO7,
 		} },
+	},
+	[CX23885_BOARD_DVBSKY_T9580] = {
+		.name		= "DVBSky T9580",
+		.portb		= CX23885_MPEG_DVB,
+		.portc		= CX23885_MPEG_DVB,
+	},
+	[CX23885_BOARD_DVBSKY_T980C] = {
+		.name		= "DVBSky T980C",
+		.portb		= CX23885_MPEG_DVB,
+	},
+	[CX23885_BOARD_DVBSKY_S950C] = {
+		.name		= "DVBSky S950C",
+		.portb		= CX23885_MPEG_DVB,
+	},
+	[CX23885_BOARD_TT_CT2_4500_CI] = {
+		.name		= "Technotrend TT-budget CT2-4500 CI",
+		.portb		= CX23885_MPEG_DVB,
 	},
 };
 const unsigned int cx23885_bcount = ARRAY_SIZE(cx23885_boards);
@@ -920,6 +943,26 @@ struct cx23885_subid cx23885_subids[] = {
 		.subvendor = 0x0070,
 		.subdevice = 0x7133,
 		.card      = CX23885_BOARD_HAUPPAUGE_IMPACTVCBE,
+	}, {
+		.subvendor = 0x18ac,
+		.subdevice = 0xdb98,
+		.card      = CX23885_BOARD_DVICO_FUSIONHDTV_DVB_T_DUAL_EXP2,
+	}, {
+		.subvendor = 0x4254,
+		.subdevice = 0x9580,
+		.card      = CX23885_BOARD_DVBSKY_T9580,
+	}, {
+		.subvendor = 0x4254,
+		.subdevice = 0x980c,
+		.card      = CX23885_BOARD_DVBSKY_T980C,
+	}, {
+		.subvendor = 0x4254,
+		.subdevice = 0x950c,
+		.card      = CX23885_BOARD_DVBSKY_S950C,
+	}, {
+		.subvendor = 0x13c2,
+		.subdevice = 0x3013,
+		.card      = CX23885_BOARD_TT_CT2_4500_CI,
 	},
 };
 const unsigned int cx23885_idcount = ARRAY_SIZE(cx23885_subids);
@@ -1163,6 +1206,7 @@ int cx23885_tuner_callback(void *priv, int component, int command, int arg)
 		break;
 	case CX23885_BOARD_DVICO_FUSIONHDTV_7_DUAL_EXP:
 	case CX23885_BOARD_DVICO_FUSIONHDTV_DVB_T_DUAL_EXP:
+	case CX23885_BOARD_DVICO_FUSIONHDTV_DVB_T_DUAL_EXP2:
 		/* Two identical tuners on two different i2c buses,
 		 * we need to reset the correct gpio. */
 		if (port->nr == 1)
@@ -1306,6 +1350,7 @@ void cx23885_gpio_setup(struct cx23885_dev *dev)
 		cx_set(GP0_IO, 0x000f000f);
 		break;
 	case CX23885_BOARD_DVICO_FUSIONHDTV_DVB_T_DUAL_EXP:
+	case CX23885_BOARD_DVICO_FUSIONHDTV_DVB_T_DUAL_EXP2:
 		/* GPIO-0 portb xc3028 reset */
 		/* GPIO-1 portb zl10353 reset */
 		/* GPIO-2 portc xc3028 reset */
@@ -1475,13 +1520,16 @@ void cx23885_gpio_setup(struct cx23885_dev *dev)
 		break;
 	case CX23885_BOARD_HAUPPAUGE_HVR4400:
 		/* GPIO-8 tda10071 demod reset */
+		/* GPIO-9 si2165 demod reset */
 
 		/* Put the parts into reset and back */
-		cx23885_gpio_enable(dev, GPIO_8, 1);
-		cx23885_gpio_clear(dev, GPIO_8);
+		cx23885_gpio_enable(dev, GPIO_8 | GPIO_9, 1);
+
+		cx23885_gpio_clear(dev, GPIO_8 | GPIO_9);
 		mdelay(100);
-		cx23885_gpio_set(dev, GPIO_8);
+		cx23885_gpio_set(dev, GPIO_8 | GPIO_9);
 		mdelay(100);
+
 		break;
 	case CX23885_BOARD_AVERMEDIA_HC81R:
 		cx_clear(MC417_CTL, 1);
@@ -1509,6 +1557,46 @@ void cx23885_gpio_setup(struct cx23885_dev *dev)
 		cx_set(GP0_IO, 0x00040004);
 		mdelay(60);
 		break;
+	case CX23885_BOARD_DVBSKY_T9580:
+		/* enable GPIO3-18 pins */
+		cx_write(MC417_CTL, 0x00000037);
+		cx23885_gpio_enable(dev, GPIO_2 | GPIO_11, 1);
+		cx23885_gpio_clear(dev, GPIO_2 | GPIO_11);
+		mdelay(100);
+		cx23885_gpio_set(dev, GPIO_2 | GPIO_11);
+		break;
+	case CX23885_BOARD_DVBSKY_T980C:
+	case CX23885_BOARD_DVBSKY_S950C:
+	case CX23885_BOARD_TT_CT2_4500_CI:
+		/*
+		 * GPIO-0 INTA from CiMax, input
+		 * GPIO-1 reset CiMax, output, high active
+		 * GPIO-2 reset demod, output, low active
+		 * GPIO-3 to GPIO-10 data/addr for CAM
+		 * GPIO-11 ~CS0 to CiMax1
+		 * GPIO-12 ~CS1 to CiMax2
+		 * GPIO-13 ADL0 load LSB addr
+		 * GPIO-14 ADL1 load MSB addr
+		 * GPIO-15 ~RDY from CiMax
+		 * GPIO-17 ~RD to CiMax
+		 * GPIO-18 ~WR to CiMax
+		 */
+
+		cx_set(GP0_IO, 0x00060002); /* GPIO 1/2 as output */
+		cx_clear(GP0_IO, 0x00010004); /* GPIO 0 as input */
+		mdelay(100); /* reset delay */
+		cx_set(GP0_IO, 0x00060004); /* GPIO as out, reset high */
+		cx_clear(GP0_IO, 0x00010002);
+		cx_write(MC417_CTL, 0x00000037); /* enable GPIO3-18 pins */
+
+		/* GPIO-15 IN as ~ACK, rest as OUT */
+		cx_write(MC417_OEN, 0x00001000);
+
+		/* ~RD, ~WR high; ADL0, ADL1 low; ~CS0, ~CS1 high */
+		cx_write(MC417_RWD, 0x0000c300);
+
+		/* enable irq */
+		cx_write(GPIO_ISM, 0x00000000); /* INTERRUPTS active low */
 	}
 }
 
@@ -1589,6 +1677,10 @@ int cx23885_ir_init(struct cx23885_dev *dev)
 	case CX23885_BOARD_MYGICA_X8507:
 	case CX23885_BOARD_TBS_6980:
 	case CX23885_BOARD_TBS_6981:
+	case CX23885_BOARD_DVBSKY_T9580:
+	case CX23885_BOARD_DVBSKY_T980C:
+	case CX23885_BOARD_DVBSKY_S950C:
+	case CX23885_BOARD_TT_CT2_4500_CI:
 		if (!enable_885_ir)
 			break;
 		dev->sd_ir = cx23885_find_hw(dev, CX23885_HW_AV_CORE);
@@ -1611,6 +1703,7 @@ int cx23885_ir_init(struct cx23885_dev *dev)
 				 ir_rxtx_pin_cfg_count, ir_rxtx_pin_cfg);
 		break;
 	case CX23885_BOARD_DVICO_FUSIONHDTV_DVB_T_DUAL_EXP:
+	case CX23885_BOARD_DVICO_FUSIONHDTV_DVB_T_DUAL_EXP2:
 		request_module("ir-kbd-i2c");
 		break;
 	}
@@ -1634,6 +1727,10 @@ void cx23885_ir_fini(struct cx23885_dev *dev)
 	case CX23885_BOARD_MYGICA_X8507:
 	case CX23885_BOARD_TBS_6980:
 	case CX23885_BOARD_TBS_6981:
+	case CX23885_BOARD_DVBSKY_T9580:
+	case CX23885_BOARD_DVBSKY_T980C:
+	case CX23885_BOARD_DVBSKY_S950C:
+	case CX23885_BOARD_TT_CT2_4500_CI:
 		cx23885_irq_remove(dev, PCI_MSK_AV_CORE);
 		/* sd_ir is a duplicate pointer to the AV Core, just clear it */
 		dev->sd_ir = NULL;
@@ -1681,6 +1778,10 @@ void cx23885_ir_pci_int_enable(struct cx23885_dev *dev)
 	case CX23885_BOARD_MYGICA_X8507:
 	case CX23885_BOARD_TBS_6980:
 	case CX23885_BOARD_TBS_6981:
+	case CX23885_BOARD_DVBSKY_T9580:
+	case CX23885_BOARD_DVBSKY_T980C:
+	case CX23885_BOARD_DVBSKY_S950C:
+	case CX23885_BOARD_TT_CT2_4500_CI:
 		if (dev->sd_ir)
 			cx23885_irq_add_enable(dev, PCI_MSK_AV_CORE);
 		break;
@@ -1747,6 +1848,7 @@ void cx23885_card_setup(struct cx23885_dev *dev)
 		break;
 	case CX23885_BOARD_DVICO_FUSIONHDTV_7_DUAL_EXP:
 	case CX23885_BOARD_DVICO_FUSIONHDTV_DVB_T_DUAL_EXP:
+	case CX23885_BOARD_DVICO_FUSIONHDTV_DVB_T_DUAL_EXP2:
 		ts2->gen_ctrl_val  = 0xc; /* Serial bus + punctured clock */
 		ts2->ts_clk_en_val = 0x1; /* Enable TS_CLK */
 		ts2->src_sel_val   = CX23885_SRC_SEL_PARALLEL_MPEG_VIDEO;
@@ -1783,6 +1885,9 @@ void cx23885_card_setup(struct cx23885_dev *dev)
 	case CX23885_BOARD_TEVII_S471:
 	case CX23885_BOARD_DVBWORLD_2005:
 	case CX23885_BOARD_PROF_8000:
+	case CX23885_BOARD_DVBSKY_T980C:
+	case CX23885_BOARD_DVBSKY_S950C:
+	case CX23885_BOARD_TT_CT2_4500_CI:
 		ts1->gen_ctrl_val  = 0x5; /* Parallel */
 		ts1->ts_clk_en_val = 0x1; /* Enable TS_CLK */
 		ts1->src_sel_val   = CX23885_SRC_SEL_PARALLEL_MPEG_VIDEO;
@@ -1826,6 +1931,17 @@ void cx23885_card_setup(struct cx23885_dev *dev)
 		ts1->gen_ctrl_val  = 0xc; /* Serial bus + punctured clock */
 		ts1->ts_clk_en_val = 0x1; /* Enable TS_CLK */
 		ts1->src_sel_val   = CX23885_SRC_SEL_PARALLEL_MPEG_VIDEO;
+		ts2->gen_ctrl_val  = 0xc; /* Serial bus + punctured clock */
+		ts2->ts_clk_en_val = 0x1; /* Enable TS_CLK */
+		ts2->src_sel_val   = CX23885_SRC_SEL_PARALLEL_MPEG_VIDEO;
+		break;
+	case CX23885_BOARD_DVBSKY_T9580:
+		ts1->gen_ctrl_val  = 0x5; /* Parallel */
+		ts1->ts_clk_en_val = 0x1; /* Enable TS_CLK */
+		ts1->src_sel_val   = CX23885_SRC_SEL_PARALLEL_MPEG_VIDEO;
+		ts2->gen_ctrl_val  = 0x8; /* Serial bus */
+		ts2->ts_clk_en_val = 0x1; /* Enable TS_CLK */
+		ts2->src_sel_val   = CX23885_SRC_SEL_PARALLEL_MPEG_VIDEO;
 		break;
 	case CX23885_BOARD_HAUPPAUGE_HVR1250:
 	case CX23885_BOARD_HAUPPAUGE_HVR1500:
@@ -1889,6 +2005,10 @@ void cx23885_card_setup(struct cx23885_dev *dev)
 	case CX23885_BOARD_AVERMEDIA_HC81R:
 	case CX23885_BOARD_TBS_6980:
 	case CX23885_BOARD_TBS_6981:
+	case CX23885_BOARD_DVBSKY_T9580:
+	case CX23885_BOARD_DVBSKY_T980C:
+	case CX23885_BOARD_DVBSKY_S950C:
+	case CX23885_BOARD_TT_CT2_4500_CI:
 		dev->sd_cx25840 = v4l2_i2c_new_subdev(&dev->v4l2_dev,
 				&dev->i2c_bus[2].i2c_adap,
 				"cx25840", 0x88 >> 1, NULL);
@@ -1946,5 +2066,3 @@ void cx23885_card_setup(struct cx23885_dev *dev)
 	}
 	}
 }
-
-/* ------------------------------------------------------------------ */

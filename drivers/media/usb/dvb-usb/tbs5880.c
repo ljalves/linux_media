@@ -27,6 +27,8 @@ struct tbs5880_state {
 	struct mutex ca_mutex;
 
 	u32 last_key_pressed;
+
+	struct i2c_client *i2c_client_tuner;
 };
 
 /*struct tbs5880_rc_keys {
@@ -310,6 +312,7 @@ static int tbs5880_poll_slot_status(struct dvb_ca_en50221 *ca,
 static void tbs5880_uninit(struct dvb_usb_device *d)
 {
 	struct tbs5880_state *state;
+	struct i2c_client *client;
 
 	if (NULL == d)
 		return;
@@ -320,6 +323,13 @@ static void tbs5880_uninit(struct dvb_usb_device *d)
 
 	if (NULL == state->ca.data)
 		return;
+
+	/* remove I2C tuner */
+	client = state->i2c_client_tuner;
+	if (client) {
+		module_put(client->dev.driver->owner);
+		i2c_unregister_device(client);
+	}
 
 	/* Error ignored. */
 	tbs5880_set_video_port(&state->ca, /* slot */ 0, /* enable */ 0);
@@ -518,7 +528,7 @@ static struct cxd2820r_config cxd2820r_config = {
 };
 
 static struct tda18212_config tda18212_config = {
-	.i2c_address = 0x60 /* (0xc0 >> 1) */,
+	//.i2c_address = 0x60 /* (0xc0 >> 1) */,
 	.if_dvbt_6 = 3550,
 	.if_dvbt_7 = 3700,
 	.if_dvbt_8 = 4150,
@@ -530,11 +540,36 @@ static struct tda18212_config tda18212_config = {
 
 static int tbs5880_tuner_attach(struct dvb_usb_adapter *adap)
 {
-	if (!dvb_attach(tda18212_attach, adap->fe_adap->fe, &adap->dev->i2c_adap,
-		&tda18212_config))
-		return -EIO;
+	struct dvb_usb_device *d = adap->dev;
+	struct tbs5880_state *state = (struct tbs5880_state *)d->priv;
+
+	struct i2c_adapter *adapter = &d->i2c_adap;
+	struct i2c_client *client;
+	struct i2c_board_info board_info = {
+		.type = "tda18212",
+		.addr = 0x60,
+		.platform_data = &tda18212_config,
+	};
+
+	/* attach tuner */
+	tda18212_config.fe = adap->fe_adap->fe;
+	request_module("tda18212");
+	client = i2c_new_device(adapter, &board_info);
+	if (client == NULL || client->dev.driver == NULL) {
+		dvb_frontend_detach(adap->fe_adap->fe);
+		goto err;
+	}
+	if (!try_module_get(client->dev.driver->owner)) {
+		i2c_unregister_device(client);
+		dvb_frontend_detach(adap->fe_adap->fe);
+		goto err;
+	}
+	state->i2c_client_tuner = client;
 
 	return 0;
+
+err:
+	return -ENODEV;
 }
 
 static int tbs5880_frontend_attach(struct dvb_usb_adapter *d)

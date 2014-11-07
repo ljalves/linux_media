@@ -148,6 +148,7 @@ static int __init x86_xsave_setup(char *s)
 {
 	setup_clear_cpu_cap(X86_FEATURE_XSAVE);
 	setup_clear_cpu_cap(X86_FEATURE_XSAVEOPT);
+	setup_clear_cpu_cap(X86_FEATURE_XSAVES);
 	setup_clear_cpu_cap(X86_FEATURE_AVX);
 	setup_clear_cpu_cap(X86_FEATURE_AVX2);
 	return 1;
@@ -160,6 +161,13 @@ static int __init x86_xsaveopt_setup(char *s)
 	return 1;
 }
 __setup("noxsaveopt", x86_xsaveopt_setup);
+
+static int __init x86_xsaves_setup(char *s)
+{
+	setup_clear_cpu_cap(X86_FEATURE_XSAVES);
+	return 1;
+}
+__setup("noxsaves", x86_xsaves_setup);
 
 #ifdef CONFIG_X86_32
 static int cachesize_override = -1;
@@ -338,8 +346,8 @@ static void filter_cpuid_features(struct cpuinfo_x86 *c, bool warn)
 			continue;
 
 		printk(KERN_WARNING
-		       "CPU: CPU feature %s disabled, no CPUID level 0x%x\n",
-				x86_cap_flags[df->feature], df->level);
+		       "CPU: CPU feature " X86_CAP_FMT " disabled, no CPUID level 0x%x\n",
+				x86_cap_flag(df->feature), df->level);
 	}
 }
 
@@ -481,26 +489,17 @@ u16 __read_mostly tlb_lld_2m[NR_INFO];
 u16 __read_mostly tlb_lld_4m[NR_INFO];
 u16 __read_mostly tlb_lld_1g[NR_INFO];
 
-/*
- * tlb_flushall_shift shows the balance point in replacing cr3 write
- * with multiple 'invlpg'. It will do this replacement when
- *   flush_tlb_lines <= active_lines/2^tlb_flushall_shift.
- * If tlb_flushall_shift is -1, means the replacement will be disabled.
- */
-s8  __read_mostly tlb_flushall_shift = -1;
-
 void cpu_detect_tlb(struct cpuinfo_x86 *c)
 {
 	if (this_cpu->c_detect_tlb)
 		this_cpu->c_detect_tlb(c);
 
 	printk(KERN_INFO "Last level iTLB entries: 4KB %d, 2MB %d, 4MB %d\n"
-		"Last level dTLB entries: 4KB %d, 2MB %d, 4MB %d, 1GB %d\n"
-		"tlb_flushall_shift: %d\n",
+		"Last level dTLB entries: 4KB %d, 2MB %d, 4MB %d, 1GB %d\n",
 		tlb_lli_4k[ENTRIES], tlb_lli_2m[ENTRIES],
 		tlb_lli_4m[ENTRIES], tlb_lld_4k[ENTRIES],
 		tlb_lld_2m[ENTRIES], tlb_lld_4m[ENTRIES],
-		tlb_lld_1g[ENTRIES], tlb_flushall_shift);
+		tlb_lld_1g[ENTRIES]);
 }
 
 void detect_ht(struct cpuinfo_x86 *c)
@@ -632,6 +631,15 @@ void get_cpu_cap(struct cpuinfo_x86 *c)
 		cpuid_count(0x00000007, 0, &eax, &ebx, &ecx, &edx);
 
 		c->x86_capability[9] = ebx;
+	}
+
+	/* Extended state features: level 0x0000000d */
+	if (c->cpuid_level >= 0x0000000d) {
+		u32 eax, ebx, ecx, edx;
+
+		cpuid_count(0x0000000d, 1, &eax, &ebx, &ecx, &edx);
+
+		c->x86_capability[10] = eax;
 	}
 
 	/* AMD-defined flags: level 0x80000001 */
@@ -956,6 +964,7 @@ static void vgetcpu_set_mode(void)
 		vgetcpu_mode = VGETCPU_LSL;
 }
 
+#ifdef CONFIG_IA32_EMULATION
 /* May not be __init: called during resume */
 static void syscall32_cpu_init(void)
 {
@@ -967,7 +976,8 @@ static void syscall32_cpu_init(void)
 
 	wrmsrl(MSR_CSTAR, ia32_cstar_target);
 }
-#endif
+#endif		/* CONFIG_IA32_EMULATION */
+#endif		/* CONFIG_X86_64 */
 
 #ifdef CONFIG_X86_32
 void enable_sep_cpu(void)
@@ -1176,7 +1186,7 @@ void syscall_init(void)
 	/* Flags to clear on syscall */
 	wrmsrl(MSR_SYSCALL_MASK,
 	       X86_EFLAGS_TF|X86_EFLAGS_DF|X86_EFLAGS_IF|
-	       X86_EFLAGS_IOPL|X86_EFLAGS_AC);
+	       X86_EFLAGS_IOPL|X86_EFLAGS_AC|X86_EFLAGS_NT);
 }
 
 /*
@@ -1190,9 +1200,9 @@ DEFINE_PER_CPU(int, debug_stack_usage);
 
 int is_debug_stack(unsigned long addr)
 {
-	return __get_cpu_var(debug_stack_usage) ||
-		(addr <= __get_cpu_var(debug_stack_addr) &&
-		 addr > (__get_cpu_var(debug_stack_addr) - DEBUG_STKSZ));
+	return __this_cpu_read(debug_stack_usage) ||
+		(addr <= __this_cpu_read(debug_stack_addr) &&
+		 addr > (__this_cpu_read(debug_stack_addr) - DEBUG_STKSZ));
 }
 NOKPROBE_SYMBOL(is_debug_stack);
 
@@ -1258,6 +1268,19 @@ static void dbg_restore_debug_regs(void)
 #define dbg_restore_debug_regs()
 #endif /* ! CONFIG_KGDB */
 
+static void wait_for_master_cpu(int cpu)
+{
+#ifdef CONFIG_SMP
+	/*
+	 * wait for ACK from master CPU before continuing
+	 * with AP initialization
+	 */
+	WARN_ON(cpumask_test_and_set_cpu(cpu, cpu_initialized_mask));
+	while (!cpumask_test_cpu(cpu, cpu_callout_mask))
+		cpu_relax();
+#endif
+}
+
 /*
  * cpu_init() initializes state that is per-CPU. Some data is already
  * initialized (naturally) in the bootstrap process, such as the GDT
@@ -1273,8 +1296,10 @@ void cpu_init(void)
 	struct task_struct *me;
 	struct tss_struct *t;
 	unsigned long v;
-	int cpu;
+	int cpu = stack_smp_processor_id();
 	int i;
+
+	wait_for_master_cpu(cpu);
 
 	/*
 	 * Load microcode on this cpu if a valid microcode is available.
@@ -1282,7 +1307,6 @@ void cpu_init(void)
 	 */
 	load_ucode_ap();
 
-	cpu = stack_smp_processor_id();
 	t = &per_cpu(init_tss, cpu);
 	oist = &per_cpu(orig_ist, cpu);
 
@@ -1293,9 +1317,6 @@ void cpu_init(void)
 #endif
 
 	me = current;
-
-	if (cpumask_test_and_set_cpu(cpu, cpu_initialized_mask))
-		panic("CPU#%d already initialized!\n", cpu);
 
 	pr_debug("Initializing CPU#%d\n", cpu);
 
@@ -1373,17 +1394,13 @@ void cpu_init(void)
 	struct tss_struct *t = &per_cpu(init_tss, cpu);
 	struct thread_struct *thread = &curr->thread;
 
-	show_ucode_info_early();
+	wait_for_master_cpu(cpu);
 
-	if (cpumask_test_and_set_cpu(cpu, cpu_initialized_mask)) {
-		printk(KERN_WARNING "CPU#%d already initialized!\n", cpu);
-		for (;;)
-			local_irq_enable();
-	}
+	show_ucode_info_early();
 
 	printk(KERN_INFO "Initializing CPU#%d\n", cpu);
 
-	if (cpu_has_vme || cpu_has_tsc || cpu_has_de)
+	if (cpu_feature_enabled(X86_FEATURE_VME) || cpu_has_tsc || cpu_has_de)
 		clear_in_cr4(X86_CR4_VME|X86_CR4_PVI|X86_CR4_TSD|X86_CR4_DE);
 
 	load_current_idt();

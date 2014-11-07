@@ -99,10 +99,6 @@ static int arc_pmu_event_init(struct perf_event *event)
 	struct hw_perf_event *hwc = &event->hw;
 	int ret;
 
-	/* ARC 700 PMU does not support sampling events */
-	if (is_sampling_event(event))
-		return -ENOENT;
-
 	switch (event->attr.type) {
 	case PERF_TYPE_HARDWARE:
 		if (event->attr.config >= PERF_COUNT_HW_MAX)
@@ -248,25 +244,23 @@ static int arc_pmu_device_probe(struct platform_device *pdev)
 		pr_err("This core does not have performance counters!\n");
 		return -ENODEV;
 	}
+	BUG_ON(pct_bcr.c > ARC_PMU_MAX_HWEVENTS);
 
-	arc_pmu = devm_kzalloc(&pdev->dev, sizeof(struct arc_pmu),
-			       GFP_KERNEL);
+	READ_BCR(ARC_REG_CC_BUILD, cc_bcr);
+	if (!cc_bcr.v) {
+		pr_err("Performance counters exist, but no countable conditions?\n");
+		return -ENODEV;
+	}
+
+	arc_pmu = devm_kzalloc(&pdev->dev, sizeof(struct arc_pmu), GFP_KERNEL);
 	if (!arc_pmu)
 		return -ENOMEM;
 
 	arc_pmu->n_counters = pct_bcr.c;
-	BUG_ON(arc_pmu->n_counters > ARC_PMU_MAX_HWEVENTS);
-
 	arc_pmu->counter_size = 32 + (pct_bcr.s << 4);
-	pr_info("ARC PMU found with %d counters of size %d bits\n",
-		arc_pmu->n_counters, arc_pmu->counter_size);
 
-	READ_BCR(ARC_REG_CC_BUILD, cc_bcr);
-
-	if (!cc_bcr.v)
-		pr_err("Strange! Performance counters exist, but no countable conditions?\n");
-
-	pr_info("ARC PMU has %d countable conditions\n", cc_bcr.c);
+	pr_info("ARC perf\t: %d counters (%d bits), %d countable conditions\n",
+		arc_pmu->n_counters, arc_pmu->counter_size, cc_bcr.c);
 
 	cc_name.str[8] = 0;
 	for (i = 0; i < PERF_COUNT_HW_MAX; i++)
@@ -297,6 +291,9 @@ static int arc_pmu_device_probe(struct platform_device *pdev)
 		.stop		= arc_pmu_stop,
 		.read		= arc_pmu_read,
 	};
+
+	/* ARC 700 PMU does not support sampling events */
+	arc_pmu->pmu.capabilities |= PERF_PMU_CAP_NO_INTERRUPT;
 
 	ret = perf_pmu_register(&arc_pmu->pmu, pdev->name, PERF_TYPE_RAW);
 

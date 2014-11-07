@@ -199,6 +199,14 @@ static int format_corename(struct core_name *cn, struct coredump_params *cprm)
 				err = cn_printf(cn, "%d",
 					      task_tgid_nr(current));
 				break;
+			case 'i':
+				err = cn_printf(cn, "%d",
+					      task_pid_vnr(current));
+				break;
+			case 'I':
+				err = cn_printf(cn, "%d",
+					      task_pid_nr(current));
+				break;
 			/* uid */
 			case 'u':
 				err = cn_printf(cn, "%d", cred->uid);
@@ -306,7 +314,7 @@ static int zap_threads(struct task_struct *tsk, struct mm_struct *mm,
 	if (unlikely(nr < 0))
 		return nr;
 
-	tsk->flags = PF_DUMPCORE;
+	tsk->flags |= PF_DUMPCORE;
 	if (atomic_read(&mm->mm_users) == nr + 1)
 		goto done;
 	/*

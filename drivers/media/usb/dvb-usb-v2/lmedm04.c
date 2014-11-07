@@ -286,14 +286,13 @@ static void lme2510_int_response(struct urb *lme_urb)
 		case 0xaa:
 			debug_data_snipet(1, "INT Remote data snipet", ibuf);
 			if ((ibuf[4] + ibuf[5]) == 0xff) {
-				key = ibuf[5];
-				key += (ibuf[3] > 0)
-					? (ibuf[3] ^ 0xff) << 8 : 0;
-				key += (ibuf[2] ^ 0xff) << 16;
+				key = RC_SCANCODE_NECX((ibuf[2] ^ 0xff) << 8 |
+						       (ibuf[3] > 0) ? (ibuf[3] ^ 0xff) : 0,
+						       ibuf[5]);
 				deb_info(1, "INT Key =%08x", key);
 				if (adap_to_d(adap)->rc_dev != NULL)
 					rc_keydown(adap_to_d(adap)->rc_dev,
-						key, 0);
+						   RC_TYPE_NEC, key, 0);
 			}
 			break;
 		case 0xbb:
@@ -1253,7 +1252,7 @@ static int lme2510_get_stream_config(struct dvb_frontend *fe, u8 *ts_type,
 
 	/* Turn PID filter on the fly by module option */
 	if (pid_filter == 2) {
-		adap->pid_filtering  = 1;
+		adap->pid_filtering  = true;
 		adap->max_feed_count = 15;
 	}
 

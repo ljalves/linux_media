@@ -33,8 +33,7 @@
  * features, then it must call an indirect function that
  * does. Or at least does enough to prevent any unwelcomed side effects.
  */
-#if !defined(CONFIG_HAVE_FUNCTION_TRACE_MCOUNT_TEST) || \
-	!ARCH_SUPPORTS_FTRACE_OPS
+#if !ARCH_SUPPORTS_FTRACE_OPS
 # define FTRACE_FORCE_LIST_FUNC 1
 #else
 # define FTRACE_FORCE_LIST_FUNC 0
@@ -56,6 +55,8 @@ struct ftrace_ops;
 
 typedef void (*ftrace_func_t)(unsigned long ip, unsigned long parent_ip,
 			      struct ftrace_ops *op, struct pt_regs *regs);
+
+ftrace_func_t ftrace_ops_get_func(struct ftrace_ops *ops);
 
 /*
  * FTRACE_OPS_FL_* bits denote the state of ftrace_ops struct and are
@@ -90,6 +91,9 @@ typedef void (*ftrace_func_t)(unsigned long ip, unsigned long parent_ip,
  * INITIALIZED - The ftrace_ops has already been initialized (first use time
  *            register_ftrace_function() is called, it will initialized the ops)
  * DELETED - The ops are being deleted, do not let them be registered again.
+ * ADDING  - The ops is in the process of being added.
+ * REMOVING - The ops is in the process of being removed.
+ * MODIFYING - The ops is in the process of changing its filter functions.
  */
 enum {
 	FTRACE_OPS_FL_ENABLED			= 1 << 0,
@@ -101,7 +105,19 @@ enum {
 	FTRACE_OPS_FL_STUB			= 1 << 6,
 	FTRACE_OPS_FL_INITIALIZED		= 1 << 7,
 	FTRACE_OPS_FL_DELETED			= 1 << 8,
+	FTRACE_OPS_FL_ADDING			= 1 << 9,
+	FTRACE_OPS_FL_REMOVING			= 1 << 10,
+	FTRACE_OPS_FL_MODIFYING			= 1 << 11,
 };
+
+#ifdef CONFIG_DYNAMIC_FTRACE
+/* The hash used to know what functions callbacks trace */
+struct ftrace_ops_hash {
+	struct ftrace_hash		*notrace_hash;
+	struct ftrace_hash		*filter_hash;
+	struct mutex			regex_lock;
+};
+#endif
 
 /*
  * Note, ftrace_ops can be referenced outside of RCU protection.
@@ -118,16 +134,16 @@ struct ftrace_ops {
 	ftrace_func_t			func;
 	struct ftrace_ops		*next;
 	unsigned long			flags;
-	int __percpu			*disabled;
 	void				*private;
+	int __percpu			*disabled;
 #ifdef CONFIG_DYNAMIC_FTRACE
-	struct ftrace_hash		*notrace_hash;
-	struct ftrace_hash		*filter_hash;
-	struct mutex			regex_lock;
+	int				nr_trampolines;
+	struct ftrace_ops_hash		local_hash;
+	struct ftrace_ops_hash		*func_hash;
+	struct ftrace_ops_hash		old_hash;
+	unsigned long			trampoline;
 #endif
 };
-
-extern int function_trace_stop;
 
 /*
  * Type of the current tracing.
@@ -139,32 +155,6 @@ enum ftrace_tracing_type_t {
 
 /* Current tracing type, default is FTRACE_TYPE_ENTER */
 extern enum ftrace_tracing_type_t ftrace_tracing_type;
-
-/**
- * ftrace_stop - stop function tracer.
- *
- * A quick way to stop the function tracer. Note this an on off switch,
- * it is not something that is recursive like preempt_disable.
- * This does not disable the calling of mcount, it only stops the
- * calling of functions from mcount.
- */
-static inline void ftrace_stop(void)
-{
-	function_trace_stop = 1;
-}
-
-/**
- * ftrace_start - start the function tracer.
- *
- * This function is the inverse of ftrace_stop. This does not enable
- * the function tracing if the function tracer is disabled. This only
- * sets the function tracer flag to continue calling the functions
- * from mcount.
- */
-static inline void ftrace_start(void)
-{
-	function_trace_stop = 0;
-}
 
 /*
  * The ftrace_ops must be a static and should also
@@ -242,8 +232,6 @@ static inline int ftrace_nr_registered_ops(void)
 }
 static inline void clear_ftrace_function(void) { }
 static inline void ftrace_kill(void) { }
-static inline void ftrace_stop(void) { }
-static inline void ftrace_start(void) { }
 #endif /* CONFIG_FUNCTION_TRACER */
 
 #ifdef CONFIG_STACK_TRACER
@@ -317,13 +305,20 @@ extern int ftrace_nr_registered_ops(void);
  * from tracing that function.
  */
 enum {
-	FTRACE_FL_ENABLED	= (1UL << 29),
+	FTRACE_FL_ENABLED	= (1UL << 31),
 	FTRACE_FL_REGS		= (1UL << 30),
-	FTRACE_FL_REGS_EN	= (1UL << 31)
+	FTRACE_FL_REGS_EN	= (1UL << 29),
+	FTRACE_FL_TRAMP		= (1UL << 28),
+	FTRACE_FL_TRAMP_EN	= (1UL << 27),
 };
 
-#define FTRACE_FL_MASK		(0x7UL << 29)
-#define FTRACE_REF_MAX		((1UL << 29) - 1)
+#define FTRACE_REF_MAX_SHIFT	27
+#define FTRACE_FL_BITS		5
+#define FTRACE_FL_MASKED_BITS	((1UL << FTRACE_FL_BITS) - 1)
+#define FTRACE_FL_MASK		(FTRACE_FL_MASKED_BITS << FTRACE_REF_MAX_SHIFT)
+#define FTRACE_REF_MAX		((1UL << FTRACE_REF_MAX_SHIFT) - 1)
+
+#define ftrace_rec_count(rec)	((rec)->flags & ~FTRACE_FL_MASK)
 
 struct dyn_ftrace {
 	unsigned long		ip; /* address of mcount call-site */
@@ -431,12 +426,26 @@ void ftrace_modify_all_code(int command);
 #define FTRACE_ADDR ((unsigned long)ftrace_caller)
 #endif
 
+#ifndef FTRACE_GRAPH_ADDR
+#define FTRACE_GRAPH_ADDR ((unsigned long)ftrace_graph_caller)
+#endif
+
 #ifndef FTRACE_REGS_ADDR
 #ifdef CONFIG_DYNAMIC_FTRACE_WITH_REGS
 # define FTRACE_REGS_ADDR ((unsigned long)ftrace_regs_caller)
 #else
 # define FTRACE_REGS_ADDR FTRACE_ADDR
 #endif
+#endif
+
+/*
+ * If an arch would like functions that are only traced
+ * by the function graph tracer to jump directly to its own
+ * trampoline, then they can define FTRACE_GRAPH_TRAMP_ADDR
+ * to be that address to jump to.
+ */
+#ifndef FTRACE_GRAPH_TRAMP_ADDR
+#define FTRACE_GRAPH_TRAMP_ADDR ((unsigned long) 0)
 #endif
 
 #ifdef CONFIG_FUNCTION_GRAPH_TRACER
@@ -736,6 +745,7 @@ extern char __irqentry_text_end[];
 extern int register_ftrace_graph(trace_func_graph_ret_t retfunc,
 				trace_func_graph_ent_t entryfunc);
 
+extern bool ftrace_graph_is_dead(void);
 extern void ftrace_graph_stop(void);
 
 /* The current handlers in use */
