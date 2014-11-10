@@ -82,12 +82,11 @@ static int saa716x_request_irq(struct saa716x_dev *saa716x)
 		if (ret) {
 			pci_disable_msi(pdev);
 			dprintk(SAA716x_ERROR, 1, "MSI registration failed");
-			ret = -EIO;
 		}
 	}
 
 	if (saa716x->int_type == MODE_MSI_X) {
-		for (i = 0; SAA716x_MSI_MAX_VECTORS; i++) {
+		for (i = 0; i < SAA716x_MSI_MAX_VECTORS; i++) {
 			ret = request_irq(saa716x->msix_entries[i].vector,
 					  saa716x->saa716x_msix_handler[i].handler,
 					  IRQF_SHARED,
@@ -97,8 +96,14 @@ static int saa716x_request_irq(struct saa716x_dev *saa716x)
 			dprintk(SAA716x_ERROR, 1, "%s @ 0x%p", saa716x->saa716x_msix_handler[i].desc, saa716x->saa716x_msix_handler[i].handler);
 			if (ret) {
 				dprintk(SAA716x_ERROR, 1, "%s MSI-X-%d registration failed <%d>", saa716x->saa716x_msix_handler[i].desc, i, ret);
-				return -1;
+				break;
 			}
+		}
+
+		/* free already allocated vectors in error case */
+		while (ret && i > 0) {
+			--i;
+			free_irq(saa716x->msix_entries[i].vector, saa716x);
 		}
 	}
 
@@ -108,10 +113,8 @@ static int saa716x_request_irq(struct saa716x_dev *saa716x)
 				  IRQF_SHARED,
 				  DRIVER_NAME,
 				  saa716x);
-		if (ret < 0) {
+		if (ret < 0)
 			dprintk(SAA716x_ERROR, 1, "SAA716x IRQ registration failed <%d>", ret);
-			ret = -ENODEV;
-		}
 	}
 
 	return ret;
