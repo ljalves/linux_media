@@ -305,7 +305,7 @@ static int saa716x_video_decoder_info(struct saa716x_dev *saa716x,
 	saa716x_descriptor_dbg(saa716x, buf, offset, header.size, header.ext_data);
 	if (header.size != sizeof (struct saa716x_video_decoder_hdr)) {
 		dprintk(SAA716x_ERROR, 1,
-			"ERROR: Header size mismatch! Read size=%d bytes, Expected=%d",
+			"ERROR: Header size mismatch! Read size=%d bytes, Expected=%zd",
 			header.size,
 			sizeof (struct saa716x_video_decoder_hdr));
 
