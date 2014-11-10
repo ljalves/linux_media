@@ -113,7 +113,7 @@ static int saa716x_eeprom_header(struct saa716x_dev *saa716x,
 	memcpy(rom_header, &buf[*offset], sizeof (struct saa716x_romhdr));
 	if (rom_header->header_size != sizeof (struct saa716x_romhdr)) {
 		dprintk(SAA716x_ERROR, 1,
-			"ERROR: Header size mismatch! Read size=%d bytes, Expected=%d",
+			"ERROR: Header size mismatch! Read size=%zd bytes, Expected=%d",
 			sizeof (struct saa716x_romhdr),
 			rom_header->header_size);
 
@@ -237,7 +237,7 @@ static int saa716x_decoder_info(struct saa716x_dev *saa716x,
 	saa716x_descriptor_dbg(saa716x, buf, offset, header.size, header.ext_data);
 	if (header.size != sizeof (struct saa716x_decoder_hdr)) {
 		dprintk(SAA716x_ERROR, 1,
-			"ERROR: Header size mismatch! Read size=%d bytes, Expected=%d",
+			"ERROR: Header size mismatch! Read size=%d bytes, Expected=%zd",
 			header.size,
 			sizeof (struct saa716x_decoder_hdr));
 
@@ -268,7 +268,7 @@ static int saa716x_gpio_info(struct saa716x_dev *saa716x,
 	saa716x_descriptor_dbg(saa716x, buf, offset, header.size, header.ext_data);
 	if (header.size != sizeof (struct saa716x_gpio_hdr)) {
 		dprintk(SAA716x_ERROR, 1,
-			"ERROR: Header size mismatch! Read size=%d bytes, Expected=%d",
+			"ERROR: Header size mismatch! Read size=%d bytes, Expected=%zd",
 			header.size,
 			sizeof (struct saa716x_gpio_hdr));
 
@@ -386,7 +386,7 @@ static int saa716x_audio_decoder_info(struct saa716x_dev *saa716x,
 	saa716x_descriptor_dbg(saa716x, buf, offset, header.size, header.ext_data);
 	if (header.size != sizeof (struct saa716x_audio_decoder_hdr)) {
 		dprintk(SAA716x_ERROR, 1,
-			"ERROR: Header size mismatch! Read size=%d bytes, Expected=%d",
+			"ERROR: Header size mismatch! Read size=%d bytes, Expected=%zd",
 			header.size,
 			sizeof (struct saa716x_audio_decoder_hdr));
 
@@ -417,7 +417,7 @@ static int saa716x_event_source_info(struct saa716x_dev *saa716x,
 	saa716x_descriptor_dbg(saa716x, buf, offset, header.size, header.ext_data);
 	if (header.size != sizeof (struct saa716x_evsrc_hdr)) {
 		dprintk(SAA716x_ERROR, 1,
-			"ERROR: Header size mismatch! Read size=%d bytes, Expected=%d",
+			"ERROR: Header size mismatch! Read size=%d bytes, Expected=%zd",
 			header.size,
 			sizeof (struct saa716x_evsrc_hdr));
 
@@ -448,7 +448,7 @@ static int saa716x_crossbar_info(struct saa716x_dev *saa716x,
 	saa716x_descriptor_dbg(saa716x, buf, offset, header.size, header.ext_data);
 	if (header.size != sizeof (struct saa716x_xbar_hdr)) {
 		dprintk(SAA716x_ERROR, 1,
-			"ERROR: Header size mismatch! Read size=%d bytes, Expected=%d",
+			"ERROR: Header size mismatch! Read size=%d bytes, Expected=%zd",
 			header.size,
 			sizeof (struct saa716x_xbar_hdr));
 
@@ -486,7 +486,7 @@ static int saa716x_tuner_info(struct saa716x_dev *saa716x,
 	saa716x_descriptor_dbg(saa716x, buf, offset, header.size, header.ext_data);
 	if (header.size != sizeof (struct saa716x_tuner_hdr)) {
 		dprintk(SAA716x_ERROR, 1,
-			"ERROR: Header size mismatch! Read size=%d bytes, Expected=%d",
+			"ERROR: Header size mismatch! Read size=%d bytes, Expected=%zd",
 			header.size,
 			sizeof (struct saa716x_tuner_hdr));
 
@@ -516,7 +516,7 @@ static int saa716x_pll_info(struct saa716x_dev *saa716x,
 	saa716x_descriptor_dbg(saa716x, buf, offset, header.size, header.ext_data);
 	if (header.size != sizeof (struct saa716x_pll_hdr)) {
 		dprintk(SAA716x_ERROR, 1,
-			"ERROR: Header size mismatch! Read size=%d bytes, Expected=%d",
+			"ERROR: Header size mismatch! Read size=%d bytes, Expected=%zd",
 			header.size,
 			sizeof (struct saa716x_pll_hdr));
 
@@ -546,7 +546,7 @@ static int saa716x_channel_decoder_info(struct saa716x_dev *saa716x,
 	saa716x_descriptor_dbg(saa716x, buf, offset, header.size, header.ext_data);
 	if (header.size != sizeof (struct saa716x_channel_decoder_hdr)) {
 		dprintk(SAA716x_ERROR, 1,
-			"ERROR: Header size mismatch! Read size=%d bytes, Expected=%d",
+			"ERROR: Header size mismatch! Read size=%d bytes, Expected=%zd",
 			header.size,
 			sizeof (struct saa716x_channel_decoder_hdr));
 
@@ -576,7 +576,7 @@ static int saa716x_encoder_info(struct saa716x_dev *saa716x,
 	saa716x_descriptor_dbg(saa716x, buf, offset, header.size, header.ext_data);
 	if (header.size != sizeof (struct saa716x_encoder_hdr)) {
 		dprintk(SAA716x_ERROR, 1,
-			"ERROR: Header size mismatch! Read size=%d bytes, Expected=%d",
+			"ERROR: Header size mismatch! Read size=%d bytes, Expected=%zd",
 			header.size,
 			sizeof (struct saa716x_encoder_hdr));
 
@@ -606,7 +606,7 @@ static int saa716x_ir_info(struct saa716x_dev *saa716x,
 	saa716x_descriptor_dbg(saa716x, buf, offset, header.size, header.ext_data);
 	if (header.size != sizeof (struct saa716x_ir_hdr)) {
 		dprintk(SAA716x_ERROR, 1,
-			"ERROR: Header size mismatch! Read size=%d bytes, Expected=%d",
+			"ERROR: Header size mismatch! Read size=%d bytes, Expected=%zd",
 			header.size,
 			sizeof (struct saa716x_ir_hdr));
 
@@ -637,7 +637,7 @@ static int saa716x_eeprom_info(struct saa716x_dev *saa716x,
 	saa716x_descriptor_dbg(saa716x, buf, offset, header.size, header.ext_data);
 	if (header.size != sizeof (struct saa716x_eeprom_hdr)) {
 		dprintk(SAA716x_ERROR, 1,
-			"ERROR: Header size mismatch! Read size=%d bytes, Expected=%d",
+			"ERROR: Header size mismatch! Read size=%d bytes, Expected=%zd",
 			header.size,
 			sizeof (struct saa716x_eeprom_hdr));
 
@@ -668,7 +668,7 @@ static int saa716x_filter_info(struct saa716x_dev *saa716x,
 	saa716x_descriptor_dbg(saa716x, buf, offset, header.size, header.ext_data);
 	if (header.size != sizeof (struct saa716x_filter_hdr)) {
 		dprintk(SAA716x_ERROR, 1,
-			"ERROR: Header size mismatch! Read size=%d bytes, Expected=%d",
+			"ERROR: Header size mismatch! Read size=%d bytes, Expected=%zd",
 			header.size,
 			sizeof (struct saa716x_filter_hdr));
 
@@ -699,7 +699,7 @@ static int saa716x_streamdev_info(struct saa716x_dev *saa716x,
 	saa716x_descriptor_dbg(saa716x, buf, offset, header.size, header.ext_data);
 	if (header.size != sizeof (struct saa716x_streamdev_hdr)) {
 		dprintk(SAA716x_ERROR, 1,
-			"ERROR: Header size mismatch! Read size=%d bytes, Expected=%d",
+			"ERROR: Header size mismatch! Read size=%d bytes, Expected=%zd",
 			header.size,
 			sizeof (struct saa716x_streamdev_hdr));
 
@@ -789,7 +789,7 @@ static int saa716x_device_info(struct saa716x_dev *saa716x,
 
 	memcpy(device, &buf[*offset], sizeof (struct saa716x_devinfo));
 	if (device->struct_size != sizeof (struct saa716x_devinfo)) {
-		dprintk(SAA716x_ERROR, 1, "ERROR: Device size mismatch! Read=%d bytes, expected=%d bytes",
+		dprintk(SAA716x_ERROR, 1, "ERROR: Device size mismatch! Read=%d bytes, expected=%zd bytes",
 		device->struct_size,
 		sizeof (struct saa716x_devinfo));
 
