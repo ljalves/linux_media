@@ -17,7 +17,7 @@
 
 #define DRIVER_NAME				"SAA716x Core"
 
-static irqreturn_t saa716x_msi_handler(int irq, void *dev_id)
+static inline irqreturn_t saa716x_msi_handler(int irq, void *dev_id)
 {
 	return IRQ_HANDLED;
 }
