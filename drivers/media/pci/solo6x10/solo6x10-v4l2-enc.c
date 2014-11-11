@@ -703,9 +703,7 @@ static int solo_ring_thread(void *data)
 
 		if (timeout == -ERESTARTSYS || kthread_should_stop())
 			break;
-		solo_irq_off(solo_dev, SOLO_IRQ_ENCODER);
 		solo_handle_ring(solo_dev);
-		solo_irq_on(solo_dev, SOLO_IRQ_ENCODER);
 		try_to_freeze();
 	}
 
@@ -770,21 +768,26 @@ static void solo_ring_stop(struct solo_dev *solo_dev)
 static int solo_enc_start_streaming(struct vb2_queue *q, unsigned int count)
 {
 	struct solo_enc_dev *solo_enc = vb2_get_drv_priv(q);
-	int ret;
 
-	ret = solo_enc_on(solo_enc);
-	if (ret)
-		return ret;
-	return solo_ring_start(solo_enc->solo_dev);
+	return solo_enc_on(solo_enc);
 }
 
 static void solo_enc_stop_streaming(struct vb2_queue *q)
 {
 	struct solo_enc_dev *solo_enc = vb2_get_drv_priv(q);
+	unsigned long flags;
 
+	spin_lock_irqsave(&solo_enc->av_lock, flags);
 	solo_enc_off(solo_enc);
-	INIT_LIST_HEAD(&solo_enc->vidq_active);
-	solo_ring_stop(solo_enc->solo_dev);
+	while (!list_empty(&solo_enc->vidq_active)) {
+		struct solo_vb2_buf *buf = list_entry(
+				solo_enc->vidq_active.next,
+				struct solo_vb2_buf, list);
+
+		list_del(&buf->list);
+		vb2_buffer_done(&buf->vb, VB2_BUF_STATE_ERROR);
+	}
+	spin_unlock_irqrestore(&solo_enc->av_lock, flags);
 }
 
 static struct vb2_ops solo_enc_video_qops = {
@@ -1375,6 +1378,9 @@ static void solo_enc_free(struct solo_enc_dev *solo_enc)
 	if (solo_enc == NULL)
 		return;
 
+	pci_free_consistent(solo_enc->solo_dev->pdev,
+			sizeof(struct solo_p2m_desc) * solo_enc->desc_nelts,
+			solo_enc->desc_items, solo_enc->desc_dma);
 	video_unregister_device(solo_enc->vfd);
 	v4l2_ctrl_handler_free(&solo_enc->hdl);
 	kfree(solo_enc);
@@ -1419,12 +1425,14 @@ int solo_enc_v4l2_init(struct solo_dev *solo_dev, unsigned nr)
 		 solo_dev->v4l2_enc[0]->vfd->num,
 		 solo_dev->v4l2_enc[solo_dev->nr_chans - 1]->vfd->num);
 
-	return 0;
+	return solo_ring_start(solo_dev);
 }
 
 void solo_enc_v4l2_exit(struct solo_dev *solo_dev)
 {
 	int i;
+
+	solo_ring_stop(solo_dev);
 
 	for (i = 0; i < solo_dev->nr_chans; i++)
 		solo_enc_free(solo_dev->v4l2_enc[i]);
