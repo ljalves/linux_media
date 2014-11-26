@@ -1,5 +1,5 @@
 /*
- * Silicon Labs Si2147/2157/2158 silicon tuner driver
+ * Silicon Labs Si2147/2148/2157/2158 silicon tuner driver
  *
  * Copyright (C) 2014 Antti Palosaari <crope@iki.fi>
  *
@@ -112,11 +112,13 @@ static int si2157_init(struct dvb_frontend *fe)
 			cmd.args[4] << 0;
 
 	#define SI2158_A20 ('A' << 24 | 58 << 16 | '2' << 8 | '0' << 0)
+	#define SI2148_A20 ('A' << 24 | 48 << 16 | '2' << 8 | '0' << 0)
 	#define SI2157_A30 ('A' << 24 | 57 << 16 | '3' << 8 | '0' << 0)
 	#define SI2147_A30 ('A' << 24 | 47 << 16 | '3' << 8 | '0' << 0)
 
 	switch (chip_id) {
 	case SI2158_A20:
+	case SI2148_A20:
 		fw_file = SI2158_A20_FIRMWARE;
 		break;
 	case SI2157_A30:
@@ -309,7 +311,7 @@ static int si2157_get_if_frequency(struct dvb_frontend *fe, u32 *frequency)
 
 static const struct dvb_tuner_ops si2157_ops = {
 	.info = {
-		.name           = "Silicon Labs Si2157/Si2158",
+		.name           = "Silicon Labs Si2147/2148/2157/Si2158",
 		.frequency_min  = 110000000,
 		.frequency_max  = 862000000,
 	},
@@ -373,7 +375,7 @@ static int si2157_probe(struct i2c_client *client,
 	i2c_set_clientdata(client, s);
 
 	dev_info(&s->client->dev,
-			"Silicon Labs Si2157/Si2158 successfully attached\n");
+			"Silicon Labs Si2147/2148/2157/Si2158 successfully attached\n");
 	return 0;
 err:
 	dev_dbg(&client->dev, "failed=%d\n", ret);
@@ -414,7 +416,7 @@ static struct i2c_driver si2157_driver = {
 
 module_i2c_driver(si2157_driver);
 
-MODULE_DESCRIPTION("Silicon Labs Si2157/Si2158 silicon tuner driver");
+MODULE_DESCRIPTION("Silicon Labs Si2147/2148/2157/Si2158 silicon tuner driver");
 MODULE_AUTHOR("Antti Palosaari <crope@iki.fi>");
 MODULE_LICENSE("GPL");
 MODULE_FIRMWARE(SI2158_A20_FIRMWARE);
