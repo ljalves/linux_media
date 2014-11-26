@@ -308,14 +308,16 @@ static int si2168_set_frontend(struct dvb_frontend *fe)
 	if (ret)
 		goto err;
 
-	memcpy(cmd.args, "\x14\x00\x09\x10\xe3\x18", 6);
+	memcpy(cmd.args, "\x14\x00\x09\x10\xe3\x08", 6);
+	cmd.args[5] |= s->ts_clock_inv ? 0x00 : 0x10;
 	cmd.wlen = 6;
 	cmd.rlen = 4;
 	ret = si2168_cmd_execute(s, &cmd);
 	if (ret)
 		goto err;
 
-	memcpy(cmd.args, "\x14\x00\x08\x10\xd7\x15", 6);
+	memcpy(cmd.args, "\x14\x00\x08\x10\xd7\x05", 6);
+	cmd.args[5] |= s->ts_clock_inv ? 0x00 : 0x10;
 	cmd.wlen = 6;
 	cmd.rlen = 4;
 	ret = si2168_cmd_execute(s, &cmd);
@@ -453,7 +455,7 @@ static int si2168_init(struct dvb_frontend *fe)
 			dev_err(&s->client->dev,
 					"firmware file '%s' not found\n",
 					fw_file);
-			goto err;
+			goto error_fw_release;
 		}
 	}
 
@@ -473,7 +475,7 @@ static int si2168_init(struct dvb_frontend *fe)
 			dev_err(&s->client->dev,
 					"firmware download failed=%d\n",
 					ret);
-			goto err;
+			goto error_fw_release;
 		}
 	}
 
@@ -504,10 +506,10 @@ warm:
 	s->active = true;
 
 	return 0;
-err:
-	if (fw)
-		release_firmware(fw);
 
+error_fw_release:
+	release_firmware(fw);
+err:
 	dev_dbg(&s->client->dev, "failed=%d\n", ret);
 	return ret;
 }
@@ -669,6 +671,7 @@ static int si2168_probe(struct i2c_client *client,
 	*config->i2c_adapter = s->adapter;
 	*config->fe = &s->fe;
 	s->ts_mode = config->ts_mode;
+	s->ts_clock_inv = config->ts_clock_inv;
 	s->fw_loaded = false;
 
 	i2c_set_clientdata(client, s);

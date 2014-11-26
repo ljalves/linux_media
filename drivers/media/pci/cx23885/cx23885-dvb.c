@@ -102,6 +102,7 @@ static int queue_setup(struct vb2_queue *q, const struct v4l2_format *fmt,
 	port->ts_packet_count = 32;
 	*num_planes = 1;
 	sizes[0] = port->ts_packet_size * port->ts_packet_count;
+	alloc_ctxs[0] = port->dev->alloc_ctx;
 	*num_buffers = 32;
 	return 0;
 }
@@ -122,11 +123,8 @@ static void buffer_finish(struct vb2_buffer *vb)
 	struct cx23885_dev *dev = port->dev;
 	struct cx23885_buffer *buf = container_of(vb,
 		struct cx23885_buffer, vb);
-	struct sg_table *sgt = vb2_dma_sg_plane_desc(vb, 0);
 
 	cx23885_free_buffer(dev, buf);
-
-	dma_unmap_sg(&dev->pci->dev, sgt->sgl, sgt->nents, DMA_FROM_DEVICE);
 }
 
 static void buffer_queue(struct vb2_buffer *vb)
