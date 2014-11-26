@@ -899,6 +899,7 @@ static int saa716x_tbs6281_frontend_attach(struct saa716x_adapter *adapter, int 
 	msleep(100);
 
 	/* attach demod */
+	memset(&si2168_config, 0, sizeof(si2168_config));
 	si2168_config.i2c_adapter = &i2cadapter;
 	si2168_config.fe = &adapter->fe;
 	si2168_config.ts_mode = SI2168_TS_PARALLEL;
@@ -918,6 +919,7 @@ static int saa716x_tbs6281_frontend_attach(struct saa716x_adapter *adapter, int 
 	adapter->i2c_client_demod = client;
 
 	/* attach tuner */
+	memset(&si2157_config, 0, sizeof(si2157_config));
 	si2157_config.fe = adapter->fe;
 	memset(&info, 0, sizeof(struct i2c_board_info));
 	strlcpy(info.type, "si2157", I2C_NAME_SIZE);
@@ -988,6 +990,7 @@ static int saa716x_tbs6285_frontend_attach(struct saa716x_adapter *adapter, int 
 		goto err;
 
 	/* attach demod */
+	memset(&si2168_config, 0, sizeof(si2168_config));
 	si2168_config.i2c_adapter = &i2cadapter;
 	si2168_config.fe = &adapter->fe;
 	si2168_config.ts_mode = SI2168_TS_SERIAL;
@@ -1010,6 +1013,7 @@ static int saa716x_tbs6285_frontend_attach(struct saa716x_adapter *adapter, int 
 	adapter->i2c_client_demod = client;
 
 	/* attach tuner */
+	memset(&si2157_config, 0, sizeof(si2157_config));
 	si2157_config.fe = adapter->fe;
 	memset(&info, 0, sizeof(struct i2c_board_info));
 	strlcpy(info.type, "si2157", I2C_NAME_SIZE);
