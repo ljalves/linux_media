@@ -515,10 +515,10 @@ static int skystar2_set_voltage(struct dvb_frontend *fe,
 		break;
 	}
 
-	err = stv090x_set_gpio(fe, 2, 0, en, 0);
+	err = skystar2_stv090x_config.set_gpio(fe, 2, 0, en, 0);
 	if (err < 0)
 		goto exit;
-	err = stv090x_set_gpio(fe, 3, 0, sel, 0);
+	err = skystar2_stv090x_config.set_gpio(fe, 3, 0, sel, 0);
 	if (err < 0)
 		goto exit;
 
@@ -537,7 +537,7 @@ static int skystar2_voltage_boost(struct dvb_frontend *fe, long arg)
 	else
 		value = 0;
 
-	err = stv090x_set_gpio(fe, 4, 0, value, 0);
+	err = skystar2_stv090x_config.set_gpio(fe, 4, 0, value, 0);
 	if (err < 0)
 		goto exit;
 
