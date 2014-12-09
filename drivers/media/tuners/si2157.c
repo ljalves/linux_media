@@ -266,7 +266,6 @@ static int si2157_set_params(struct dvb_frontend *fe)
 			break;
 	case SYS_DVBC_ANNEX_A:
 			delivery_system = 0x30;
-			bandwidth = 0x08;
 			break;
 	default:
 			ret = -EINVAL;
@@ -353,29 +352,12 @@ static int si2157_probe(struct i2c_client *client,
 	s->chiptype = (u8)id->driver_data;
 	mutex_init(&s->i2c_mutex);
 
-	/* get tuner info */
-	memcpy(cmd.args, "\xc0\x00\x00\x00\x00"
-			 "\x01\x01\x01\x01\x01"
-			 "\x01\x02\x00\x00\x01", 15);
-	cmd.wlen = 15;
+	/* check if the tuner is there */
+	cmd.wlen = 0;
 	cmd.rlen = 1;
 	ret = si2157_cmd_execute(s, &cmd);
 	if (ret)
 		goto err;
-
-	msleep(50);
-
-	cmd.args[0] = 0x02;
-	cmd.wlen = 1;
-	cmd.rlen = 13;
-	ret = si2157_cmd_execute(s, &cmd);
-	if (ret)
-		goto err;
-
-	dev_info(&s->client->dev,
-		"%s: Found a Si21%d-%c%c%c rev%d\n",
-		KBUILD_MODNAME, cmd.args[2], cmd.args[1],
-		cmd.args[3], cmd.args[4], cmd.args[12]);
 
 	fe->tuner_priv = s;
 	memcpy(&fe->ops.tuner_ops, &si2157_ops,
