@@ -850,6 +850,7 @@ ARM/Amlogic MesonX SoC support
 M:	Carlo Caione <carlo@caione.org>
 L:	linux-arm-kernel@lists.infradead.org (moderated for non-subscribers)
 S:	Maintained
+F:	drivers/media/rc/meson-ir.c
 N:	meson[x68]
 
 ARM/ATMEL AT91RM9200 AND AT91SAM ARM ARCHITECTURES
@@ -4769,6 +4770,11 @@ L:	linux-ima-user@lists.sourceforge.net
 L:	linux-security-module@vger.kernel.org
 S:	Supported
 F:	security/integrity/ima/
+
+IMGTEC IR DECODER DRIVER
+M:	James Hogan <james.hogan@imgtec.com>
+S:	Maintained
+F:	drivers/media/rc/img-ir/
 
 IMS TWINTURBO FRAMEBUFFER DRIVER
 L:	linux-fbdev@vger.kernel.org

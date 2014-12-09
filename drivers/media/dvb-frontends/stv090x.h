@@ -89,6 +89,8 @@ struct stv090x_config {
 
 	bool diseqc_envelope_mode;
 
+	/* Hook for Lock LED */
+	void (*set_lock_led) (struct dvb_frontend *fe, int offon);
 	int (*tuner_init) (struct dvb_frontend *fe);
 	int (*tuner_sleep) (struct dvb_frontend *fe);
 	int (*tuner_set_mode) (struct dvb_frontend *fe, enum tuner_mode mode);
@@ -102,19 +104,16 @@ struct stv090x_config {
 	int (*tuner_get_status) (struct dvb_frontend *fe, u32 *status);
 	void (*tuner_i2c_lock) (struct dvb_frontend *fe, int lock);
 
-	/* Hook for Lock LED */
-	void (*set_lock_led)(struct dvb_frontend *fe, int offon);
+	/* dir = 0 -> output, dir = 1 -> input/open-drain */
+	int (*set_gpio) (struct dvb_frontend *fe, u8 gpio, u8 dir, u8 value,
+			u8 xor_value);
 };
 
 #if IS_ENABLED(CONFIG_DVB_STV090x)
 
-extern struct dvb_frontend *stv090x_attach(const struct stv090x_config *config,
-					   struct i2c_adapter *i2c,
-					   enum stv090x_demodulator demod);
-
-/* dir = 0 -> output, dir = 1 -> input/open-drain */
-extern int stv090x_set_gpio(struct dvb_frontend *fe, u8 gpio,
-		u8 dir, u8 value, u8 xor_value);
+struct dvb_frontend *stv090x_attach(struct stv090x_config *config,
+				    struct i2c_adapter *i2c,
+				    enum stv090x_demodulator demod);
 
 #else
 

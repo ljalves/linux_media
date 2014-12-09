@@ -2661,13 +2661,9 @@ static enum stv090x_signal_state stv090x_get_sig_params(struct stv090x_state *st
 			return STV090x_RANGEOK;
 		else if (abs(offst_freq) <= (stv090x_car_width(state->srate, state->rolloff) / 2000))
 			return STV090x_RANGEOK;
-		else
-			return STV090x_OUTOFRANGE; /* Out of Range */
 	} else {
 		if (abs(offst_freq) <= ((state->search_range / 2000) + 500))
 			return STV090x_RANGEOK;
-		else
-			return STV090x_OUTOFRANGE;
 	}
 
 	return STV090x_OUTOFRANGE;
@@ -2787,6 +2783,12 @@ static u8 stv090x_optimize_carloop(struct stv090x_state *state, enum stv090x_mod
 				aclc = car_loop[i].crl_pilots_off_30;
 		}
 	} else { /* 16APSK and 32APSK */
+		/*
+		 * This should never happen in practice, except if
+		 * something is really wrong at the car_loop table.
+		 */
+		if (i >= 11)
+			i = 10;
 		if (state->srate <= 3000000)
 			aclc = car_loop_apsk_low[i].crl_pilots_on_2;
 		else if (state->srate <= 7000000)
@@ -4879,8 +4881,8 @@ err:
 	return -1;
 }
 
-int stv090x_set_gpio(struct dvb_frontend *fe, u8 gpio, u8 dir, u8 value,
-		u8 xor_value)
+static int stv090x_set_gpio(struct dvb_frontend *fe, u8 gpio, u8 dir,
+			    u8 value, u8 xor_value)
 {
 	struct stv090x_state *state = fe->demodulator_priv;
 	u8 reg = 0;
@@ -4891,7 +4893,6 @@ int stv090x_set_gpio(struct dvb_frontend *fe, u8 gpio, u8 dir, u8 value,
 
 	return stv090x_write_reg(state, STV090x_GPIOxCFG(gpio), reg);
 }
-EXPORT_SYMBOL(stv090x_set_gpio);
 
 static struct dvb_frontend_ops stv090x_ops = {
 	.delsys = { SYS_DVBS, SYS_DVBS2, SYS_DSS },
@@ -4928,7 +4929,7 @@ static struct dvb_frontend_ops stv090x_ops = {
 };
 
 
-struct dvb_frontend *stv090x_attach(const struct stv090x_config *config,
+struct dvb_frontend *stv090x_attach(struct stv090x_config *config,
 				    struct i2c_adapter *i2c,
 				    enum stv090x_demodulator demod)
 {
@@ -4988,6 +4989,8 @@ struct dvb_frontend *stv090x_attach(const struct stv090x_config *config,
 	/* workaround for stuck DiSEqC output */
 	if (config->diseqc_envelope_mode)
 		stv090x_send_diseqc_burst(&state->frontend, SEC_MINI_A);
+
+	config->set_gpio = stv090x_set_gpio;
 
 	dprintk(FE_ERROR, 1, "Attaching %s demodulator(%d) Cut=0x%02x",
 	       state->device == STV0900 ? "STV0900" : "STV0903",
