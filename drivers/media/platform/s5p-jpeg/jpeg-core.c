@@ -2627,7 +2627,7 @@ static int s5p_jpeg_remove(struct platform_device *pdev)
 	return 0;
 }
 
-#if defined(CONFIG_PM_RUNTIME) || defined(CONFIG_PM_SLEEP)
+#ifdef CONFIG_PM
 static int s5p_jpeg_runtime_suspend(struct device *dev)
 {
 	struct s5p_jpeg *jpeg = dev_get_drvdata(dev);
@@ -2677,7 +2677,7 @@ static int s5p_jpeg_runtime_resume(struct device *dev)
 
 	return 0;
 }
-#endif /* CONFIG_PM_RUNTIME || CONFIG_PM_SLEEP */
+#endif /* CONFIG_PM */
 
 #ifdef CONFIG_PM_SLEEP
 static int s5p_jpeg_suspend(struct device *dev)
@@ -2763,7 +2763,6 @@ static struct platform_driver s5p_jpeg_driver = {
 	.remove = s5p_jpeg_remove,
 	.driver = {
 		.of_match_table	= of_match_ptr(samsung_jpeg_match),
-		.owner		= THIS_MODULE,
 		.name		= S5P_JPEG_M2M_NAME,
 		.pm		= &s5p_jpeg_pm_ops,
 	},

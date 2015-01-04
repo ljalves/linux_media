@@ -39,7 +39,7 @@ struct backend_info {
 static int connect_rings(struct backend_info *be, struct xenvif_queue *queue);
 static void connect(struct backend_info *be);
 static int read_xenbus_vif_flags(struct backend_info *be);
-static void backend_create_xenvif(struct backend_info *be);
+static int backend_create_xenvif(struct backend_info *be);
 static void unregister_hotplug_status_watch(struct backend_info *be);
 static void set_backend_state(struct backend_info *be,
 			      enum xenbus_state state);
@@ -352,7 +352,9 @@ static int netback_probe(struct xenbus_device *dev,
 	be->state = XenbusStateInitWait;
 
 	/* This kicks hotplug scripts, so do it immediately. */
-	backend_create_xenvif(be);
+	err = backend_create_xenvif(be);
+	if (err)
+		goto fail;
 
 	return 0;
 
@@ -397,30 +399,32 @@ static int netback_uevent(struct xenbus_device *xdev,
 }
 
 
-static void backend_create_xenvif(struct backend_info *be)
+static int backend_create_xenvif(struct backend_info *be)
 {
 	int err;
 	long handle;
 	struct xenbus_device *dev = be->dev;
+	struct xenvif *vif;
 
 	if (be->vif != NULL)
-		return;
+		return 0;
 
 	err = xenbus_scanf(XBT_NIL, dev->nodename, "handle", "%li", &handle);
 	if (err != 1) {
 		xenbus_dev_fatal(dev, err, "reading handle");
-		return;
+		return (err < 0) ? err : -EINVAL;
 	}
 
-	be->vif = xenvif_alloc(&dev->dev, dev->otherend_id, handle);
-	if (IS_ERR(be->vif)) {
-		err = PTR_ERR(be->vif);
-		be->vif = NULL;
+	vif = xenvif_alloc(&dev->dev, dev->otherend_id, handle);
+	if (IS_ERR(vif)) {
+		err = PTR_ERR(vif);
 		xenbus_dev_fatal(dev, err, "creating interface");
-		return;
+		return err;
 	}
+	be->vif = vif;
 
 	kobject_uevent(&dev->dev.kobj, KOBJ_ONLINE);
+	return 0;
 }
 
 static void backend_disconnect(struct backend_info *be)
@@ -883,9 +887,15 @@ static int read_xenbus_vif_flags(struct backend_info *be)
 		return -EOPNOTSUPP;
 
 	if (xenbus_scanf(XBT_NIL, dev->otherend,
-			 "feature-rx-notify", "%d", &val) < 0 || val == 0) {
-		xenbus_dev_fatal(dev, -EINVAL, "feature-rx-notify is mandatory");
-		return -EINVAL;
+			 "feature-rx-notify", "%d", &val) < 0)
+		val = 0;
+	if (!val) {
+		/* - Reduce drain timeout to poll more frequently for
+		 *   Rx requests.
+		 * - Disable Rx stall detection.
+		 */
+		be->vif->drain_timeout = msecs_to_jiffies(30);
+		be->vif->stall_timeout = 0;
 	}
 
 	if (xenbus_scanf(XBT_NIL, dev->otherend, "feature-sg",
