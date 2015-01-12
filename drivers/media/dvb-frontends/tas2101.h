@@ -45,18 +45,23 @@ struct tas2101_config {
 	u8 init[7];
 };
 
-struct i2c_adapter *tas2101_get_i2c_adapter(struct dvb_frontend *fe, int bus);
+
 
 #if IS_ENABLED(CONFIG_DVB_TAS2101)
 extern struct dvb_frontend *tas2101_attach(
 	const struct tas2101_config *cfg,
 	struct i2c_adapter *i2c);
+struct i2c_adapter *tas2101_get_i2c_adapter(struct dvb_frontend *fe, int bus);
 #else
 static inline struct dvb_frontend *tas2101_attach(
 	const struct tas2101_config *cfg,
 	struct i2c_adapter *i2c)
 {
 	dev_warn(&i2c->dev, "%s: driver disabled by Kconfig\n", __func__);
+	return NULL;
+}
+struct i2c_adapter *tas2101_get_i2c_adapter(struct dvb_frontend *fe, int bus)
+{
 	return NULL;
 }
 #endif
