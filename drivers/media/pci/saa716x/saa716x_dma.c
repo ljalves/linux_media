@@ -147,7 +147,8 @@ static int saa716x_dmabuf_sgalloc(struct saa716x_dmabuf *dmabuf, void *buf, int 
 			pg = virt_to_page(dmabuf->mem_virt + i * SAA716x_PAGE_SIZE);
 
 		BUG_ON(pg == NULL);
-		sg_set_page(&list[i], pg, SAA716x_PAGE_SIZE, 0);
+		sg_set_page(list, pg, SAA716x_PAGE_SIZE, 0);
+		list = sg_next(list);
 	}
 
 	dprintk(SAA716x_DEBUG, 1, "Done!");
@@ -174,9 +175,9 @@ static void saa716x_dmabuf_sgpagefill(struct saa716x_dmabuf *dmabuf, struct scat
 	dma_sync_single_for_cpu(&pdev->dev, dmabuf->mem_ptab_phys, SAA716x_PAGE_SIZE, DMA_TO_DEVICE);
 	page = dmabuf->mem_ptab_virt;
 
+	sg_cur = sg_list;
 	/* create page table */
 	for (i = 0; i < pages; i++) {
-		sg_cur = &sg_list[i];
 		BUG_ON(!(((sg_cur->length + sg_cur->offset) % SAA716x_PAGE_SIZE) == 0));
 
 		if (i == 0)
@@ -194,11 +195,12 @@ static void saa716x_dmabuf_sgpagefill(struct saa716x_dmabuf *dmabuf, struct scat
 			addr = ((u64)sg_dma_address(sg_cur)) + (j * SAA716x_PAGE_SIZE) - sg_cur->offset;
 
 			BUG_ON(addr == 0);
-			page[k * 2] = (u32 )addr; /* Low */
+			page[k * 2] = (u32) addr; /* Low */
 			page[k * 2 + 1] = (u32 )(((u64) addr) >> 32); /* High */
 			BUG_ON(page[k * 2] % SAA716x_PAGE_SIZE);
 			k++;
 		}
+		sg_cur = sg_next(sg_cur);
 	}
 
 	for (; k < (SAA716x_PAGE_SIZE / 8); k++) {
