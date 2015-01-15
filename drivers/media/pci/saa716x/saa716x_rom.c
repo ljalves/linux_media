@@ -1021,51 +1021,65 @@ int saa716x_eeprom_data(struct saa716x_dev *saa716x)
 	struct saa716x_romhdr rom_header;
 	struct saa716x_devinfo *device;
 
-	u8 buf[1024];
+	u8 *buf;
 	int i, ret = 0;
 	u32 offset = 0;
 
+	buf = kmalloc(1024, GFP_KERNEL);
+	if (buf == NULL) {
+		dev_err(&saa716x->pdev->dev,
+			"%s: out of memory (buf)\n", __func__);
+		goto err;
+	}
+
 	/* dump */
-	ret = saa716x_read_rombytes(saa716x, saa716x->id_offst, saa716x->id_len + 8, buf);
+	ret = saa716x_read_rombytes(saa716x,
+		saa716x->id_offst, saa716x->id_len + 8, buf);
 	if (ret < 0) {
-		dprintk(SAA716x_ERROR, 1, "EEPROM Read error <%d>", ret);
+		dev_err(&saa716x->pdev->dev,
+			"%s: EEPROM read error <%d>", __func__, ret);
 		goto err0;
 	}
 
 	/* Get header */
 	ret = saa716x_eeprom_header(saa716x, &rom_header, buf, &offset);
 	if (ret != 0) {
-		dprintk(SAA716x_ERROR, 1, "ERROR: Header Read failed <%d>", ret);
+		dev_err(&saa716x->pdev->dev,
+			"%s: header read failed <%d>", __func__, ret);
 		goto err0;
 	}
 
 	/* allocate for device info */
-	device = kzalloc(sizeof (struct saa716x_devinfo) * rom_header.devices, GFP_KERNEL);
+	device = kzalloc(sizeof (struct saa716x_devinfo) * rom_header.devices,
+			GFP_KERNEL);
 	if (device == NULL) {
-		dprintk(SAA716x_ERROR, 1, "ERROR: out of memory");
+		dev_err(&saa716x->pdev->dev,
+			"%s: out of memory (device)", __func__);
 		goto err0;
 	}
 
 	for (i = 0; i < rom_header.devices; i++) {
-		dprintk(SAA716x_NOTICE, 0, "    SAA%02x ROM: ===== Device %d =====\n",
-			saa716x->pdev->device,
-			i);
+		dev_dbg(&saa716x->pdev->dev,
+			"%s: SAA%02x ROM: ===== Device %d =====\n",
+			__func__, saa716x->pdev->device, i);
 
 		ret = saa716x_device_info(saa716x, &device[i], buf, &offset);
 		if (ret != 0) {
-			dprintk(SAA716x_ERROR, 1, "ERROR: Device info read failed <%d>", ret);
+			dev_err(&saa716x->pdev->dev,
+				"%s: device info read failed <%d>", __func__, ret);
 			goto err1;
 		}
 	}
 
+	kfree(buf);
 	kfree(device);
-
 	return 0;
 
 err1:
 	kfree(device);
-
 err0:
+	kfree(buf);
+err:
 	return ret;
 }
 EXPORT_SYMBOL_GPL(saa716x_eeprom_data);
