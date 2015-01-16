@@ -1246,6 +1246,98 @@ static struct saa716x_config saa716x_tbs6922_config = {
 };
 
 
+#define SAA716x_MODEL_TBS6923		"TurboSight TBS 6923"
+#define SAA716x_DEV_TBS6923		"DVB-S/S2"
+
+static void tbs6923_lnb_power(struct dvb_frontend *fe, int onoff)
+{
+	struct i2c_adapter *adapter = tas2101_get_i2c_adapter(fe, 0);
+	struct saa716x_i2c *i2c = i2c_get_adapdata(adapter);
+	struct saa716x_dev *dev = i2c->saa716x;
+	int enpwr_pin = 3;
+
+	/* lnb power, active low */
+	saa716x_gpio_set_output(dev, enpwr_pin);
+	if (onoff)
+		saa716x_gpio_write(dev, enpwr_pin, 0);
+	else
+		saa716x_gpio_write(dev, enpwr_pin, 1);
+}
+
+static struct tas2101_config tbs6923_cfg = {
+	.i2c_address   = 0x68,
+	.id            = ID_TAS2101,
+	.reset_demod   = NULL,
+	.lnb_power     = tbs6923_lnb_power,
+	.init          = {0x10, 0x32, 0x54, 0x76, 0xb8, 0x9a, 0x33},
+};
+
+static struct av201x_config tbs6923_av201x_cfg = {
+	.i2c_address = 0x63,
+	.id          = ID_AV2012,
+	.xtal_freq   = 27000,		/* kHz */
+};
+
+static int saa716x_tbs6923_frontend_attach(
+	struct saa716x_adapter *adapter, int count)
+{
+	struct saa716x_dev *dev = adapter->saa716x;
+
+	dev_dbg(&dev->pdev->dev, "%s frontend %d attaching\n",
+		dev->config->model_name, count);
+	if (count > 0)
+		goto err;
+
+	saa716x_gpio_set_output(dev, 2);
+	saa716x_gpio_write(dev, 2, 0);
+	msleep(60);
+	saa716x_gpio_write(dev, 2, 1);
+	msleep(120);
+
+	adapter->fe = dvb_attach(tas2101_attach, &tbs6923_cfg,
+				&dev->i2c[SAA716x_I2C_BUS_A].i2c_adapter);
+	if (adapter->fe == NULL)
+		goto err;
+
+	if (dvb_attach(av201x_attach, adapter->fe, &tbs6923_av201x_cfg,
+			tas2101_get_i2c_adapter(adapter->fe, 2)) == NULL) {
+		dvb_frontend_detach(adapter->fe);
+		adapter->fe = NULL;
+		dev_dbg(&dev->pdev->dev,
+			"%s frontend %d tuner attach failed\n",
+			dev->config->model_name, count);
+		goto err;
+	}
+
+	dev_dbg(&dev->pdev->dev, "%s frontend %d attached\n",
+		dev->config->model_name, count);
+
+	return 0;
+err:
+	dev_err(&dev->pdev->dev, "%s frontend %d attach failed\n",
+		dev->config->model_name, count);
+	return -ENODEV;
+}
+
+static struct saa716x_config saa716x_tbs6923_config = {
+	.model_name		= SAA716x_MODEL_TBS6923,
+	.dev_type		= SAA716x_DEV_TBS6923,
+	.boot_mode		= SAA716x_EXT_BOOT,
+	.adapters		= 1,
+	.frontend_attach	= saa716x_tbs6923_frontend_attach,
+	.irq_handler		= saa716x_budget_pci_irq,
+	.i2c_rate		= SAA716x_I2C_RATE_100,
+	.i2c_mode		= SAA716x_I2C_MODE_POLLING,
+	.adap_config		= {
+		{
+			/* adapter 0 */
+			.ts_port = 3, /* using FGPI 3 */
+			.worker = demux_worker
+		},
+	},
+};
+
+
 #define SAA716x_MODEL_TBS6925		"TurboSight TBS 6925"
 #define SAA716x_DEV_TBS6925		"DVB-S/S2"
 
@@ -2030,6 +2122,7 @@ static struct pci_device_id saa716x_budget_pci_table[] = {
 	MAKE_ENTRY(TURBOSIGHT_TBS6285, TBS6285,   SAA7160, &saa716x_tbs6285_config),
 	MAKE_ENTRY(TURBOSIGHT_TBS6220, TBS6220,   SAA7160, &saa716x_tbs6220_config),
 	MAKE_ENTRY(TURBOSIGHT_TBS6922, TBS6922,   SAA7160, &saa716x_tbs6922_config),
+	MAKE_ENTRY(TURBOSIGHT_TBS6923, TBS6923,   SAA7160, &saa716x_tbs6923_config),
 	MAKE_ENTRY(TURBOSIGHT_TBS6925, TBS6925,   SAA7160, &saa716x_tbs6925_config),
 	MAKE_ENTRY(TURBOSIGHT_TBS6982, TBS6982,   SAA7160, &saa716x_tbs6982_config),
 	MAKE_ENTRY(TURBOSIGHT_TBS6982, TBS6982SE, SAA7160, &saa716x_tbs6982se_config),
