@@ -790,7 +790,10 @@ static int rtl2832u_frontend_attach(struct dvb_usb_adapter *adap)
 	int ret;
 	struct dvb_usb_device *d = adap_to_d(adap);
 	struct rtl28xxu_priv *priv = d_to_priv(d);
+	struct rtl2832_platform_data platform_data;
 	const struct rtl2832_config *rtl2832_config;
+	struct i2c_board_info board_info = {};
+	struct i2c_client *client;
 
 	dev_dbg(&d->udev->dev, "%s:\n", __func__);
 
@@ -823,11 +826,25 @@ static int rtl2832u_frontend_attach(struct dvb_usb_adapter *adap)
 	}
 
 	/* attach demodulator */
-	adap->fe[0] = dvb_attach(rtl2832_attach, rtl2832_config, &d->i2c_adap);
-	if (!adap->fe[0]) {
+	platform_data.config = rtl2832_config;
+	platform_data.dvb_frontend = &adap->fe[0];
+	strlcpy(board_info.type, "rtl2832", I2C_NAME_SIZE);
+	board_info.addr = 0x10;
+	board_info.platform_data = &platform_data;
+	request_module("%s", board_info.type);
+	client = i2c_new_device(&d->i2c_adap, &board_info);
+	if (client == NULL || client->dev.driver == NULL) {
 		ret = -ENODEV;
 		goto err;
 	}
+
+	if (!try_module_get(client->dev.driver->owner)) {
+		i2c_unregister_device(client);
+		ret = -ENODEV;
+		goto err;
+	}
+
+	priv->i2c_client_demod = client;
 
 	/* RTL2832 I2C repeater */
 	priv->demod_i2c_adapter = rtl2832_get_i2c_adapter(adap->fe[0]);
@@ -837,7 +854,6 @@ static int rtl2832u_frontend_attach(struct dvb_usb_adapter *adap)
 
 	if (priv->slave_demod) {
 		struct i2c_board_info info = {};
-		struct i2c_client *client;
 
 		/*
 		 * We continue on reduced mode, without DVB-T2/C, using master
@@ -899,6 +915,31 @@ err_slave_demod_failed:
 err:
 	dev_dbg(&d->udev->dev, "%s: failed=%d\n", __func__, ret);
 	return ret;
+}
+
+static int rtl2832u_frontend_detach(struct dvb_usb_adapter *adap)
+{
+	struct dvb_usb_device *d = adap_to_d(adap);
+	struct rtl28xxu_priv *priv = d_to_priv(d);
+	struct i2c_client *client;
+
+	dev_dbg(&d->udev->dev, "%s:\n", __func__);
+
+	/* remove I2C slave demod */
+	client = priv->i2c_client_slave_demod;
+	if (client) {
+		module_put(client->dev.driver->owner);
+		i2c_unregister_device(client);
+	}
+
+	/* remove I2C demod */
+	client = priv->i2c_client_demod;
+	if (client) {
+		module_put(client->dev.driver->owner);
+		i2c_unregister_device(client);
+	}
+
+	return 0;
 }
 
 static struct qt1010_config rtl28xxu_qt1010_config = {
@@ -1135,6 +1176,24 @@ err:
 	return ret;
 }
 
+static int rtl2832u_tuner_detach(struct dvb_usb_adapter *adap)
+{
+	struct dvb_usb_device *d = adap_to_d(adap);
+	struct rtl28xxu_priv *priv = d_to_priv(d);
+	struct i2c_client *client;
+
+	dev_dbg(&d->udev->dev, "%s:\n", __func__);
+
+	/* remove I2C tuner */
+	client = priv->i2c_client_tuner;
+	if (client) {
+		module_put(client->dev.driver->owner);
+		i2c_unregister_device(client);
+	}
+
+	return 0;
+}
+
 static int rtl28xxu_init(struct dvb_usb_device *d)
 {
 	int ret;
@@ -1167,30 +1226,6 @@ static int rtl28xxu_init(struct dvb_usb_device *d)
 err:
 	dev_dbg(&d->udev->dev, "%s: failed=%d\n", __func__, ret);
 	return ret;
-}
-
-static void rtl28xxu_exit(struct dvb_usb_device *d)
-{
-	struct rtl28xxu_priv *priv = d->priv;
-	struct i2c_client *client;
-
-	dev_dbg(&d->udev->dev, "%s:\n", __func__);
-
-	/* remove I2C tuner */
-	client = priv->i2c_client_tuner;
-	if (client) {
-		module_put(client->dev.driver->owner);
-		i2c_unregister_device(client);
-	}
-
-	/* remove I2C slave demod */
-	client = priv->i2c_client_slave_demod;
-	if (client) {
-		module_put(client->dev.driver->owner);
-		i2c_unregister_device(client);
-	}
-
-	return;
 }
 
 static int rtl2831u_power_ctrl(struct dvb_usb_device *d, int onoff)
@@ -1574,9 +1609,10 @@ static const struct dvb_usb_device_properties rtl2832u_props = {
 	.i2c_algo = &rtl28xxu_i2c_algo,
 	.read_config = rtl2832u_read_config,
 	.frontend_attach = rtl2832u_frontend_attach,
+	.frontend_detach = rtl2832u_frontend_detach,
 	.tuner_attach = rtl2832u_tuner_attach,
+	.tuner_detach = rtl2832u_tuner_detach,
 	.init = rtl28xxu_init,
-	.exit = rtl28xxu_exit,
 	.get_rc_config = rtl2832u_get_rc_config,
 
 	.num_adapters = 1,
