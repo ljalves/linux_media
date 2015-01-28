@@ -94,13 +94,13 @@ static int saa716x_hybrid_pci_probe(struct pci_dev *pdev, const struct pci_devic
 	err = saa716x_jetpack_init(saa716x);
 	if (err) {
 		dprintk(SAA716x_ERROR, 1, "SAA716x Jetpack core Initialization failed");
-		goto fail1;
+		goto fail2;
 	}
 
 	err = saa716x_i2c_init(saa716x);
 	if (err) {
 		dprintk(SAA716x_ERROR, 1, "SAA716x I2C Initialization failed");
-		goto fail3;
+		goto fail2;
 	}
 
 	saa716x_gpio_init(saa716x);

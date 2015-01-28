@@ -129,7 +129,8 @@ struct saa716x_dev {
 	struct pci_dev			*pdev;
 	struct module			*module;
 
-	int				num; /* device count */
+	int				num_adapters; /* adapter count (adapters on this saa716x card) */
+	int				num;          /* device count  (saa716x based cards) */
 	int				verbose;
 
 	u8 				revision;

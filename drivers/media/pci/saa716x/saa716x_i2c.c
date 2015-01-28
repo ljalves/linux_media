@@ -703,6 +703,13 @@ int saa716x_i2c_init(struct saa716x_dev *saa716x)
 
 	return 0;
 exit:
+	/* delete already added i2c adapters */
+	while (i > 0) {
+		i2c--;
+		adapter = &i2c->i2c_adapter;
+		i2c_del_adapter(adapter);
+		i--;
+	}
 	return err;
 }
 EXPORT_SYMBOL_GPL(saa716x_i2c_init);

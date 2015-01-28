@@ -94,6 +94,7 @@ int saa716x_dvb_init(struct saa716x_dev *saa716x)
 
 	mutex_init(&saa716x->adap_lock);
 
+	saa716x->num_adapters = 0;
 	for (i = 0; i < config->adapters; i++) {
 
 		dprintk(SAA716x_DEBUG, 1, "dvb_register_adapter");
@@ -195,9 +196,9 @@ int saa716x_dvb_init(struct saa716x_dev *saa716x)
 				  SAA716X_TS_DMA_BUF_SIZE,
 				  config->adap_config[i].worker);
 
+		saa716x->num_adapters++;
 		saa716x_adap++;
 	}
-
 
 	return 0;
 
@@ -223,9 +224,9 @@ void saa716x_dvb_exit(struct saa716x_dev *saa716x)
 {
 	struct saa716x_adapter *saa716x_adap = saa716x->saa716x_adap;
 	struct i2c_client *client;
-	int i;
+	int i, count = saa716x->num_adapters;
 
-	for (i = 0; i < saa716x->config->adapters; i++) {
+	for (i = 0; i < count; i++) {
 
 		saa716x_fgpi_exit(saa716x, saa716x->config->adap_config[i].ts_port);
 
@@ -258,6 +259,7 @@ void saa716x_dvb_exit(struct saa716x_dev *saa716x)
 		dprintk(SAA716x_DEBUG, 1, "dvb_unregister_adapter");
 		dvb_unregister_adapter(&saa716x_adap->dvb_adapter);
 
+		saa716x->num_adapters--;
 		saa716x_adap++;
 	}
 
