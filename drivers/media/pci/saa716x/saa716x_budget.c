@@ -146,7 +146,6 @@ static int saa716x_budget_pci_probe(struct pci_dev *pdev, const struct pci_devic
 
 fail4:
 	saa716x_dvb_exit(saa716x);
-fail3:
 	saa716x_i2c_exit(saa716x);
 fail2:
 	saa716x_pci_exit(saa716x);
@@ -2110,6 +2109,233 @@ static struct saa716x_config saa716x_tbs6985_config = {
 };
 
 
+#define SAA716x_MODEL_TBS6991			"TurboSight TBS 6991"
+#define SAA716x_DEV_TBS6991			"DVB-S/S2"
+
+static void tbs6991_reset_fe(struct dvb_frontend *fe, int reset_pin)
+{
+	struct i2c_adapter *adapter = tas2101_get_i2c_adapter(fe, 0);
+        struct saa716x_i2c *i2c = i2c_get_adapdata(adapter);
+        struct saa716x_dev *dev = i2c->saa716x;
+
+	/* reset frontend, active low */
+	saa716x_gpio_set_output(dev, reset_pin);
+	saa716x_gpio_write(dev, reset_pin, 0);
+	msleep(60);
+	saa716x_gpio_write(dev, reset_pin, 1);
+	msleep(120);
+}
+
+static void tbs6991_reset_fe0(struct dvb_frontend *fe)
+{
+	tbs6991_reset_fe(fe, 20);
+}
+
+static void tbs6991_reset_fe1(struct dvb_frontend *fe)
+{
+	tbs6991_reset_fe(fe, 17);
+}
+
+static void tbs6991_lnb_power(struct dvb_frontend *fe,
+	int enpwr_pin, int onoff)
+{
+	struct i2c_adapter *adapter = tas2101_get_i2c_adapter(fe, 0);
+        struct saa716x_i2c *i2c = i2c_get_adapdata(adapter);
+        struct saa716x_dev *dev = i2c->saa716x;
+
+	/* lnb power, active low */
+	saa716x_gpio_set_output(dev, enpwr_pin);
+	if (onoff)
+		saa716x_gpio_write(dev, enpwr_pin, 0);
+	else
+		saa716x_gpio_write(dev, enpwr_pin, 1);
+}
+
+static void tbs6991_lnb0_power(struct dvb_frontend *fe, int onoff)
+{
+	tbs6991_lnb_power(fe, 5, onoff);
+}
+
+static void tbs6991_lnb1_power(struct dvb_frontend *fe, int onoff)
+{
+	tbs6991_lnb_power(fe, 22, onoff);
+}
+
+/*
+ tbs6991 seems to have different settings depending on a value that the closed
+ source driver reads from the eeprom. This is probabbly related to card HW revisons.
+ Details:
+ eeprom i2c addr = 0x1a
+ mem addr = 0xc201
+ if value == 0x66 or value == 0x68 then tsmode = 1 else 0
+
+ This needs to be tested and if needed implement a function to get that value
+ and set the proper tsmode
+*/
+#define TBS6991_TSMODE0	    (0x33)
+#define TBS6991_TSMODE1	    (0x31)
+#define TBS6991_TSMODE	    TBS6991_TSMODE0
+static struct tas2101_config tbs6991_cfg[] = {
+	{
+		.i2c_address   = 0x68,
+		.id            = ID_TAS2101,
+		.reset_demod   = tbs6991_reset_fe0,
+		.lnb_power     = tbs6991_lnb0_power,
+		.init          = {0x10, 0x32, 0x54, 0x76, 0xa8, 0x9b, TBS6991_TSMODE},
+	},
+	{
+		.i2c_address   = 0x68,
+		.id            = ID_TAS2101,
+		.reset_demod   = tbs6991_reset_fe1,
+		.lnb_power     = tbs6991_lnb1_power,
+		.init          = {0x30, 0x21, 0x54, 0x76, 0xb8, 0x9a, TBS6991_TSMODE},
+	}
+};
+
+static struct av201x_config tbs6991_av201x_cfg = {
+	.i2c_address = 0x63,
+	.id          = ID_AV2012,
+	.xtal_freq   = 27000,		/* kHz */
+};
+
+static int saa716x_tbs6991_frontend_attach(
+	struct saa716x_adapter *adapter, int count)
+{
+	struct saa716x_dev *dev = adapter->saa716x;
+
+	dev_dbg(&dev->pdev->dev, "%s frontend %d attaching\n",
+		dev->config->model_name, count);
+	if (count > 1)
+		goto err;
+
+	adapter->fe = dvb_attach(tas2101_attach, &tbs6991_cfg[count],
+				&dev->i2c[count].i2c_adapter);
+	if (adapter->fe == NULL)
+		goto err;
+
+	if (dvb_attach(av201x_attach, adapter->fe, &tbs6991_av201x_cfg,
+			tas2101_get_i2c_adapter(adapter->fe, 2)) == NULL) {
+		dvb_frontend_detach(adapter->fe);
+		adapter->fe = NULL;
+		dev_dbg(&dev->pdev->dev,
+			"%s frontend %d tuner attach failed\n",
+			dev->config->model_name, count);
+		goto err;
+	}
+
+	dev_dbg(&dev->pdev->dev, "%s frontend %d attached\n",
+		dev->config->model_name, count);
+
+	return 0;
+err:
+	dev_err(&dev->pdev->dev, "%s frontend %d attach failed\n",
+		dev->config->model_name, count);
+	return -ENODEV;
+}
+
+static struct saa716x_config saa716x_tbs6991_config = {
+	.model_name		= SAA716x_MODEL_TBS6991,
+	.dev_type		= SAA716x_DEV_TBS6991,
+	.boot_mode		= SAA716x_EXT_BOOT,
+	.adapters		= 2,
+	.frontend_attach	= saa716x_tbs6991_frontend_attach,
+	.irq_handler		= saa716x_budget_pci_irq,
+	.i2c_rate		= SAA716x_I2C_RATE_400,
+	.i2c_mode		= SAA716x_I2C_MODE_POLLING,
+	.adap_config		= {
+		{
+			/* adapter 0 */
+			.ts_port = 1, /* using FGPI 3 */
+			.worker = demux_worker
+		},
+		{
+			/* adapter 1 */
+			.ts_port = 3, /* using FGPI 1 */
+			.worker = demux_worker
+		},
+	},
+};
+
+
+#define SAA716x_MODEL_TBS6991SE			"TurboSight TBS 6991SE"
+#define SAA716x_DEV_TBS6991SE			"DVB-S/S2"
+
+static struct tas2101_config tbs6991se_cfg[] = {
+	{
+		.i2c_address   = 0x68,
+		.id            = ID_TAS2101,
+		.reset_demod   = NULL,
+		.lnb_power     = tbs6991_lnb0_power,
+		.init          = {0x10, 0x32, 0x54, 0x76, 0x8b, 0x9a, 0x33},
+	},
+	{
+		.i2c_address   = 0x68,
+		.id            = ID_TAS2101,
+		.reset_demod   = NULL,
+		.lnb_power     = tbs6991_lnb1_power,
+		.init          = {0x10, 0x32, 0x54, 0x76, 0x8b, 0x9a, 0x33},
+	}
+};
+
+static int saa716x_tbs6991se_frontend_attach(
+	struct saa716x_adapter *adapter, int count)
+{
+	struct saa716x_dev *dev = adapter->saa716x;
+
+	dev_dbg(&dev->pdev->dev, "%s frontend %d attaching\n",
+		dev->config->model_name, count);
+	if (count > 1)
+		goto err;
+
+	adapter->fe = dvb_attach(tas2101_attach, &tbs6991se_cfg[count],
+				&dev->i2c[count].i2c_adapter);
+	if (adapter->fe == NULL)
+		goto err;
+
+	if (dvb_attach(av201x_attach, adapter->fe, &tbs6991_av201x_cfg,
+			tas2101_get_i2c_adapter(adapter->fe, 2)) == NULL) {
+		dvb_frontend_detach(adapter->fe);
+		adapter->fe = NULL;
+		dev_dbg(&dev->pdev->dev,
+			"%s frontend %d tuner attach failed\n",
+			dev->config->model_name, count);
+		goto err;
+	}
+
+	dev_dbg(&dev->pdev->dev, "%s frontend %d attached\n",
+		dev->config->model_name, count);
+
+	return 0;
+err:
+	dev_err(&dev->pdev->dev, "%s frontend %d attach failed\n",
+		dev->config->model_name, count);
+	return -ENODEV;
+}
+
+static struct saa716x_config saa716x_tbs6991se_config = {
+	.model_name		= SAA716x_MODEL_TBS6991SE,
+	.dev_type		= SAA716x_DEV_TBS6991SE,
+	.boot_mode		= SAA716x_EXT_BOOT,
+	.adapters		= 2,
+	.frontend_attach	= saa716x_tbs6991se_frontend_attach,
+	.irq_handler		= saa716x_budget_pci_irq,
+	.i2c_rate		= SAA716x_I2C_RATE_400,
+	.i2c_mode		= SAA716x_I2C_MODE_POLLING,
+	.adap_config		= {
+		{
+			/* adapter 0 */
+			.ts_port = 1, /* using FGPI 3 */
+			.worker = demux_worker
+		},
+		{
+			/* adapter 1 */
+			.ts_port = 3, /* using FGPI 1 */
+			.worker = demux_worker
+		},
+	},
+};
+
+
 static struct pci_device_id saa716x_budget_pci_table[] = {
 	MAKE_ENTRY(TWINHAN_TECHNOLOGIES, TWINHAN_VP_1028, SAA7160, &saa716x_vp1028_config), /* VP-1028 */
 	MAKE_ENTRY(TWINHAN_TECHNOLOGIES, TWINHAN_VP_3071, SAA7160, &saa716x_vp3071_config), /* VP-3071 */
@@ -2129,6 +2355,8 @@ static struct pci_device_id saa716x_budget_pci_table[] = {
 	MAKE_ENTRY(TURBOSIGHT_TBS6984, TBS6984,   SAA7160, &saa716x_tbs6984_config),
 	MAKE_ENTRY(TURBOSIGHT_TBS6985, TBS6985,   SAA7160, &saa716x_tbs6985_config),
 	MAKE_ENTRY(TURBOSIGHT_TBS6985, TBS6985+1, SAA7160, &saa716x_tbs6985_config),
+	MAKE_ENTRY(TURBOSIGHT_TBS6991, TBS6991,   SAA7160, &saa716x_tbs6991_config),
+	MAKE_ENTRY(TURBOSIGHT_TBS6991, TBS6991+1, SAA7160, &saa716x_tbs6991se_config),
 	MAKE_ENTRY(TECHNOTREND,        TT4100,    SAA7160, &saa716x_tbs6922_config),
 	{ }
 };

@@ -46,6 +46,9 @@
 #define TURBOSIGHT_TBS6985	0x6985
 #define TBS6985			0x0001
 
+#define TURBOSIGHT_TBS6991	0x6991
+#define TBS6991			0x0001
+
 #define TECHNOTREND		0x13c2
 #define TT4100			0x3010
 
