@@ -18,7 +18,6 @@
 #include <linux/platform_device.h>
 #include <linux/sched.h>
 #include <linux/slab.h>
-#include <linux/version.h>
 #include <linux/videodev2.h>
 #include <linux/workqueue.h>
 #include <media/v4l2-ctrls.h>
@@ -813,7 +812,7 @@ static int vidioc_decoder_cmd(struct file *file, void *priv,
 	unsigned long flags;
 
 	switch (cmd->cmd) {
-	case V4L2_ENC_CMD_STOP:
+	case V4L2_DEC_CMD_STOP:
 		if (cmd->flags != 0)
 			return -EINVAL;
 
