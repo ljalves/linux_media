@@ -544,9 +544,7 @@ static int register_dvb(struct cx231xx_dvb *dvb,
 		       dev->name, result);
 		goto fail_adapter;
 	}
-#ifdef CONFIG_MEDIA_CONTROLLER_DVB
-	dvb->adapter.mdev = dev->media_dev;
-#endif
+	dvb_register_media_controller(&dvb->adapter, dev->media_dev);
 
 	/* Ensure all frontends negotiate bus access */
 	dvb->frontend->ops.ts_bus_ctrl = cx231xx_dvb_bus_ctrl;
@@ -619,7 +617,8 @@ static int register_dvb(struct cx231xx_dvb *dvb,
 
 	/* register network adapter */
 	dvb_net_init(&dvb->adapter, &dvb->net, &dvb->demux.dmx);
-	dvb_create_media_graph(dev->media_dev);
+	dvb_create_media_graph(&dvb->adapter);
+
 	return 0;
 
 fail_fe_conn:

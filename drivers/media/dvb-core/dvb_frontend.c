@@ -692,7 +692,9 @@ static int dvb_frontend_thread(void *data)
 	struct dvb_frontend_private *fepriv = fe->frontend_priv;
 	fe_status_t s;
 	enum dvbfe_algo algo;
+#ifdef CONFIG_MEDIA_CONTROLLER_DVB
 	int ret;
+#endif
 
 	bool re_tune = false;
 	bool semheld = false;
@@ -712,7 +714,7 @@ static int dvb_frontend_thread(void *data)
 		/* FIXME: return an error if it fails */
 		dev_info(fe->dvb->device,
 			"proceeding with FE task\n");
-	} else {
+	} else if (fepriv->pipe_start_entity) {
 		ret = media_entity_pipeline_start(fepriv->pipe_start_entity,
 						  &fepriv->pipe);
 		if (ret)
@@ -830,7 +832,8 @@ restart:
 	}
 
 #ifdef CONFIG_MEDIA_CONTROLLER_DVB
-	media_entity_pipeline_stop(fepriv->pipe_start_entity);
+	if (fepriv->pipe_start_entity)
+		media_entity_pipeline_stop(fepriv->pipe_start_entity);
 	fepriv->pipe_start_entity = NULL;
 #endif
 
