@@ -167,7 +167,10 @@ static int mn88473_read_status(struct dvb_frontend *fe, fe_status_t *status)
 {
 	struct i2c_client *client = fe->demodulator_priv;
 	struct mn88473_dev *dev = i2c_get_clientdata(client);
+	struct dtv_frontend_properties *c = &fe->dtv_property_cache;
 	int ret;
+	unsigned int utmp;
+	int lock = 0;
 
 	*status = 0;
 
@@ -176,8 +179,51 @@ static int mn88473_read_status(struct dvb_frontend *fe, fe_status_t *status)
 		goto err;
 	}
 
-	*status = FE_HAS_SIGNAL | FE_HAS_CARRIER | FE_HAS_VITERBI |
-			FE_HAS_SYNC | FE_HAS_LOCK;
+	switch (c->delivery_system) {
+	case SYS_DVBT:
+		ret = regmap_read(dev->regmap[0], 0x62, &utmp);
+		if (ret)
+			goto err;
+		if (!(utmp & 0xA0)) {
+			if ((utmp & 0xF) >= 0x03)
+				*status |= FE_HAS_SIGNAL;
+			if ((utmp & 0xF) >= 0x09)
+				lock = 1;
+		}
+		break;
+	case SYS_DVBT2:
+		ret = regmap_read(dev->regmap[2], 0x8B, &utmp);
+		if (ret)
+			goto err;
+		if (!(utmp & 0x40)) {
+			if ((utmp & 0xF) >= 0x07)
+				*status |= FE_HAS_SIGNAL;
+			if ((utmp & 0xF) >= 0x0a)
+				*status |= FE_HAS_CARRIER;
+			if ((utmp & 0xF) >= 0x0d)
+				*status |= FE_HAS_VITERBI | FE_HAS_SYNC | FE_HAS_LOCK;
+		}
+		break;
+	case SYS_DVBC_ANNEX_A:
+		ret = regmap_read(dev->regmap[1], 0x85, &utmp);
+		if (ret)
+			goto err;
+		if (!(utmp & 0x40)) {
+			ret = regmap_read(dev->regmap[1], 0x89, &utmp);
+			if (ret)
+				goto err;
+			if (utmp & 0x01)
+				lock = 1;
+		}
+		break;
+	default:
+		ret = -EINVAL;
+		goto err;
+	}
+
+	if (lock)
+		*status = FE_HAS_SIGNAL | FE_HAS_CARRIER | FE_HAS_VITERBI |
+				FE_HAS_SYNC | FE_HAS_LOCK;
 
 	return 0;
 err:
@@ -192,11 +238,23 @@ static int mn88473_init(struct dvb_frontend *fe)
 	int ret, len, remaining;
 	const struct firmware *fw = NULL;
 	u8 *fw_file = MN88473_FIRMWARE;
+	unsigned int tmp;
 
 	dev_dbg(&client->dev, "\n");
 
-	if (dev->warm)
+	/* set cold state by default */
+	dev->warm = false;
+
+	/* check if firmware is already running */
+	ret = regmap_read(dev->regmap[0], 0xf5, &tmp);
+	if (ret)
+		goto err;
+
+	if (!(tmp & 0x1)) {
+		dev_info(&client->dev, "firmware already running\n");
+		dev->warm = true;
 		return 0;
+	}
 
 	/* request the firmware, this will block and timeout */
 	ret = request_firmware(&fw, fw_file, &client->dev);
@@ -226,6 +284,20 @@ static int mn88473_init(struct dvb_frontend *fe)
 			goto err;
 		}
 	}
+
+	/* parity check of firmware */
+	ret = regmap_read(dev->regmap[0], 0xf8, &tmp);
+	if (ret) {
+		dev_err(&client->dev,
+				"parity reg read failed=%d\n", ret);
+		goto err;
+	}
+	if (tmp & 0x10) {
+		dev_err(&client->dev,
+				"firmware parity check failed=0x%x\n", tmp);
+		goto err;
+	}
+	dev_err(&client->dev, "firmware parity check succeeded=0x%x\n", tmp);
 
 	ret = regmap_write(dev->regmap[0], 0xf5, 0x00);
 	if (ret)
@@ -270,6 +342,8 @@ static struct dvb_frontend_ops mn88473_ops = {
 	.delsys = {SYS_DVBT, SYS_DVBT2, SYS_DVBC_ANNEX_AC},
 	.info = {
 		.name = "Panasonic MN88473",
+		.symbol_rate_min = 1000000,
+		.symbol_rate_max = 7200000,
 		.caps =	FE_CAN_FEC_1_2                 |
 			FE_CAN_FEC_2_3                 |
 			FE_CAN_FEC_3_4                 |

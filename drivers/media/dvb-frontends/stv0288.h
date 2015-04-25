@@ -46,7 +46,7 @@ struct stv0288_config {
 	void (*set_lock_led)(struct dvb_frontend *fe, int offon);
 };
 
-#if IS_ENABLED(CONFIG_DVB_STV0288)
+#if IS_REACHABLE(CONFIG_DVB_STV0288)
 extern struct dvb_frontend *stv0288_attach(const struct stv0288_config *config,
 					   struct i2c_adapter *i2c);
 #else

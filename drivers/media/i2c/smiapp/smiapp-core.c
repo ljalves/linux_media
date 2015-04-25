@@ -344,7 +344,7 @@ static const struct smiapp_csi_data_format smiapp_csi_data_formats[] = {
 	{ MEDIA_BUS_FMT_SGBRG8_1X8, 8, 8, SMIAPP_PIXEL_ORDER_GBRG, },
 };
 
-const char *pixel_order_str[] = { "GRBG", "RGGB", "BGGR", "GBRG" };
+static const char *pixel_order_str[] = { "GRBG", "RGGB", "BGGR", "GBRG" };
 
 #define to_csi_format_idx(fmt) (((unsigned long)(fmt)			\
 				 - (unsigned long)smiapp_csi_data_formats) \
@@ -2977,12 +2977,7 @@ static struct smiapp_platform_data *smiapp_get_pdata(struct device *dev)
 	struct smiapp_platform_data *pdata;
 	struct v4l2_of_endpoint bus_cfg;
 	struct device_node *ep;
-	struct property *prop;
-	__be32 *val;
 	uint32_t asize;
-#ifdef CONFIG_OF
-	unsigned int i;
-#endif
 	int rval;
 
 	if (!dev->of_node)
@@ -2993,10 +2988,8 @@ static struct smiapp_platform_data *smiapp_get_pdata(struct device *dev)
 		return NULL;
 
 	pdata = devm_kzalloc(dev, sizeof(*pdata), GFP_KERNEL);
-	if (!pdata) {
-		rval = -ENOMEM;
+	if (!pdata)
 		goto out_err;
-	}
 
 	v4l2_of_parse_endpoint(ep, &bus_cfg);
 
@@ -3006,7 +2999,6 @@ static struct smiapp_platform_data *smiapp_get_pdata(struct device *dev)
 		break;
 		/* FIXME: add CCP2 support. */
 	default:
-		rval = -EINVAL;
 		goto out_err;
 	}
 
@@ -3030,8 +3022,7 @@ static struct smiapp_platform_data *smiapp_get_pdata(struct device *dev)
 	dev_dbg(dev, "reset %d, nvm %d, clk %d, csi %d\n", pdata->xshutdown,
 		pdata->nvm_size, pdata->ext_clk, pdata->csi_signalling_mode);
 
-	rval = of_get_property(
-		dev->of_node, "link-frequencies", &asize) ? 0 : -ENOENT;
+	rval = of_get_property(ep, "link-frequencies", &asize) ? 0 : -ENOENT;
 	if (rval) {
 		dev_warn(dev, "can't get link-frequencies array size\n");
 		goto out_err;
@@ -3044,25 +3035,12 @@ static struct smiapp_platform_data *smiapp_get_pdata(struct device *dev)
 	}
 
 	asize /= sizeof(*pdata->op_sys_clock);
-	/*
-	 * Read a 64-bit array --- this will be replaced with a
-	 * of_property_read_u64_array() once it's merged.
-	 */
-	prop = of_find_property(dev->of_node, "link-frequencies", NULL);
-	if (!prop)
+	rval = of_property_read_u64_array(
+		ep, "link-frequencies", pdata->op_sys_clock, asize);
+	if (rval) {
+		dev_warn(dev, "can't get link-frequencies\n");
 		goto out_err;
-	if (!prop->value)
-		goto out_err;
-	if (asize * sizeof(*pdata->op_sys_clock) > prop->length)
-		goto out_err;
-	val = prop->value;
-	if (IS_ERR(val))
-		goto out_err;
-
-#ifdef CONFIG_OF
-	for (i = 0; i < asize; i++)
-		pdata->op_sys_clock[i] = of_read_number(val + i * 2, 2);
-#endif
+	}
 
 	for (; asize > 0; asize--)
 		dev_dbg(dev, "freq %d: %lld\n", asize - 1,

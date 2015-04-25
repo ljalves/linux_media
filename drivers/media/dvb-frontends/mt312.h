@@ -39,7 +39,7 @@ struct mt312_config {
 	void (*set_lock_led)(struct dvb_frontend *fe, int offon);
 };
 
-#if IS_ENABLED(CONFIG_DVB_MT312)
+#if IS_REACHABLE(CONFIG_DVB_MT312)
 struct dvb_frontend *mt312_attach(const struct mt312_config *config,
 					struct i2c_adapter *i2c);
 #else
