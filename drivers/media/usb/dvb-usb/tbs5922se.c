@@ -181,10 +181,10 @@ static struct dvb_usb_device_properties tbs5922se_properties;
 
 static struct tas2101_config tbs5922_cfg = {
 	.i2c_address   = 0x68,
-	.id            = ID_TAS2100,
+	.id            = ID_TAS2101,
 	.reset_demod   = NULL,
 	.lnb_power     = NULL,
-	.init          = {0xb8, 0x67, 0x45, 0x23, 0x01, 0x9a, 0x33},
+	.init          = {0x67, 0x45, 0xba, 0x23, 0x01, 0x98, 0x33},
 };
 
 static struct av201x_config tbs5922_av201x_cfg = {
