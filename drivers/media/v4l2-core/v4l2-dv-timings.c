@@ -313,6 +313,7 @@ EXPORT_SYMBOL_GPL(v4l2_print_dv_timings);
 #define CVT_MIN_V_BPORCH	7	/* lines */
 #define CVT_MIN_V_PORCH_RND	3	/* lines */
 #define CVT_MIN_VSYNC_BP	550	/* min time of vsync + back porch (us) */
+#define CVT_HSYNC_PERCENT       8       /* nominal hsync as percentage of line */
 
 /* Normal blanking for CVT uses GTF to calculate horizontal blanking */
 #define CVT_CELL_GRAN		8	/* character cell granularity */
@@ -365,22 +366,28 @@ bool v4l2_detect_cvt(unsigned frame_height, unsigned hfreq, unsigned vsync,
 	else
 		return false;
 
+	if (hfreq == 0)
+		return false;
+
 	/* Vertical */
 	if (reduced_blanking) {
 		v_fp = CVT_RB_V_FPORCH;
-		v_bp = (CVT_RB_MIN_V_BLANK * hfreq + 1999999) / 1000000;
+		v_bp = (CVT_RB_MIN_V_BLANK * hfreq) / 1000000 + 1;
 		v_bp -= vsync + v_fp;
 
 		if (v_bp < CVT_RB_MIN_V_BPORCH)
 			v_bp = CVT_RB_MIN_V_BPORCH;
 	} else {
 		v_fp = CVT_MIN_V_PORCH_RND;
-		v_bp = (CVT_MIN_VSYNC_BP * hfreq + 1999999) / 1000000 - vsync;
+		v_bp = (CVT_MIN_VSYNC_BP * hfreq) / 1000000 + 1 - vsync;
 
 		if (v_bp < CVT_MIN_V_BPORCH)
 			v_bp = CVT_MIN_V_BPORCH;
 	}
 	image_height = (frame_height - v_fp - vsync - v_bp + 1) & ~0x1;
+
+	if (image_height < 0)
+		return false;
 
 	/* Aspect ratio based on vsync */
 	switch (vsync) {
@@ -436,8 +443,8 @@ bool v4l2_detect_cvt(unsigned frame_height, unsigned hfreq, unsigned vsync,
 		h_bp = h_blank / 2;
 		frame_width = image_width + h_blank;
 
-		hsync = (frame_width * 8 + 50) / 100;
-		hsync = hsync - hsync % CVT_CELL_GRAN;
+		hsync = frame_width * CVT_HSYNC_PERCENT / 100;
+		hsync = (hsync / CVT_CELL_GRAN) * CVT_CELL_GRAN;
 		h_fp = h_blank - hsync - h_bp;
 	}
 
@@ -527,10 +534,17 @@ bool v4l2_detect_gtf(unsigned frame_height,
 	else
 		return false;
 
+	if (hfreq == 0)
+		return false;
+
 	/* Vertical */
 	v_fp = GTF_V_FP;
-	v_bp = (GTF_MIN_VSYNC_BP * hfreq + 999999) / 1000000 - vsync;
+
+	v_bp = (GTF_MIN_VSYNC_BP * hfreq + 500000) / 1000000 - vsync;
 	image_height = (frame_height - v_fp - vsync - v_bp + 1) & ~0x1;
+
+	if (image_height < 0)
+		return false;
 
 	if (aspect.numerator == 0 || aspect.denominator == 0) {
 		aspect.numerator = 16;
@@ -551,14 +565,15 @@ bool v4l2_detect_gtf(unsigned frame_height,
 			(hfreq * (100 - GTF_S_C_PRIME) + GTF_S_M_PRIME * 1000) / 2) /
 			(hfreq * (100 - GTF_S_C_PRIME) + GTF_S_M_PRIME * 1000);
 
-	h_blank = h_blank - h_blank % (2 * GTF_CELL_GRAN);
+	h_blank = ((h_blank + GTF_CELL_GRAN) / (2 * GTF_CELL_GRAN)) *
+		  (2 * GTF_CELL_GRAN);
 	frame_width = image_width + h_blank;
 
 	pix_clk = (image_width + h_blank) * hfreq;
 	pix_clk = pix_clk / GTF_PXL_CLK_GRAN * GTF_PXL_CLK_GRAN;
 
 	hsync = (frame_width * 8 + 50) / 100;
-	hsync = hsync - hsync % GTF_CELL_GRAN;
+	hsync = ((hsync + GTF_CELL_GRAN / 2) / GTF_CELL_GRAN) * GTF_CELL_GRAN;
 
 	h_fp = h_blank / 2 - hsync;
 

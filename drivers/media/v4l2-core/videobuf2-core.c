@@ -1657,9 +1657,7 @@ static int __buf_prepare(struct vb2_buffer *vb, const struct v4l2_buffer *b)
 		ret = __qbuf_mmap(vb, b);
 		break;
 	case V4L2_MEMORY_USERPTR:
-		down_read(&current->mm->mmap_sem);
 		ret = __qbuf_userptr(vb, b);
-		up_read(&current->mm->mmap_sem);
 		break;
 	case V4L2_MEMORY_DMABUF:
 		ret = __qbuf_dmabuf(vb, b);
@@ -3253,23 +3251,17 @@ EXPORT_SYMBOL_GPL(vb2_thread_start);
 int vb2_thread_stop(struct vb2_queue *q)
 {
 	struct vb2_threadio_data *threadio = q->threadio;
-	struct vb2_fileio_data *fileio = q->fileio;
 	int err;
 
 	if (threadio == NULL)
 		return 0;
-	call_void_qop(q, wait_finish, q);
 	threadio->stop = true;
-	vb2_internal_streamoff(q, q->type);
-	call_void_qop(q, wait_prepare, q);
+	/* Wake up all pending sleeps in the thread */
+	vb2_queue_error(q);
 	err = kthread_stop(threadio->thread);
-	q->fileio = NULL;
-	fileio->req.count = 0;
-	vb2_reqbufs(q, &fileio->req);
-	kfree(fileio);
+	__vb2_cleanup_fileio(q);
 	threadio->thread = NULL;
 	kfree(threadio);
-	q->fileio = NULL;
 	q->threadio = NULL;
 	return err;
 }

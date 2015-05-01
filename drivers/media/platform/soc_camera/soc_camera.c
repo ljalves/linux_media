@@ -484,10 +484,14 @@ static int soc_camera_init_user_formats(struct soc_camera_device *icd)
 	struct soc_camera_host *ici = to_soc_camera_host(icd->parent);
 	unsigned int i, fmts = 0, raw_fmts = 0;
 	int ret;
-	u32 code;
+	struct v4l2_subdev_mbus_code_enum code = {
+		.which = V4L2_SUBDEV_FORMAT_ACTIVE,
+	};
 
-	while (!v4l2_subdev_call(sd, video, enum_mbus_fmt, raw_fmts, &code))
+	while (!v4l2_subdev_call(sd, pad, enum_mbus_code, NULL, &code)) {
 		raw_fmts++;
+		code.index++;
+	}
 
 	if (!ici->ops->get_formats)
 		/*
@@ -521,11 +525,12 @@ static int soc_camera_init_user_formats(struct soc_camera_device *icd)
 	fmts = 0;
 	for (i = 0; i < raw_fmts; i++)
 		if (!ici->ops->get_formats) {
-			v4l2_subdev_call(sd, video, enum_mbus_fmt, i, &code);
+			code.index = i;
+			v4l2_subdev_call(sd, pad, enum_mbus_code, NULL, &code);
 			icd->user_formats[fmts].host_fmt =
-				soc_mbus_get_fmtdesc(code);
+				soc_mbus_get_fmtdesc(code.code);
 			if (icd->user_formats[fmts].host_fmt)
-				icd->user_formats[fmts++].code = code;
+				icd->user_formats[fmts++].code = code.code;
 		} else {
 			ret = ici->ops->get_formats(icd, i,
 						    &icd->user_formats[fmts]);
@@ -1284,7 +1289,10 @@ static struct soc_camera_device *soc_camera_add_pdev(struct soc_camera_async_cli
 static int soc_camera_probe_finish(struct soc_camera_device *icd)
 {
 	struct v4l2_subdev *sd = soc_camera_to_subdev(icd);
-	struct v4l2_mbus_framefmt mf;
+	struct v4l2_subdev_format fmt = {
+		.which = V4L2_SUBDEV_FORMAT_ACTIVE,
+	};
+	struct v4l2_mbus_framefmt *mf = &fmt.format;
 	int ret;
 
 	sd->grp_id = soc_camera_grp_id(icd);
@@ -1314,11 +1322,11 @@ static int soc_camera_probe_finish(struct soc_camera_device *icd)
 		goto evidstart;
 
 	/* Try to improve our guess of a reasonable window format */
-	if (!v4l2_subdev_call(sd, video, g_mbus_fmt, &mf)) {
-		icd->user_width		= mf.width;
-		icd->user_height	= mf.height;
-		icd->colorspace		= mf.colorspace;
-		icd->field		= mf.field;
+	if (!v4l2_subdev_call(sd, pad, get_fmt, NULL, &fmt)) {
+		icd->user_width		= mf->width;
+		icd->user_height	= mf->height;
+		icd->colorspace		= mf->colorspace;
+		icd->field		= mf->field;
 	}
 	soc_camera_remove_device(icd);
 
@@ -1679,7 +1687,7 @@ eclkreg:
 eaddpdev:
 	platform_device_put(sasc->pdev);
 eallocpdev:
-	devm_kfree(ici->v4l2_dev.dev, sasc);
+	devm_kfree(ici->v4l2_dev.dev, info);
 	dev_err(ici->v4l2_dev.dev, "group probe failed: %d\n", ret);
 
 	return ret;
@@ -1708,7 +1716,6 @@ static void scan_of_host(struct soc_camera_host *ici)
 		if (!i)
 			soc_of_bind(ici, epn, ren->parent);
 
-		of_node_put(epn);
 		of_node_put(ren);
 
 		if (i) {
@@ -1716,6 +1723,8 @@ static void scan_of_host(struct soc_camera_host *ici)
 			break;
 		}
 	}
+
+	of_node_put(epn);
 }
 
 #else

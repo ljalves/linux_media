@@ -402,6 +402,12 @@ static struct dma_buf *vb2_dc_get_dmabuf(void *buf_priv, unsigned long flags)
 {
 	struct vb2_dc_buf *buf = buf_priv;
 	struct dma_buf *dbuf;
+	DEFINE_DMA_BUF_EXPORT_INFO(exp_info);
+
+	exp_info.ops = &vb2_dc_dmabuf_ops;
+	exp_info.size = buf->size;
+	exp_info.flags = flags;
+	exp_info.priv = buf;
 
 	if (!buf->sgt_base)
 		buf->sgt_base = vb2_dc_get_base_sgt(buf);
@@ -409,7 +415,7 @@ static struct dma_buf *vb2_dc_get_dmabuf(void *buf_priv, unsigned long flags)
 	if (WARN_ON(!buf->sgt_base))
 		return NULL;
 
-	dbuf = dma_buf_export(buf, &vb2_dc_dmabuf_ops, buf->size, flags, NULL);
+	dbuf = dma_buf_export(&exp_info);
 	if (IS_ERR(dbuf))
 		return NULL;
 
@@ -526,7 +532,9 @@ static void vb2_dc_put_userptr(void *buf_priv)
 		sg_free_table(sgt);
 		kfree(sgt);
 	}
+	down_read(&current->mm->mmap_sem);
 	vb2_put_vma(buf->vma);
+	up_read(&current->mm->mmap_sem);
 	kfree(buf);
 }
 
@@ -610,6 +618,7 @@ static void *vb2_dc_get_userptr(void *alloc_ctx, unsigned long vaddr,
 		goto fail_buf;
 	}
 
+	down_read(&current->mm->mmap_sem);
 	/* current->mm->mmap_sem is taken by videobuf2 core */
 	vma = find_vma(current->mm, vaddr);
 	if (!vma) {
@@ -632,11 +641,11 @@ static void *vb2_dc_get_userptr(void *alloc_ctx, unsigned long vaddr,
 	}
 
 	/* extract page list from userspace mapping */
-	ret = vb2_dc_get_user_pages(start, pages, n_pages, vma,
-				    dma_dir == DMA_FROM_DEVICE);
+	ret = vb2_dc_get_user_pages(start, pages, n_pages, vma, dma_dir);
 	if (ret) {
 		unsigned long pfn;
 		if (vb2_dc_get_user_pfn(start, n_pages, vma, &pfn) == 0) {
+			up_read(&current->mm->mmap_sem);
 			buf->dma_addr = vb2_dc_pfn_to_dma(buf->dev, pfn);
 			buf->size = size;
 			kfree(pages);
@@ -646,6 +655,7 @@ static void *vb2_dc_get_userptr(void *alloc_ctx, unsigned long vaddr,
 		pr_err("failed to get user pages\n");
 		goto fail_vma;
 	}
+	up_read(&current->mm->mmap_sem);
 
 	sgt = kzalloc(sizeof(*sgt), GFP_KERNEL);
 	if (!sgt) {
@@ -708,10 +718,12 @@ fail_get_user_pages:
 		while (n_pages)
 			put_page(pages[--n_pages]);
 
+	down_read(&current->mm->mmap_sem);
 fail_vma:
 	vb2_put_vma(buf->vma);
 
 fail_pages:
+	up_read(&current->mm->mmap_sem);
 	kfree(pages); /* kfree is NULL-proof */
 
 fail_buf:

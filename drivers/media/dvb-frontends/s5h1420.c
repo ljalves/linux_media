@@ -180,7 +180,7 @@ static int s5h1420_send_master_cmd (struct dvb_frontend* fe,
 	int result = 0;
 
 	dprintk("enter %s\n", __func__);
-	if (cmd->msg_len > 8)
+	if (cmd->msg_len > sizeof(cmd->msg))
 		return -EINVAL;
 
 	/* setup for DISEQC */
@@ -561,27 +561,33 @@ static void s5h1420_setfec_inversion(struct s5h1420_state* state,
 	} else {
 		switch (p->fec_inner) {
 		case FEC_1_2:
-			vit08 = 0x01; vit09 = 0x10;
+			vit08 = 0x01;
+			vit09 = 0x10;
 			break;
 
 		case FEC_2_3:
-			vit08 = 0x02; vit09 = 0x11;
+			vit08 = 0x02;
+			vit09 = 0x11;
 			break;
 
 		case FEC_3_4:
-			vit08 = 0x04; vit09 = 0x12;
+			vit08 = 0x04;
+			vit09 = 0x12;
 			break;
 
 		case FEC_5_6:
-			vit08 = 0x08; vit09 = 0x13;
+			vit08 = 0x08;
+			vit09 = 0x13;
 			break;
 
 		case FEC_6_7:
-			vit08 = 0x10; vit09 = 0x14;
+			vit08 = 0x10;
+			vit09 = 0x14;
 			break;
 
 		case FEC_7_8:
-			vit08 = 0x20; vit09 = 0x15;
+			vit08 = 0x20;
+			vit09 = 0x15;
 			break;
 
 		default:
