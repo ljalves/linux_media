@@ -626,6 +626,14 @@ static int tas2101_initfe(struct dvb_frontend *fe)
 	if (ret)
 		return ret;
 
+	if (priv->cfg->init2) {
+		t = tas2101_initfe2;
+		size = ARRAY_SIZE(tas2101_initfe2);
+		ret = tas2101_wrtable(priv, t, size);
+		if (ret)
+			return ret;
+	}
+
 	return 0;
 }
 

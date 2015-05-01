@@ -185,6 +185,7 @@ static struct tas2101_config tbs5922_cfg = {
 	.reset_demod   = NULL,
 	.lnb_power     = NULL,
 	.init          = {0xb8, 0x67, 0x45, 0x23, 0x01, 0x9a, 0x33},
+	.init2         = 0,
 };
 
 static struct av201x_config tbs5922_av201x_cfg = {

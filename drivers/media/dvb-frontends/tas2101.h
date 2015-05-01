@@ -43,6 +43,7 @@ struct tas2101_config {
 
 	/* frontend gpio/tuner init */
 	u8 init[7];
+	u8 init2;
 };
 
 
