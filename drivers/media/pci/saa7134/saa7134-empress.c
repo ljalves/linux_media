@@ -17,6 +17,9 @@
  *  Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  */
 
+#include "saa7134.h"
+#include "saa7134-reg.h"
+
 #include <linux/init.h>
 #include <linux/list.h>
 #include <linux/module.h>
@@ -25,9 +28,6 @@
 
 #include <media/v4l2-common.h>
 #include <media/v4l2-event.h>
-
-#include "saa7134-reg.h"
-#include "saa7134.h"
 
 /* ------------------------------------------------------------------ */
 
@@ -38,13 +38,6 @@ static unsigned int empress_nr[] = {[0 ... (SAA7134_MAXBOARDS - 1)] = UNSET };
 
 module_param_array(empress_nr, int, NULL, 0444);
 MODULE_PARM_DESC(empress_nr,"ts device number");
-
-static unsigned int debug;
-module_param(debug, int, 0644);
-MODULE_PARM_DESC(debug,"enable debug messages");
-
-#define dprintk(fmt, arg...)	if (debug)			\
-	printk(KERN_DEBUG "%s/empress: " fmt, dev->name , ## arg)
 
 /* ------------------------------------------------------------------ */
 
@@ -229,9 +222,9 @@ static void empress_signal_update(struct work_struct *work)
 		container_of(work, struct saa7134_dev, empress_workqueue);
 
 	if (dev->nosignal) {
-		dprintk("no video signal\n");
+		pr_debug("no video signal\n");
 	} else {
-		dprintk("video signal acquired\n");
+		pr_debug("video signal acquired\n");
 	}
 }
 
@@ -263,7 +256,7 @@ static int empress_init(struct saa7134_dev *dev)
 	struct vb2_queue *q;
 	int err;
 
-	dprintk("%s: %s\n",dev->name,__func__);
+	pr_debug("%s: %s\n", dev->name, __func__);
 	dev->empress_dev = video_device_alloc();
 	if (NULL == dev->empress_dev)
 		return -ENOMEM;
@@ -310,13 +303,13 @@ static int empress_init(struct saa7134_dev *dev)
 	err = video_register_device(dev->empress_dev,VFL_TYPE_GRABBER,
 				    empress_nr[dev->nr]);
 	if (err < 0) {
-		printk(KERN_INFO "%s: can't register video device\n",
+		pr_info("%s: can't register video device\n",
 		       dev->name);
 		video_device_release(dev->empress_dev);
 		dev->empress_dev = NULL;
 		return err;
 	}
-	printk(KERN_INFO "%s: registered device %s [mpeg]\n",
+	pr_info("%s: registered device %s [mpeg]\n",
 	       dev->name, video_device_node_name(dev->empress_dev));
 
 	empress_signal_update(&dev->empress_workqueue);
@@ -325,7 +318,7 @@ static int empress_init(struct saa7134_dev *dev)
 
 static int empress_fini(struct saa7134_dev *dev)
 {
-	dprintk("%s: %s\n",dev->name,__func__);
+	pr_debug("%s: %s\n", dev->name, __func__);
 
 	if (NULL == dev->empress_dev)
 		return 0;

@@ -118,8 +118,13 @@
 
 struct dw2102_state {
 	u8 initialized;
+	u8 last_lock;
 	struct i2c_client *i2c_client_tuner;
+
+	/* fe hook functions*/
 	int (*old_set_voltage)(struct dvb_frontend *f, fe_sec_voltage_t v);
+	int (*fe_read_status)(struct dvb_frontend *fe,
+		fe_status_t *status);
 };
 
 /* debug */
@@ -929,8 +934,6 @@ static int su3000_read_mac_address(struct dvb_usb_device *d, u8 mac[6])
 			break;
 		else
 			mac[i] = ibuf[0];
-
-		debug_dump(mac, 6, printk);
 	}
 
 	return 0;
@@ -1000,6 +1003,23 @@ static void dw210x_led_ctrl(struct dvb_frontend *fe, int offon)
 	if (offon)
 		msg.buf = led_on;
 	i2c_transfer(&udev_adap->dev->i2c_adap, &msg, 1);
+}
+
+static int tt_s2_4600_read_status(struct dvb_frontend *fe, fe_status_t *status)
+{
+	struct dvb_usb_adapter *d =
+		(struct dvb_usb_adapter *)(fe->dvb->priv);
+	struct dw2102_state *st = (struct dw2102_state *)d->dev->priv;
+	int ret;
+
+	ret = st->fe_read_status(fe, status);
+
+	/* resync slave fifo when signal change from unlock to lock */
+	if ((*status & FE_HAS_LOCK) && (!st->last_lock))
+		su3000_streaming_ctrl(d, 1);
+
+	st->last_lock = (*status & FE_HAS_LOCK) ? 1 : 0;
+	return ret;
 }
 
 static struct stv0299_config sharp_z0194a_config = {
@@ -1604,6 +1624,12 @@ static int tt_s2_4600_frontend_attach(struct dvb_usb_adapter *adap)
 
 	state->i2c_client_tuner = client;
 
+	/* hook fe: need to resync the slave fifo when signal locks */
+	state->fe_read_status = adap->fe_adap[0].fe->ops.read_status;
+	adap->fe_adap[0].fe->ops.read_status = tt_s2_4600_read_status;
+
+	state->last_lock = 0;
+
 	return 0;
 }
 
@@ -1709,6 +1735,8 @@ enum dw2102_table_entry {
 	GENIATECH_T220,
 	GENIATECH_T220A,
 	TECHNOTREND_S2_4600,
+	TEVII_S482_1,
+	TEVII_S482_2,
 };
 
 static struct usb_device_id dw2102_table[] = {
@@ -1735,6 +1763,8 @@ static struct usb_device_id dw2102_table[] = {
 	[GENIATECH_T220A] = {USB_DEVICE(0x0572, 0xC686)},
 	[TECHNOTREND_S2_4600] = {USB_DEVICE(USB_VID_TECHNOTREND,
 		USB_PID_TECHNOTREND_CONNECT_S2_4600)},
+	[TEVII_S482_1] = {USB_DEVICE(0x9022, 0xd483)},
+	[TEVII_S482_2] = {USB_DEVICE(0x9022, 0xd484)},
 	{ }
 };
 
@@ -2301,10 +2331,18 @@ static struct dvb_usb_device_properties tt_s2_4600_properties = {
 		} },
 		}
 	},
-	.num_device_descs = 1,
+	.num_device_descs = 3,
 	.devices = {
 		{ "TechnoTrend TT-connect S2-4600",
 			{ &dw2102_table[TECHNOTREND_S2_4600], NULL },
+			{ NULL },
+		},
+		{ "TeVii S482 (tuner 1)",
+			{ &dw2102_table[TEVII_S482_1], NULL },
+			{ NULL },
+		},
+		{ "TeVii S482 (tuner 2)",
+			{ &dw2102_table[TEVII_S482_2], NULL },
 			{ NULL },
 		},
 	}

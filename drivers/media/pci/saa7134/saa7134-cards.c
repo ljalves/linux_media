@@ -20,13 +20,14 @@
  *  Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  */
 
+#include "saa7134.h"
+#include "saa7134-reg.h"
+
 #include <linux/init.h>
 #include <linux/module.h>
 #include <linux/i2c.h>
 #include <linux/i2c-algo-bit.h>
 
-#include "saa7134-reg.h"
-#include "saa7134.h"
 #include "tuner-xc2028.h"
 #include <media/v4l2-common.h>
 #include <media/tveeprom.h>
@@ -7158,10 +7159,10 @@ MODULE_DEVICE_TABLE(pci, saa7134_pci_tbl);
 
 static void board_flyvideo(struct saa7134_dev *dev)
 {
-	printk("%s: there are different flyvideo cards with different tuners\n"
-	       "%s: out there, you might have to use the tuner=<nr> insmod\n"
-	       "%s: option to override the default value.\n",
-	       dev->name, dev->name, dev->name);
+	pr_warn("%s: there are different flyvideo cards with different tuners\n"
+		"%s: out there, you might have to use the tuner=<nr> insmod\n"
+		"%s: option to override the default value.\n",
+		dev->name, dev->name, dev->name);
 }
 
 static int saa7134_xc2028_callback(struct saa7134_dev *dev,
@@ -7380,7 +7381,7 @@ int saa7134_tuner_callback(void *priv, int component, int command, int arg)
 			return saa7134_xc5000_callback(dev, command, arg);
 		}
 	} else {
-		printk(KERN_ERR "saa7134: Error - device struct undefined.\n");
+		pr_err("saa7134: Error - device struct undefined.\n");
 		return -EINVAL;
 	}
 	return -EINVAL;
@@ -7411,12 +7412,12 @@ static void hauppauge_eeprom(struct saa7134_dev *dev, u8 *eeprom_data)
 	case 67659: /* WinTV-HVR1110 (OEM, no IR, hybrid, FM, SVid/Comp, RCA aud) */
 		break;
 	default:
-		printk(KERN_WARNING "%s: warning: "
+		pr_warn("%s: warning: "
 		       "unknown hauppauge model #%d\n", dev->name, tv.model);
 		break;
 	}
 
-	printk(KERN_INFO "%s: hauppauge eeprom: model=%d\n",
+	pr_info("%s: hauppauge eeprom: model=%d\n",
 	       dev->name, tv.model);
 }
 
@@ -7427,7 +7428,7 @@ int saa7134_board_init1(struct saa7134_dev *dev)
 	/* Always print gpio, often manufacturers encode tuner type and other info. */
 	saa_writel(SAA7134_GPIO_GPMODE0 >> 2, 0);
 	dev->gpio_value = saa_readl(SAA7134_GPIO_GPSTATUS0 >> 2);
-	printk(KERN_INFO "%s: board init: gpio is %x\n", dev->name, dev->gpio_value);
+	pr_info("%s: board init: gpio is %x\n", dev->name, dev->gpio_value);
 
 	switch (dev->board) {
 	case SAA7134_BOARD_FLYVIDEO2000:
@@ -7512,10 +7513,10 @@ int saa7134_board_init1(struct saa7134_dev *dev)
 		dev->has_remote = SAA7134_REMOTE_GPIO;
 		break;
 	case SAA7134_BOARD_MD5044:
-		printk("%s: seems there are two different versions of the MD5044\n"
-		       "%s: (with the same ID) out there.  If sound doesn't work for\n"
-		       "%s: you try the audio_clock_override=0x200000 insmod option.\n",
-		       dev->name,dev->name,dev->name);
+		pr_warn("%s: seems there are two different versions of the MD5044\n"
+			"%s: (with the same ID) out there.  If sound doesn't work for\n"
+			"%s: you try the audio_clock_override=0x200000 insmod option.\n",
+			dev->name, dev->name, dev->name);
 		break;
 	case SAA7134_BOARD_CINERGY400_CARDBUS:
 		/* power-up tuner chip */
@@ -7640,10 +7641,10 @@ int saa7134_board_init1(struct saa7134_dev *dev)
 		dev->has_remote = SAA7134_REMOTE_I2C;
 		break;
 	case SAA7134_BOARD_AVERMEDIA_A169_B:
-		printk("%s: %s: dual saa713x broadcast decoders\n"
-		       "%s: Sorry, none of the inputs to this chip are supported yet.\n"
-		       "%s: Dual decoder functionality is disabled for now, use the other chip.\n",
-		       dev->name,card(dev).name,dev->name,dev->name);
+		pr_warn("%s: %s: dual saa713x broadcast decoders\n"
+			"%s: Sorry, none of the inputs to this chip are supported yet.\n"
+			"%s: Dual decoder functionality is disabled for now, use the other chip.\n",
+			dev->name, card(dev).name, dev->name, dev->name);
 		break;
 	case SAA7134_BOARD_AVERMEDIA_M102:
 		/* enable tuner */
@@ -7789,7 +7790,7 @@ int saa7134_board_init2(struct saa7134_dev *dev)
 		if (board == dev->board)
 			break;
 		dev->board = board;
-		printk("%s: board type fixup: %s\n", dev->name,
+		pr_warn("%s: board type fixup: %s\n", dev->name,
 		saa7134_boards[dev->board].name);
 		dev->tuner_type = saa7134_boards[dev->board].tuner_type;
 
@@ -7810,7 +7811,7 @@ int saa7134_board_init2(struct saa7134_dev *dev)
 		 */
 		ret = i2c_transfer(&dev->i2c_adap, msg, 2);
 		if (ret != 2) {
-			printk(KERN_ERR "EEPROM read failure\n");
+			pr_err("EEPROM read failure\n");
 		} else if ((data[0] != 0) && (data[0] != 0xff)) {
 			/* old config structure */
 			subaddr = data[0] + 2;
@@ -7825,7 +7826,8 @@ int saa7134_board_init2(struct saa7134_dev *dev)
 				dev->tuner_type = TUNER_PHILIPS_FM1216ME_MK3;
 				break;
 			default:
-				printk(KERN_ERR "%s Can't determine tuner type %x from EEPROM\n", dev->name, tuner_t);
+				pr_err("%s Can't determine tuner type %x from EEPROM\n",
+				       dev->name, tuner_t);
 			}
 		} else if ((data[1] != 0) && (data[1] != 0xff)) {
 			/* new config structure */
@@ -7842,17 +7844,18 @@ int saa7134_board_init2(struct saa7134_dev *dev)
 				break;
 			case 0x001d:
 				dev->tuner_type = TUNER_PHILIPS_FMD1216ME_MK3;
-				printk(KERN_INFO "%s Board has DVB-T\n",
+				pr_info("%s Board has DVB-T\n",
 				       dev->name);
 				break;
 			default:
-				printk(KERN_ERR "%s Can't determine tuner type %x from EEPROM\n", dev->name, tuner_t);
+				pr_err("%s Can't determine tuner type %x from EEPROM\n",
+				       dev->name, tuner_t);
 			}
 		} else {
-			printk(KERN_ERR "%s unexpected config structure\n", dev->name);
+			pr_err("%s unexpected config structure\n", dev->name);
 		}
 
-		printk(KERN_INFO "%s Tuner type is %d\n", dev->name, dev->tuner_type);
+		pr_info("%s Tuner type is %d\n", dev->name, dev->tuner_type);
 		break;
 	}
 	case SAA7134_BOARD_PHILIPS_EUROPA:
@@ -7860,7 +7863,7 @@ int saa7134_board_init2(struct saa7134_dev *dev)
 			/* Reconfigure board as Snake reference design */
 			dev->board = SAA7134_BOARD_PHILIPS_SNAKE;
 			dev->tuner_type = saa7134_boards[dev->board].tuner_type;
-			printk(KERN_INFO "%s: Reconfigured board as %s\n",
+			pr_info("%s: Reconfigured board as %s\n",
 				dev->name, saa7134_boards[dev->board].name);
 			break;
 		}
@@ -7888,7 +7891,7 @@ int saa7134_board_init2(struct saa7134_dev *dev)
 		struct i2c_msg msg = {.addr=0x08, .flags=0, .buf=data, .len = sizeof(data)};
 		if (dev->autodetected && (dev->eedata[0x49] == 0x50)) {
 			dev->board = SAA7134_BOARD_PHILIPS_TIGER_S;
-			printk(KERN_INFO "%s: Reconfigured board as %s\n",
+			pr_info("%s: Reconfigured board as %s\n",
 				dev->name, saa7134_boards[dev->board].name);
 		}
 		if (dev->board == SAA7134_BOARD_PHILIPS_TIGER_S) {
@@ -7905,9 +7908,8 @@ int saa7134_board_init2(struct saa7134_dev *dev)
 	/* The card below is detected as card=53, but is different */
 	       if (dev->autodetected && (dev->eedata[0x27] == 0x03)) {
 			dev->board = SAA7134_BOARD_ASUSTeK_P7131_ANALOG;
-			printk(KERN_INFO
-			       "%s: P7131 analog only, using entry of %s\n",
-			dev->name, saa7134_boards[dev->board].name);
+			pr_info("%s: P7131 analog only, using entry of %s\n",
+				dev->name, saa7134_boards[dev->board].name);
 
 			/*
 			 * IR init has already happened for other cards, so
@@ -7975,12 +7977,12 @@ int saa7134_board_init2(struct saa7134_dev *dev)
 		msg.addr = 0x0b;
 		msg.len = 1;
 		if (1 != i2c_transfer(&dev->i2c_adap, &msg, 1)) {
-			printk(KERN_WARNING "%s: send wake up byte to pic16C505"
+			pr_warn("%s: send wake up byte to pic16C505"
 					"(IR chip) failed\n", dev->name);
 		} else {
 			msg.flags = I2C_M_RD;
 			rc = i2c_transfer(&dev->i2c_adap, &msg, 1);
-			printk(KERN_INFO "%s: probe IR chip @ i2c 0x%02x: %s\n",
+			pr_info("%s: probe IR chip @ i2c 0x%02x: %s\n",
 				   dev->name, msg.addr,
 				   (1 == rc) ? "yes" : "no");
 			if (rc == 1)
@@ -8021,10 +8023,10 @@ int saa7134_board_init2(struct saa7134_dev *dev)
 			dev->board = SAA7134_BOARD_VIDEOMATE_DVBT_200A;
 			dev->tuner_type   = saa7134_boards[dev->board].tuner_type;
 			dev->tda9887_conf = saa7134_boards[dev->board].tda9887_conf;
-			printk(KERN_INFO "%s: Reconfigured board as %s\n",
+			pr_info("%s: Reconfigured board as %s\n",
 				dev->name, saa7134_boards[dev->board].name);
 		} else {
-			printk(KERN_WARNING "%s: Unexpected tuner type info: %x in eeprom\n",
+			pr_warn("%s: Unexpected tuner type info: %x in eeprom\n",
 				dev->name, dev->eedata[0x41]);
 			break;
 		}
@@ -8046,9 +8048,8 @@ int saa7134_board_init2(struct saa7134_dev *dev)
 			msg.buf = &buffer[i][0];
 			msg.len = ARRAY_SIZE(buffer[0]);
 			if (i2c_transfer(&dev->i2c_adap, &msg, 1) != 1)
-				printk(KERN_WARNING
-				       "%s: Unable to enable tuner(%i).\n",
-				       dev->name, i);
+				pr_warn("%s: Unable to enable tuner(%i).\n",
+					dev->name, i);
 		}
 		break;
 	}
@@ -8064,9 +8065,8 @@ int saa7134_board_init2(struct saa7134_dev *dev)
 		/* watch TV without software reboot. For solve this problem */
 		/* switch the tuner to analog TV mode manually.             */
 		if (i2c_transfer(&dev->i2c_adap, &msg, 1) != 1)
-				printk(KERN_WARNING
-				      "%s: Unable to enable IF of the tuner.\n",
-				       dev->name);
+			pr_warn("%s: Unable to enable IF of the tuner.\n",
+				dev->name);
 		break;
 	}
 	case SAA7134_BOARD_KWORLD_PCI_SBTVD_FULLSEG:
