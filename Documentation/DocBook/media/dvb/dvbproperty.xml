@@ -1,14 +1,88 @@
-<section id="FE_GET_SET_PROPERTY">
-<title><constant>FE_GET_PROPERTY/FE_SET_PROPERTY</constant></title>
-<para>This section describes the DVB version 5 extension of the DVB-API, also
-called "S2API", as this API were added to provide support for DVB-S2. It was
-designed to be able to replace the old frontend API. Yet, the DISEQC and
-the capability ioctls weren't implemented yet via the new way.</para>
-<para>The typical usage for the <constant>FE_GET_PROPERTY/FE_SET_PROPERTY</constant>
-API is to replace the ioctl's were the <link linkend="dvb-frontend-parameters">
-struct <constant>dvb_frontend_parameters</constant></link> were used.</para>
+<section id="frontend-properties">
+<title>DVB Frontend properties</title>
+<para>Tuning into a Digital TV physical channel and starting decoding it
+    requires to change a set of parameters, in order to control the
+    tuner, the demodulator, the Linear Low-noise Amplifier (LNA) and to set the
+    antenna subsystem via Satellite Equipment Control (SEC), on satellite
+    systems. The actual parameters are specific to each particular digital
+    TV standards, and may change as the digital TV specs evolutes.</para>
+<para>In the past, the strategy used were to have an union with the parameters
+    needed to tune for DVB-S, DVB-C, DVB-T and ATSC delivery systems grouped
+    there. The problem is that, as the second generation standards appeared,
+    those structs were not big enough to contain the additional parameters.
+    Also, the union didn't have any space left to be expanded without breaking
+    userspace. So, the decision was to deprecate the legacy union/struct based
+    approach, in favor of a properties set approach.</para>
+
+<para>NOTE: on Linux DVB API version 3, setting a frontend were done via
+    <link linkend="dvb-frontend-parameters">struct  <constant>dvb_frontend_parameters</constant></link>.
+    This got replaced on version 5 (also called "S2API", as this API were
+    added originally_enabled to provide support for DVB-S2), because the old
+    API has a very limited support to new standards and new hardware. This
+    section describes the new and recommended way to set the frontend, with
+    suppports all digital TV delivery systems.</para>
+
+<para>Example: with the properties based approach, in order to set the tuner
+    to a DVB-C channel at 651 kHz, modulated with 256-QAM, FEC 3/4 and symbol
+    rate of 5.217 Mbauds, those properties should be sent to
+    <link linkend="FE_GET_PROPERTY"><constant>FE_SET_PROPERTY</constant></link> ioctl:</para>
+    <itemizedlist>
+	<listitem><para>&DTV-DELIVERY-SYSTEM; = SYS_DVBC_ANNEX_A</para></listitem>
+	<listitem><para>&DTV-FREQUENCY; = 651000000</para></listitem>
+	<listitem><para>&DTV-MODULATION; = QAM_256</para></listitem>
+	<listitem><para>&DTV-INVERSION; = INVERSION_AUTO</para></listitem>
+	<listitem><para>&DTV-SYMBOL-RATE; = 5217000</para></listitem>
+	<listitem><para>&DTV-INNER-FEC; = FEC_3_4</para></listitem>
+	<listitem><para>&DTV-TUNE;</para></listitem>
+    </itemizedlist>
+
+<para>The code that would do the above is:</para>
+<programlisting>
+#include &lt;stdio.h&gt;
+#include &lt;fcntl.h&gt;
+#include &lt;sys/ioctl.h&gt;
+#include &lt;linux/dvb/frontend.h&gt;
+
+static struct dtv_property props[] = {
+	{ .cmd = DTV_DELIVERY_SYSTEM, .u.data = SYS_DVBC_ANNEX_A },
+	{ .cmd = DTV_FREQUENCY,       .u.data = 651000000 },
+	{ .cmd = DTV_MODULATION,      .u.data = QAM_256 },
+	{ .cmd = DTV_INVERSION,       .u.data = INVERSION_AUTO },
+	{ .cmd = DTV_SYMBOL_RATE,     .u.data = 5217000 },
+	{ .cmd = DTV_INNER_FEC,       .u.data = FEC_3_4 },
+	{ .cmd = DTV_TUNE }
+};
+
+static struct dtv_properties dtv_prop = {
+	.num = 6, .props = props
+};
+
+int main(void)
+{
+	int fd = open("/dev/dvb/adapter0/frontend0", O_RDWR);
+
+	if (!fd) {
+	    perror ("open");
+	    return -1;
+	}
+	if (ioctl(fd, FE_SET_PROPERTY, &amp;dtv_prop) == -1) {
+		perror("ioctl");
+		return -1;
+	}
+	printf("Frontend set\n");
+	return 0;
+}
+</programlisting>
+
+<para>NOTE: While it is possible to directly call the Kernel code like the
+    above example, it is strongly recommended to use
+    <ulink url="http://linuxtv.org/docs/libdvbv5/index.html">libdvbv5</ulink>,
+    as it provides abstraction to work with the supported digital TV standards
+    and provides methods for usual operations like program scanning and to
+    read/write channel descriptor files.</para>
+
 <section id="dtv-stats">
-<title>DTV stats type</title>
+<title>struct <structname>dtv_stats</structname></title>
 <programlisting>
 struct dtv_stats {
 	__u8 scale;	/* enum fecap_scale_params type */
@@ -20,19 +94,19 @@ struct dtv_stats {
 </programlisting>
 </section>
 <section id="dtv-fe-stats">
-<title>DTV stats type</title>
+<title>struct <structname>dtv_fe_stats</structname></title>
 <programlisting>
 #define MAX_DTV_STATS   4
 
 struct dtv_fe_stats {
 	__u8 len;
-	struct dtv_stats stat[MAX_DTV_STATS];
+	&dtv-stats; stat[MAX_DTV_STATS];
 } __packed;
 </programlisting>
 </section>
 
 <section id="dtv-property">
-<title>DTV property type</title>
+<title>struct <structname>dtv_property</structname></title>
 <programlisting>
 /* Reserved fields should be set to 0 */
 
@@ -41,7 +115,7 @@ struct dtv_property {
 	__u32 reserved[3];
 	union {
 		__u32 data;
-		struct dtv_fe_stats st;
+		&dtv-fe-stats; st;
 		struct {
 			__u8 data[32];
 			__u32 len;
@@ -57,115 +131,19 @@ struct dtv_property {
 </programlisting>
 </section>
 <section id="dtv-properties">
-<title>DTV properties type</title>
+<title>struct <structname>dtv_properties</structname></title>
 <programlisting>
 struct dtv_properties {
 	__u32 num;
-	struct dtv_property *props;
+	&dtv-property; *props;
 };
 </programlisting>
-</section>
-
-<section id="FE_GET_PROPERTY">
-<title>FE_GET_PROPERTY</title>
-<para>DESCRIPTION
-</para>
-<informaltable><tgroup cols="1"><tbody><row><entry
- align="char">
-<para>This ioctl call returns one or more frontend properties. This call only
- requires read-only access to the device.</para>
-</entry>
- </row></tbody></tgroup></informaltable>
-<para>SYNOPSIS
-</para>
-<informaltable><tgroup cols="1"><tbody><row><entry
- align="char">
-<para>int ioctl(int fd, int request = <link linkend="FE_GET_PROPERTY">FE_GET_PROPERTY</link>,
- dtv_properties &#x22C6;props);</para>
-</entry>
- </row></tbody></tgroup></informaltable>
-<para>PARAMETERS
-</para>
-<informaltable><tgroup cols="2"><tbody><row><entry align="char">
-<para>int fd</para>
-</entry><entry
- align="char">
-<para>File descriptor returned by a previous call to open().</para>
-</entry>
- </row><row><entry
- align="char">
-<para>int num</para>
-</entry><entry
- align="char">
-<para>Equals <link linkend="FE_GET_PROPERTY">FE_GET_PROPERTY</link> for this command.</para>
-</entry>
- </row><row><entry
- align="char">
-<para>struct dtv_property *props</para>
-</entry><entry
- align="char">
-<para>Points to the location where the front-end property commands are stored.</para>
-</entry>
- </row></tbody></tgroup></informaltable>
-&return-value-dvb;
-<informaltable><tgroup cols="2"><tbody><row>
-  <entry align="char"><para>EOPNOTSUPP</para></entry>
-  <entry align="char"><para>Property type not supported.</para></entry>
- </row></tbody></tgroup></informaltable>
-</section>
-
-<section id="FE_SET_PROPERTY">
-<title>FE_SET_PROPERTY</title>
-<para>DESCRIPTION
-</para>
-<informaltable><tgroup cols="1"><tbody><row><entry
- align="char">
-<para>This ioctl call sets one or more frontend properties. This call
- requires read/write access to the device.</para>
-</entry>
- </row></tbody></tgroup></informaltable>
-<para>SYNOPSIS
-</para>
-<informaltable><tgroup cols="1"><tbody><row><entry
- align="char">
-<para>int ioctl(int fd, int request = <link linkend="FE_SET_PROPERTY">FE_SET_PROPERTY</link>,
- dtv_properties &#x22C6;props);</para>
-</entry>
- </row></tbody></tgroup></informaltable>
-<para>PARAMETERS
-</para>
-<informaltable><tgroup cols="2"><tbody><row><entry align="char">
-<para>int fd</para>
-</entry><entry
- align="char">
-<para>File descriptor returned by a previous call to open().</para>
-</entry>
- </row><row><entry
- align="char">
-<para>int num</para>
-</entry><entry
- align="char">
-<para>Equals <link linkend="FE_SET_PROPERTY">FE_SET_PROPERTY</link> for this command.</para>
-</entry>
- </row><row><entry
- align="char">
-<para>struct dtv_property *props</para>
-</entry><entry
- align="char">
-<para>Points to the location where the front-end property commands are stored.</para>
-</entry>
- </row></tbody></tgroup></informaltable>
-&return-value-dvb;
-<informaltable><tgroup cols="2"><tbody><row>
-  <entry align="char"><para>EOPNOTSUPP</para></entry>
-  <entry align="char"><para>Property type not supported.</para></entry>
- </row></tbody></tgroup></informaltable>
 </section>
 
 <section>
 	<title>Property types</title>
 <para>
-On <link linkend="FE_GET_PROPERTY">FE_GET_PROPERTY</link>/<link linkend="FE_SET_PROPERTY">FE_SET_PROPERTY</link>,
+On <link linkend="FE_GET_PROPERTY">FE_GET_PROPERTY and FE_SET_PROPERTY</link>,
 the actual action is determined by the dtv_property cmd/data pairs. With one single ioctl, is possible to
 get/set up to 64 properties. The actual meaning of each property is described on the next sections.
 </para>
@@ -193,7 +171,7 @@ get/set up to 64 properties. The actual meaning of each property is described on
 		<para>Central frequency of the channel.</para>
 
 		<para>Notes:</para>
-		<para>1)For satellital delivery systems, it is measured in kHz.
+		<para>1)For satellite delivery systems, it is measured in kHz.
 			For the other ones, it is measured in Hz.</para>
 		<para>2)For ISDB-T, the channels are usually transmitted with an offset of 143kHz.
 			E.g. a valid frequency could be 474143 kHz. The stepping is bound to the bandwidth of
@@ -205,25 +183,78 @@ get/set up to 64 properties. The actual meaning of each property is described on
 	</section>
 	<section id="DTV-MODULATION">
 	<title><constant>DTV_MODULATION</constant></title>
-<para>Specifies the frontend modulation type for cable and satellite types. The modulation can be one of the types bellow:</para>
-<programlisting>
- typedef enum fe_modulation {
-	QPSK,
-	QAM_16,
-	QAM_32,
-	QAM_64,
-	QAM_128,
-	QAM_256,
-	QAM_AUTO,
-	VSB_8,
-	VSB_16,
-	PSK_8,
-	APSK_16,
-	APSK_32,
-	DQPSK,
-	QAM_4_NR,
- } fe_modulation_t;
-</programlisting>
+<para>Specifies the frontend modulation type for delivery systems that supports
+    more than one modulation type. The modulation can be one of the types
+    defined by &fe-modulation;.</para>
+
+
+<section id="fe-modulation-t">
+<title>Modulation property</title>
+
+<para>Most of the digital TV standards currently offers more than one possible
+    modulation (sometimes called as "constellation" on some standards). This
+    enum contains the values used by the Kernel. Please notice that not all
+    modulations are supported by a given standard.</para>
+
+<table pgwide="1" frame="none" id="fe-modulation">
+    <title>enum fe_modulation</title>
+    <tgroup cols="2">
+	&cs-def;
+	<thead>
+	<row>
+	    <entry>ID</entry>
+	    <entry>Description</entry>
+	</row>
+	</thead>
+	<tbody valign="top">
+	<row>
+	    <entry>QPSK</entry>
+	    <entry>QPSK modulation</entry>
+	</row><row>
+	    <entry>QAM_16</entry>
+	    <entry>16-QAM modulation</entry>
+	</row><row>
+	    <entry>QAM_32</entry>
+	    <entry>32-QAM modulation</entry>
+	</row><row>
+	    <entry>QAM_64</entry>
+	    <entry>64-QAM modulation</entry>
+	</row><row>
+	    <entry>QAM_128</entry>
+	    <entry>128-QAM modulation</entry>
+	</row><row>
+	    <entry>QAM_256</entry>
+	    <entry>256-QAM modulation</entry>
+	</row><row>
+	    <entry>QAM_AUTO</entry>
+	    <entry>Autodetect QAM modulation</entry>
+	</row><row>
+	    <entry>VSB_8</entry>
+	    <entry>8-VSB modulation</entry>
+	</row><row>
+	    <entry>VSB_16</entry>
+	    <entry>16-VSB modulation</entry>
+	</row><row>
+	    <entry>PSK_8</entry>
+	    <entry>8-PSK modulation</entry>
+	</row><row>
+	    <entry>APSK_16</entry>
+	    <entry>16-APSK modulation</entry>
+	</row><row>
+	    <entry>APSK_32</entry>
+	    <entry>32-APSK modulation</entry>
+	</row><row>
+	    <entry>DQPSK</entry>
+	    <entry>DQPSK modulation</entry>
+	</row><row>
+	    <entry>QAM_4_NR</entry>
+	    <entry>4-QAM-NR modulation</entry>
+	</row>
+        </tbody>
+    </tgroup>
+</table>
+</section>
+
 	</section>
 	<section id="DTV-BANDWIDTH-HZ">
 		<title><constant>DTV_BANDWIDTH_HZ</constant></title>
@@ -253,19 +284,45 @@ get/set up to 64 properties. The actual meaning of each property is described on
 	</section>
 	<section id="DTV-INVERSION">
 	<title><constant>DTV_INVERSION</constant></title>
-	<para>The Inversion field can take one of these values:
-	</para>
-	<programlisting>
-	typedef enum fe_spectral_inversion {
-		INVERSION_OFF,
-		INVERSION_ON,
-		INVERSION_AUTO
-	} fe_spectral_inversion_t;
-	</programlisting>
-	<para>It indicates if spectral inversion should be presumed or not. In the automatic setting
-	(<constant>INVERSION_AUTO</constant>) the hardware will try to figure out the correct setting by
-	itself.
-	</para>
+
+	<para>Specifies if the frontend should do spectral inversion or not.</para>
+
+<section id="fe-spectral-inversion-t">
+<title>enum fe_modulation: Frontend spectral inversion</title>
+
+<para>This parameter indicates if spectral inversion should be presumed or not.
+    In the automatic setting (<constant>INVERSION_AUTO</constant>) the hardware
+    will try to figure out the correct setting by itself. If the hardware
+    doesn't support, the DVB core will try to lock at the carrier first with
+    inversion off. If it fails, it will try to enable inversion.
+</para>
+
+<table pgwide="1" frame="none" id="fe-spectral-inversion">
+    <title>enum fe_modulation</title>
+    <tgroup cols="2">
+	&cs-def;
+	<thead>
+	<row>
+	    <entry>ID</entry>
+	    <entry>Description</entry>
+	</row>
+	</thead>
+	<tbody valign="top">
+	<row>
+	    <entry>INVERSION_OFF</entry>
+	    <entry>Don't do spectral band inversion.</entry>
+	</row><row>
+	    <entry>INVERSION_ON</entry>
+	    <entry>Do spectral band inversion.</entry>
+	</row><row>
+	    <entry>INVERSION_AUTO</entry>
+	    <entry>Autodetect spectral band inversion.</entry>
+	</row>
+        </tbody>
+    </tgroup>
+</table>
+</section>
+
 	</section>
 	<section id="DTV-DISEQC-MASTER">
 	<title><constant>DTV_DISEQC_MASTER</constant></title>
@@ -279,25 +336,69 @@ get/set up to 64 properties. The actual meaning of each property is described on
 	<title><constant>DTV_INNER_FEC</constant></title>
 	<para>Used cable/satellite transmissions. The acceptable values are:
 	</para>
-	<programlisting>
-typedef enum fe_code_rate {
-	FEC_NONE = 0,
-	FEC_1_2,
-	FEC_2_3,
-	FEC_3_4,
-	FEC_4_5,
-	FEC_5_6,
-	FEC_6_7,
-	FEC_7_8,
-	FEC_8_9,
-	FEC_AUTO,
-	FEC_3_5,
-	FEC_9_10,
-	FEC_2_5,
-} fe_code_rate_t;
-	</programlisting>
-	<para>which correspond to error correction rates of 1/2, 2/3, etc.,
-	no error correction or auto detection.</para>
+<section id="fe-code-rate-t">
+<title>enum fe_code_rate: type of the Forward Error Correction.</title>
+
+<table pgwide="1" frame="none" id="fe-code-rate">
+    <title>enum fe_code_rate</title>
+    <tgroup cols="2">
+	&cs-def;
+	<thead>
+	<row>
+	    <entry>ID</entry>
+	    <entry>Description</entry>
+	</row>
+	</thead>
+	<tbody valign="top">
+	<row>
+	    <entry>TRANSMISSION_MODE_AUTO</entry>
+	    <entry>Autodetect transmission mode. The hardware will try to find
+		the correct FFT-size (if capable) to fill in the missing
+		parameters.</entry>
+	</row><row>
+	    <entry>FEC_NONE</entry>
+	    <entry>No Forward Error Correction Code</entry>
+	</row><row>
+	    <entry>FEC_AUTO</entry>
+	    <entry>Autodetect Error Correction Code</entry>
+	</row><row>
+	    <entry>FEC_1_2</entry>
+	    <entry>Forward Error Correction Code 1/2</entry>
+	</row><row>
+	    <entry>FEC_2_3</entry>
+	    <entry>Forward Error Correction Code 2/3</entry>
+	</row><row>
+	    <entry>FEC_3_4</entry>
+	    <entry>Forward Error Correction Code 3/4</entry>
+	</row><row>
+	    <entry>FEC_4_5</entry>
+	    <entry>Forward Error Correction Code 4/5</entry>
+	</row><row>
+	    <entry>FEC_5_6</entry>
+	    <entry>Forward Error Correction Code 5/6</entry>
+	</row><row>
+	    <entry>FEC_6_7</entry>
+	    <entry>Forward Error Correction Code 6/7</entry>
+	</row><row>
+	    <entry>FEC_7_8</entry>
+	    <entry>Forward Error Correction Code 7/8</entry>
+	</row><row>
+	    <entry>FEC_8_9</entry>
+	    <entry>Forward Error Correction Code 8/9</entry>
+	</row><row>
+	    <entry>FEC_9_10</entry>
+	    <entry>Forward Error Correction Code 9/10</entry>
+	</row><row>
+	    <entry>FEC_2_5</entry>
+	    <entry>Forward Error Correction Code 2/5</entry>
+	</row><row>
+	    <entry>FEC_3_5</entry>
+	    <entry>Forward Error Correction Code 3/5</entry>
+	</row>
+        </tbody>
+    </tgroup>
+</table>
+</section>
 	</section>
 	<section id="DTV-VOLTAGE">
 	<title><constant>DTV_VOLTAGE</constant></title>
@@ -746,65 +847,74 @@ typedef enum atscmh_sccc_code_mode {
 	</section>
 	<section id="DTV-CODE-RATE-HP">
 	<title><constant>DTV_CODE_RATE_HP</constant></title>
-	<para>Used on terrestrial transmissions. The acceptable values are:
+	<para>Used on terrestrial transmissions.  The acceptable values are
+	    the ones described at &fe-transmit-mode-t;.
 	</para>
-	<programlisting>
-typedef enum fe_code_rate {
-	FEC_NONE = 0,
-	FEC_1_2,
-	FEC_2_3,
-	FEC_3_4,
-	FEC_4_5,
-	FEC_5_6,
-	FEC_6_7,
-	FEC_7_8,
-	FEC_8_9,
-	FEC_AUTO,
-	FEC_3_5,
-	FEC_9_10,
-} fe_code_rate_t;
-	</programlisting>
 	</section>
 	<section id="DTV-CODE-RATE-LP">
 	<title><constant>DTV_CODE_RATE_LP</constant></title>
-	<para>Used on terrestrial transmissions. The acceptable values are:
+	<para>Used on terrestrial transmissions. The acceptable values are
+	    the ones described at &fe-transmit-mode-t;.
 	</para>
-	<programlisting>
-typedef enum fe_code_rate {
-	FEC_NONE = 0,
-	FEC_1_2,
-	FEC_2_3,
-	FEC_3_4,
-	FEC_4_5,
-	FEC_5_6,
-	FEC_6_7,
-	FEC_7_8,
-	FEC_8_9,
-	FEC_AUTO,
-	FEC_3_5,
-	FEC_9_10,
-} fe_code_rate_t;
-	</programlisting>
+
 	</section>
+
 	<section id="DTV-GUARD-INTERVAL">
 		<title><constant>DTV_GUARD_INTERVAL</constant></title>
 
 		<para>Possible values are:</para>
-<programlisting>
-typedef enum fe_guard_interval {
-	GUARD_INTERVAL_1_32,
-	GUARD_INTERVAL_1_16,
-	GUARD_INTERVAL_1_8,
-	GUARD_INTERVAL_1_4,
-	GUARD_INTERVAL_AUTO,
-	GUARD_INTERVAL_1_128,
-	GUARD_INTERVAL_19_128,
-	GUARD_INTERVAL_19_256,
-	GUARD_INTERVAL_PN420,
-	GUARD_INTERVAL_PN595,
-	GUARD_INTERVAL_PN945,
-} fe_guard_interval_t;
-</programlisting>
+
+<section id="fe-guard-interval-t">
+<title>Modulation guard interval</title>
+
+<table pgwide="1" frame="none" id="fe-guard-interval">
+    <title>enum fe_guard_interval</title>
+    <tgroup cols="2">
+	&cs-def;
+	<thead>
+	<row>
+	    <entry>ID</entry>
+	    <entry>Description</entry>
+	</row>
+	</thead>
+	<tbody valign="top">
+	<row>
+	    <entry>GUARD_INTERVAL_AUTO</entry>
+	    <entry>Autodetect the guard interval</entry>
+	</row><row>
+	    <entry>GUARD_INTERVAL_1_128</entry>
+	    <entry>Guard interval 1/128</entry>
+	</row><row>
+	    <entry>GUARD_INTERVAL_1_32</entry>
+	    <entry>Guard interval 1/32</entry>
+	</row><row>
+	    <entry>GUARD_INTERVAL_1_16</entry>
+	    <entry>Guard interval 1/16</entry>
+	</row><row>
+	    <entry>GUARD_INTERVAL_1_8</entry>
+	    <entry>Guard interval 1/8</entry>
+	</row><row>
+	    <entry>GUARD_INTERVAL_1_4</entry>
+	    <entry>Guard interval 1/4</entry>
+	</row><row>
+	    <entry>GUARD_INTERVAL_19_128</entry>
+	    <entry>Guard interval 19/128</entry>
+	</row><row>
+	    <entry>GUARD_INTERVAL_19_256</entry>
+	    <entry>Guard interval 19/256</entry>
+	</row><row>
+	    <entry>GUARD_INTERVAL_PN420</entry>
+	    <entry>PN length 420 (1/4)</entry>
+	</row><row>
+	    <entry>GUARD_INTERVAL_PN595</entry>
+	    <entry>PN length 595 (1/6)</entry>
+	</row><row>
+	    <entry>GUARD_INTERVAL_PN945</entry>
+	    <entry>PN length 945 (1/9)</entry>
+	</row>
+        </tbody>
+    </tgroup>
+</table>
 
 		<para>Notes:</para>
 		<para>1) If <constant>DTV_GUARD_INTERVAL</constant> is set the <constant>GUARD_INTERVAL_AUTO</constant> the hardware will
@@ -812,26 +922,64 @@ typedef enum fe_guard_interval {
 			in the missing parameters.</para>
 		<para>2) Intervals 1/128, 19/128 and 19/256 are used only for DVB-T2 at present</para>
 		<para>3) DTMB specifies PN420, PN595 and PN945.</para>
+</section>
 	</section>
 	<section id="DTV-TRANSMISSION-MODE">
 		<title><constant>DTV_TRANSMISSION_MODE</constant></title>
 
-		<para>Specifies the number of carriers used by the standard</para>
+		<para>Specifies the number of carriers used by the standard.
+		    This is used only on OFTM-based standards, e. g.
+		    DVB-T/T2, ISDB-T, DTMB</para>
 
-		<para>Possible values are:</para>
-<programlisting>
-typedef enum fe_transmit_mode {
-	TRANSMISSION_MODE_2K,
-	TRANSMISSION_MODE_8K,
-	TRANSMISSION_MODE_AUTO,
-	TRANSMISSION_MODE_4K,
-	TRANSMISSION_MODE_1K,
-	TRANSMISSION_MODE_16K,
-	TRANSMISSION_MODE_32K,
-	TRANSMISSION_MODE_C1,
-	TRANSMISSION_MODE_C3780,
-} fe_transmit_mode_t;
-</programlisting>
+<section id="fe-transmit-mode-t">
+<title>enum fe_transmit_mode: Number of carriers per channel</title>
+
+<table pgwide="1" frame="none" id="fe-transmit-mode">
+    <title>enum fe_transmit_mode</title>
+    <tgroup cols="2">
+	&cs-def;
+	<thead>
+	<row>
+	    <entry>ID</entry>
+	    <entry>Description</entry>
+	</row>
+	</thead>
+	<tbody valign="top">
+	<row>
+	    <entry>TRANSMISSION_MODE_AUTO</entry>
+	    <entry>Autodetect transmission mode. The hardware will try to find
+		the correct FFT-size (if capable) to fill in the missing
+		parameters.</entry>
+	</row><row>
+	    <entry>TRANSMISSION_MODE_1K</entry>
+	    <entry>Transmission mode 1K</entry>
+	</row><row>
+	    <entry>TRANSMISSION_MODE_2K</entry>
+	    <entry>Transmission mode 2K</entry>
+	</row><row>
+	    <entry>TRANSMISSION_MODE_8K</entry>
+	    <entry>Transmission mode 8K</entry>
+	</row><row>
+	    <entry>TRANSMISSION_MODE_4K</entry>
+	    <entry>Transmission mode 4K</entry>
+	</row><row>
+	    <entry>TRANSMISSION_MODE_16K</entry>
+	    <entry>Transmission mode 16K</entry>
+	</row><row>
+	    <entry>TRANSMISSION_MODE_32K</entry>
+	    <entry>Transmission mode 32K</entry>
+	</row><row>
+	    <entry>TRANSMISSION_MODE_C1</entry>
+	    <entry>Single Carrier (C=1) transmission mode (DTMB)</entry>
+	</row><row>
+	    <entry>TRANSMISSION_MODE_C3780</entry>
+	    <entry>Multi Carrier (C=3780) transmission mode (DTMB)</entry>
+	</row>
+        </tbody>
+    </tgroup>
+</table>
+
+
 		<para>Notes:</para>
 		<para>1) ISDB-T supports three carrier/symbol-size: 8K, 4K, 2K. It is called
 			'mode' in the standard: Mode 1 is 2K, mode 2 is 4K, mode 3 is 8K</para>
@@ -842,19 +990,48 @@ typedef enum fe_transmit_mode {
 		<para>3) DVB-T specifies 2K and 8K as valid sizes.</para>
 		<para>4) DVB-T2 specifies 1K, 2K, 4K, 8K, 16K and 32K.</para>
 		<para>5) DTMB specifies C1 and C3780.</para>
+</section>
 	</section>
 	<section id="DTV-HIERARCHY">
 	<title><constant>DTV_HIERARCHY</constant></title>
 	<para>Frontend hierarchy</para>
-	<programlisting>
-typedef enum fe_hierarchy {
-	 HIERARCHY_NONE,
-	 HIERARCHY_1,
-	 HIERARCHY_2,
-	 HIERARCHY_4,
-	 HIERARCHY_AUTO
- } fe_hierarchy_t;
-	</programlisting>
+
+
+<section id="fe-hierarchy-t">
+<title>Frontend hierarchy</title>
+
+<table pgwide="1" frame="none" id="fe-hierarchy">
+    <title>enum fe_hierarchy</title>
+    <tgroup cols="2">
+	&cs-def;
+	<thead>
+	<row>
+	    <entry>ID</entry>
+	    <entry>Description</entry>
+	</row>
+	</thead>
+	<tbody valign="top">
+	<row>
+	     <entry>HIERARCHY_NONE</entry>
+	    <entry>No hierarchy</entry>
+	</row><row>
+	     <entry>HIERARCHY_AUTO</entry>
+	    <entry>Autodetect hierarchy (if supported)</entry>
+	</row><row>
+	     <entry>HIERARCHY_1</entry>
+	    <entry>Hierarchy 1</entry>
+	</row><row>
+	     <entry>HIERARCHY_2</entry>
+	    <entry>Hierarchy 2</entry>
+	</row><row>
+	     <entry>HIERARCHY_4</entry>
+	    <entry>Hierarchy 4</entry>
+	</row>
+        </tbody>
+    </tgroup>
+</table>
+</section>
+
 	</section>
 	<section id="DTV-STREAM-ID">
 	<title><constant>DTV_STREAM_ID</constant></title>
@@ -1255,8 +1432,8 @@ enum fe_interleaving {
 		<para>In addition, the <link linkend="frontend-stat-properties">DTV QoS statistics</link> are also valid.</para>
 	</section>
 	</section>
-	<section id="frontend-property-satellital-systems">
-	<title>Properties used on satellital delivery systems</title>
+	<section id="frontend-property-satellite-systems">
+	<title>Properties used on satellite delivery systems</title>
 	<section id="dvbs-params">
 		<title>DVB-S delivery system</title>
 		<para>The following parameters are valid for DVB-S:</para>
