@@ -610,7 +610,7 @@ bail_out:
 
 static u32 saa716x_i2c_func(struct i2c_adapter *adapter)
 {
-	return I2C_FUNC_SMBUS_EMUL;
+	return I2C_FUNC_I2C | I2C_FUNC_SMBUS_EMUL;
 }
 
 static const struct i2c_algorithm saa716x_algo = {
