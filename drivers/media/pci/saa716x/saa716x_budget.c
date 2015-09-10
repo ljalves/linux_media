@@ -383,7 +383,9 @@ static int saa716x_vp1028_frontend_attach(struct saa716x_adapter *adapter, int c
 		mutex_unlock(&saa716x->adap_lock);
 
 		dprintk(SAA716x_ERROR, 1, "Probing for MB86A16 (DVB-S/DSS)");
-		adapter->fe = mb86a16_attach(&vp1028_mb86a16_config, &i2c->i2c_adapter);
+		adapter->fe = dvb_attach(mb86a16_attach,
+					 &vp1028_mb86a16_config,
+					 &i2c->i2c_adapter);
 		if (adapter->fe) {
 			dprintk(SAA716x_ERROR, 1, "found MB86A16 DVB-S/DSS frontend @0x%02x",
 				vp1028_mb86a16_config.demod_address);
@@ -718,8 +720,8 @@ static int saa716x_tbs6284_frontend_attach(struct saa716x_adapter *adapter, int 
 	}
 
 	/* attach frontend */
-	adapter->fe = cxd2820r_attach(&cxd2820r_config[count & 1],
-				&i2c->i2c_adapter, NULL);
+	adapter->fe = dvb_attach(cxd2820r_attach, &cxd2820r_config[count & 1],
+				 &i2c->i2c_adapter, NULL);
 	if (!adapter->fe)
 		goto err;
 
@@ -816,8 +818,8 @@ static int saa716x_tbs6280_frontend_attach(struct saa716x_adapter *adapter, int 
 	}
 
 	/* attach frontend */
-	adapter->fe = cxd2820r_attach(&cxd2820r_config[count],
-				&i2c->i2c_adapter, NULL);
+	adapter->fe = dvb_attach(cxd2820r_attach, &cxd2820r_config[count],
+				 &i2c->i2c_adapter, NULL);
 	if (!adapter->fe)
 		goto err;
 
@@ -1103,8 +1105,8 @@ static int saa716x_tbs6220_frontend_attach(struct saa716x_adapter *adapter, int 
 		goto err;
 
 	/* attach frontend */
-	adapter->fe = cxd2820r_attach(&cxd2820r_config[0],
-				&i2c->i2c_adapter, NULL);
+	adapter->fe = dvb_attach(cxd2820r_attach, &cxd2820r_config[0],
+				 &i2c->i2c_adapter, NULL);
 	if (!adapter->fe)
 		goto err;
 
@@ -2387,18 +2389,7 @@ static struct pci_driver saa716x_budget_pci_driver = {
 	.remove			= saa716x_budget_pci_remove,
 };
 
-static int __init saa716x_budget_init(void)
-{
-	return pci_register_driver(&saa716x_budget_pci_driver);
-}
-
-static void __exit saa716x_budget_exit(void)
-{
-	return pci_unregister_driver(&saa716x_budget_pci_driver);
-}
-
-module_init(saa716x_budget_init);
-module_exit(saa716x_budget_exit);
+module_pci_driver(saa716x_budget_pci_driver);
 
 MODULE_DESCRIPTION("SAA716x Budget driver");
 MODULE_AUTHOR("Manu Abraham");
