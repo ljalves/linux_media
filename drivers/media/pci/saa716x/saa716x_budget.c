@@ -2389,18 +2389,7 @@ static struct pci_driver saa716x_budget_pci_driver = {
 	.remove			= saa716x_budget_pci_remove,
 };
 
-static int __init saa716x_budget_init(void)
-{
-	return pci_register_driver(&saa716x_budget_pci_driver);
-}
-
-static void __exit saa716x_budget_exit(void)
-{
-	return pci_unregister_driver(&saa716x_budget_pci_driver);
-}
-
-module_init(saa716x_budget_init);
-module_exit(saa716x_budget_exit);
+module_pci_driver(saa716x_budget_pci_driver);
 
 MODULE_DESCRIPTION("SAA716x Budget driver");
 MODULE_AUTHOR("Manu Abraham");
