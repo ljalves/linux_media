@@ -374,7 +374,8 @@ static int saa716x_vp6090_frontend_attach(struct saa716x_adapter *adapter, int c
 		goto exit;
 	}
 #endif
-	adapter->fe = tda10046_attach(&tda1004x_vp6090_config, &i2c->i2c_adapter);
+	adapter->fe = dvb_attach(tda10046_attach, &tda1004x_vp6090_config,
+				 &i2c->i2c_adapter);
 	if (adapter->fe == NULL) {
 		dprintk(SAA716x_ERROR, 1, "Frontend attach failed");
 		return -ENODEV;
@@ -474,8 +475,9 @@ static int saa716x_atlantis_frontend_attach(struct saa716x_adapter *adapter,
 		saa716x_gpio_write(saa716x, reset_gpio, 1);
 		msleep(10);
 
-		adapter->fe = tda10046_attach(&tda1004x_atlantis_config,
-					      &i2c->i2c_adapter);
+		adapter->fe = dvb_attach(tda10046_attach,
+					 &tda1004x_atlantis_config,
+					 &i2c->i2c_adapter);
 		if (adapter->fe == NULL)
 			goto exit;
 
@@ -585,8 +587,9 @@ static int saa716x_nemo_frontend_attach(struct saa716x_adapter *adapter, int cou
 		saa716x_gpio_write(saa716x, 14, 1);
 		msleep(10);
 
-		adapter->fe = tda10046_attach(&tda1004x_nemo_config,
-					      &demod_i2c->i2c_adapter);
+		adapter->fe = dvb_attach(tda10046_attach,
+					 &tda1004x_nemo_config,
+					 &demod_i2c->i2c_adapter);
 		if (adapter->fe) {
 			dprintk(SAA716x_ERROR, 1, "found TDA10046 DVB-T frontend @0x%02x",
 				tda1004x_nemo_config.demod_address);
