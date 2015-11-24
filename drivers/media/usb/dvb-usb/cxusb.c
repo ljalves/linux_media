@@ -1345,8 +1345,6 @@ static int cxusb_mygica_t230_frontend_attach(struct dvb_usb_adapter *adap)
 		return -ENODEV;
 	}
 
-	st->i2c_client_demod = client_demod;
-
 	/* attach tuner */
 	memset(&si2157_config, 0, sizeof(si2157_config));
 	si2157_config.fe = adap->fe_adap[0].fe;
@@ -1369,6 +1367,7 @@ static int cxusb_mygica_t230_frontend_attach(struct dvb_usb_adapter *adap)
 		return -ENODEV;
 	}
 
+	st->i2c_client_demod = client_demod;
 	st->i2c_client_tuner = client_tuner;
 
 	return 0;
