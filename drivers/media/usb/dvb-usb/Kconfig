@@ -393,3 +393,21 @@ config DVB_USB_TBS5880
 	select MEDIA_TUNER_TDA18212 if MEDIA_SUBDRV_AUTOSELECT
 	help
 	  Say Y here to support the TurboSight TBS5880 DVB-T/T2/C USB2.0 receivers
+
+config DVB_USB_TBS5220
+	tristate "TurboSight TBS5220 DVB-T/T2/C USB2.0 support"
+	depends on DVB_USB
+	select DVB_PLL if MEDIA_SUBDRV_AUTOSELECT
+	select DVB_SI2168 if MEDIA_SUBDRV_AUTOSELECT
+	select MEDIA_TUNER_SI2157 if MEDIA_SUBDRV_AUTOSELECT
+	help
+	  Say Y here to support the TurboSight TBS5220 DVB-T/T2/C USB2.0 receivers
+
+config DVB_USB_TBS5881
+	tristate "TurboSight TBS5881 DVB-T/T2/C USB2.0 support"
+	depends on DVB_USB
+	select DVB_PLL if MEDIA_SUBDRV_AUTOSELECT
+	select DVB_SI2168 if MEDIA_SUBDRV_AUTOSELECT
+	select MEDIA_TUNER_SI2157 if MEDIA_SUBDRV_AUTOSELECT
+	help
+	  Say Y here to support the TurboSight TBS5881 DVB-T/T2/C USB2.0 receivers
