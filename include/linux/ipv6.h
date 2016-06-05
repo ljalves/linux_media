@@ -29,7 +29,9 @@ struct ipv6_devconf {
 	__s32		max_desync_factor;
 	__s32		max_addresses;
 	__s32		accept_ra_defrtr;
+	__s32		accept_ra_min_hop_limit;
 	__s32		accept_ra_pinfo;
+	__s32		ignore_routes_with_linkdown;
 #ifdef CONFIG_IPV6_ROUTER_PREF
 	__s32		accept_ra_rtr_pref;
 	__s32		rtr_probe_interval;
@@ -48,16 +50,21 @@ struct ipv6_devconf {
 	__s32		mc_forwarding;
 #endif
 	__s32		disable_ipv6;
+	__s32		drop_unicast_in_l2_multicast;
 	__s32		accept_dad;
 	__s32		force_tllao;
 	__s32           ndisc_notify;
 	__s32		suppress_frag_ndisc;
 	__s32		accept_ra_mtu;
+	__s32		drop_unsolicited_na;
 	struct ipv6_stable_secret {
 		bool initialized;
 		struct in6_addr secret;
 	} stable_secret;
-	void		*sysctl;
+	__s32		use_oif_addrs_only;
+	__s32		keep_addr_on_down;
+
+	struct ctl_table_header *sysctl_header;
 };
 
 struct ipv6_params {
@@ -94,7 +101,6 @@ static inline struct ipv6hdr *ipipv6_hdr(const struct sk_buff *skb)
 struct inet6_skb_parm {
 	int			iif;
 	__be16			ra;
-	__u16			hop;
 	__u16			dst0;
 	__u16			srcrt;
 	__u16			dst1;
@@ -111,14 +117,30 @@ struct inet6_skb_parm {
 #define IP6SKB_REROUTED		4
 #define IP6SKB_ROUTERALERT	8
 #define IP6SKB_FRAGMENTED      16
+#define IP6SKB_HOPBYHOP        32
+#define IP6SKB_L3SLAVE         64
 };
+
+#if defined(CONFIG_NET_L3_MASTER_DEV)
+static inline bool skb_l3mdev_slave(__u16 flags)
+{
+	return flags & IP6SKB_L3SLAVE;
+}
+#else
+static inline bool skb_l3mdev_slave(__u16 flags)
+{
+	return false;
+}
+#endif
 
 #define IP6CB(skb)	((struct inet6_skb_parm*)((skb)->cb))
 #define IP6CBMTU(skb)	((struct ip6_mtuinfo *)((skb)->cb))
 
 static inline int inet6_iif(const struct sk_buff *skb)
 {
-	return IP6CB(skb)->iif;
+	bool l3_slave = skb_l3mdev_slave(IP6CB(skb)->flags);
+
+	return l3_slave ? skb->skb_iif : IP6CB(skb)->iif;
 }
 
 struct tcp6_request_sock {
@@ -224,7 +246,7 @@ struct ipv6_pinfo {
 	struct ipv6_ac_socklist	*ipv6_ac_list;
 	struct ipv6_fl_socklist __rcu *ipv6_fl_list;
 
-	struct ipv6_txoptions	*opt;
+	struct ipv6_txoptions __rcu	*opt;
 	struct sk_buff		*pktoptions;
 	struct sk_buff		*rxpmtu;
 	struct inet6_cork	cork;
@@ -261,9 +283,9 @@ struct tcp6_timewait_sock {
 };
 
 #if IS_ENABLED(CONFIG_IPV6)
-static inline struct ipv6_pinfo * inet6_sk(const struct sock *__sk)
+static inline struct ipv6_pinfo *inet6_sk(const struct sock *__sk)
 {
-	return inet_sk(__sk)->pinet6;
+	return sk_fullsock(__sk) ? inet_sk(__sk)->pinet6 : NULL;
 }
 
 static inline struct raw6_sock *raw6_sk(const struct sock *sk)

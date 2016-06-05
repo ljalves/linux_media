@@ -36,6 +36,31 @@
 #include "radeon_ucode.h"
 #include "clearstate_cayman.h"
 
+/*
+ * Indirect registers accessor
+ */
+u32 tn_smc_rreg(struct radeon_device *rdev, u32 reg)
+{
+	unsigned long flags;
+	u32 r;
+
+	spin_lock_irqsave(&rdev->smc_idx_lock, flags);
+	WREG32(TN_SMC_IND_INDEX_0, (reg));
+	r = RREG32(TN_SMC_IND_DATA_0);
+	spin_unlock_irqrestore(&rdev->smc_idx_lock, flags);
+	return r;
+}
+
+void tn_smc_wreg(struct radeon_device *rdev, u32 reg, u32 v)
+{
+	unsigned long flags;
+
+	spin_lock_irqsave(&rdev->smc_idx_lock, flags);
+	WREG32(TN_SMC_IND_INDEX_0, (reg));
+	WREG32(TN_SMC_IND_DATA_0, (v));
+	spin_unlock_irqrestore(&rdev->smc_idx_lock, flags);
+}
+
 static const u32 tn_rlc_save_restore_register_list[] =
 {
 	0x98fc,
@@ -1232,7 +1257,7 @@ static void cayman_gpu_init(struct radeon_device *rdev)
 		tmp = RREG32_CG(CG_CGTT_LOCAL_0);
 		tmp &= ~0x00380000;
 		WREG32_CG(CG_CGTT_LOCAL_0, tmp);
-                tmp = RREG32_CG(CG_CGTT_LOCAL_1);
+		tmp = RREG32_CG(CG_CGTT_LOCAL_1);
 		tmp &= ~0x0e000000;
 		WREG32_CG(CG_CGTT_LOCAL_1, tmp);
 	}
@@ -1301,7 +1326,8 @@ static int cayman_pcie_gart_enable(struct radeon_device *rdev)
 	 */
 	for (i = 1; i < 8; i++) {
 		WREG32(VM_CONTEXT0_PAGE_TABLE_START_ADDR + (i << 2), 0);
-		WREG32(VM_CONTEXT0_PAGE_TABLE_END_ADDR + (i << 2), rdev->vm_manager.max_pfn);
+		WREG32(VM_CONTEXT0_PAGE_TABLE_END_ADDR + (i << 2),
+			rdev->vm_manager.max_pfn - 1);
 		WREG32(VM_CONTEXT0_PAGE_TABLE_BASE_ADDR + (i << 2),
 		       rdev->vm_manager.saved_table_addr[i]);
 	}
@@ -1933,9 +1959,14 @@ static void cayman_gpu_soft_reset(struct radeon_device *rdev, u32 reset_mask)
 	evergreen_print_gpu_status_regs(rdev);
 }
 
-int cayman_asic_reset(struct radeon_device *rdev)
+int cayman_asic_reset(struct radeon_device *rdev, bool hard)
 {
 	u32 reset_mask;
+
+	if (hard) {
+		evergreen_gpu_pci_config_reset(rdev);
+		return 0;
+	}
 
 	reset_mask = cayman_gpu_check_soft_reset(rdev);
 
@@ -1974,6 +2005,160 @@ bool cayman_gfx_is_lockup(struct radeon_device *rdev, struct radeon_ring *ring)
 		return false;
 	}
 	return radeon_ring_test_lockup(rdev, ring);
+}
+
+static void cayman_uvd_init(struct radeon_device *rdev)
+{
+	int r;
+
+	if (!rdev->has_uvd)
+		return;
+
+	r = radeon_uvd_init(rdev);
+	if (r) {
+		dev_err(rdev->dev, "failed UVD (%d) init.\n", r);
+		/*
+		 * At this point rdev->uvd.vcpu_bo is NULL which trickles down
+		 * to early fails uvd_v2_2_resume() and thus nothing happens
+		 * there. So it is pointless to try to go through that code
+		 * hence why we disable uvd here.
+		 */
+		rdev->has_uvd = 0;
+		return;
+	}
+	rdev->ring[R600_RING_TYPE_UVD_INDEX].ring_obj = NULL;
+	r600_ring_init(rdev, &rdev->ring[R600_RING_TYPE_UVD_INDEX], 4096);
+}
+
+static void cayman_uvd_start(struct radeon_device *rdev)
+{
+	int r;
+
+	if (!rdev->has_uvd)
+		return;
+
+	r = uvd_v2_2_resume(rdev);
+	if (r) {
+		dev_err(rdev->dev, "failed UVD resume (%d).\n", r);
+		goto error;
+	}
+	r = radeon_fence_driver_start_ring(rdev, R600_RING_TYPE_UVD_INDEX);
+	if (r) {
+		dev_err(rdev->dev, "failed initializing UVD fences (%d).\n", r);
+		goto error;
+	}
+	return;
+
+error:
+	rdev->ring[R600_RING_TYPE_UVD_INDEX].ring_size = 0;
+}
+
+static void cayman_uvd_resume(struct radeon_device *rdev)
+{
+	struct radeon_ring *ring;
+	int r;
+
+	if (!rdev->has_uvd || !rdev->ring[R600_RING_TYPE_UVD_INDEX].ring_size)
+		return;
+
+	ring = &rdev->ring[R600_RING_TYPE_UVD_INDEX];
+	r = radeon_ring_init(rdev, ring, ring->ring_size, 0, RADEON_CP_PACKET2);
+	if (r) {
+		dev_err(rdev->dev, "failed initializing UVD ring (%d).\n", r);
+		return;
+	}
+	r = uvd_v1_0_init(rdev);
+	if (r) {
+		dev_err(rdev->dev, "failed initializing UVD (%d).\n", r);
+		return;
+	}
+}
+
+static void cayman_vce_init(struct radeon_device *rdev)
+{
+	int r;
+
+	/* Only set for CHIP_ARUBA */
+	if (!rdev->has_vce)
+		return;
+
+	r = radeon_vce_init(rdev);
+	if (r) {
+		dev_err(rdev->dev, "failed VCE (%d) init.\n", r);
+		/*
+		 * At this point rdev->vce.vcpu_bo is NULL which trickles down
+		 * to early fails cayman_vce_start() and thus nothing happens
+		 * there. So it is pointless to try to go through that code
+		 * hence why we disable vce here.
+		 */
+		rdev->has_vce = 0;
+		return;
+	}
+	rdev->ring[TN_RING_TYPE_VCE1_INDEX].ring_obj = NULL;
+	r600_ring_init(rdev, &rdev->ring[TN_RING_TYPE_VCE1_INDEX], 4096);
+	rdev->ring[TN_RING_TYPE_VCE2_INDEX].ring_obj = NULL;
+	r600_ring_init(rdev, &rdev->ring[TN_RING_TYPE_VCE2_INDEX], 4096);
+}
+
+static void cayman_vce_start(struct radeon_device *rdev)
+{
+	int r;
+
+	if (!rdev->has_vce)
+		return;
+
+	r = radeon_vce_resume(rdev);
+	if (r) {
+		dev_err(rdev->dev, "failed VCE resume (%d).\n", r);
+		goto error;
+	}
+	r = vce_v1_0_resume(rdev);
+	if (r) {
+		dev_err(rdev->dev, "failed VCE resume (%d).\n", r);
+		goto error;
+	}
+	r = radeon_fence_driver_start_ring(rdev, TN_RING_TYPE_VCE1_INDEX);
+	if (r) {
+		dev_err(rdev->dev, "failed initializing VCE1 fences (%d).\n", r);
+		goto error;
+	}
+	r = radeon_fence_driver_start_ring(rdev, TN_RING_TYPE_VCE2_INDEX);
+	if (r) {
+		dev_err(rdev->dev, "failed initializing VCE2 fences (%d).\n", r);
+		goto error;
+	}
+	return;
+
+error:
+	rdev->ring[TN_RING_TYPE_VCE1_INDEX].ring_size = 0;
+	rdev->ring[TN_RING_TYPE_VCE2_INDEX].ring_size = 0;
+}
+
+static void cayman_vce_resume(struct radeon_device *rdev)
+{
+	struct radeon_ring *ring;
+	int r;
+
+	if (!rdev->has_vce || !rdev->ring[TN_RING_TYPE_VCE1_INDEX].ring_size)
+		return;
+
+	ring = &rdev->ring[TN_RING_TYPE_VCE1_INDEX];
+	r = radeon_ring_init(rdev, ring, ring->ring_size, 0, 0x0);
+	if (r) {
+		dev_err(rdev->dev, "failed initializing VCE1 ring (%d).\n", r);
+		return;
+	}
+	ring = &rdev->ring[TN_RING_TYPE_VCE2_INDEX];
+	r = radeon_ring_init(rdev, ring, ring->ring_size, 0, 0x0);
+	if (r) {
+		dev_err(rdev->dev, "failed initializing VCE1 ring (%d).\n", r);
+		return;
+	}
+	r = vce_v1_0_init(rdev);
+	if (r) {
+		dev_err(rdev->dev, "failed initializing VCE (%d).\n", r);
+		return;
+	}
 }
 
 static int cayman_startup(struct radeon_device *rdev)
@@ -2030,15 +2215,8 @@ static int cayman_startup(struct radeon_device *rdev)
 		return r;
 	}
 
-	r = uvd_v2_2_resume(rdev);
-	if (!r) {
-		r = radeon_fence_driver_start_ring(rdev,
-						   R600_RING_TYPE_UVD_INDEX);
-		if (r)
-			dev_err(rdev->dev, "UVD fences init error (%d).\n", r);
-	}
-	if (r)
-		rdev->ring[R600_RING_TYPE_UVD_INDEX].ring_size = 0;
+	cayman_uvd_start(rdev);
+	cayman_vce_start(rdev);
 
 	r = radeon_fence_driver_start_ring(rdev, CAYMAN_RING_TYPE_CP1_INDEX);
 	if (r) {
@@ -2107,15 +2285,8 @@ static int cayman_startup(struct radeon_device *rdev)
 	if (r)
 		return r;
 
-	ring = &rdev->ring[R600_RING_TYPE_UVD_INDEX];
-	if (ring->ring_size) {
-		r = radeon_ring_init(rdev, ring, ring->ring_size, 0,
-				     RADEON_CP_PACKET2);
-		if (!r)
-			r = uvd_v1_0_init(rdev);
-		if (r)
-			DRM_ERROR("radeon: failed initializing UVD (%d).\n", r);
-	}
+	cayman_uvd_resume(rdev);
+	cayman_vce_resume(rdev);
 
 	r = radeon_ib_pool_init(rdev);
 	if (r) {
@@ -2170,8 +2341,10 @@ int cayman_suspend(struct radeon_device *rdev)
 	radeon_vm_manager_fini(rdev);
 	cayman_cp_enable(rdev, false);
 	cayman_dma_stop(rdev);
-	uvd_v1_0_fini(rdev);
-	radeon_uvd_suspend(rdev);
+	if (rdev->has_uvd) {
+		uvd_v1_0_fini(rdev);
+		radeon_uvd_suspend(rdev);
+	}
 	evergreen_irq_suspend(rdev);
 	radeon_wb_disable(rdev);
 	cayman_pcie_gart_disable(rdev);
@@ -2265,12 +2438,8 @@ int cayman_init(struct radeon_device *rdev)
 	ring->ring_obj = NULL;
 	r600_ring_init(rdev, ring, 64 * 1024);
 
-	r = radeon_uvd_init(rdev);
-	if (!r) {
-		ring = &rdev->ring[R600_RING_TYPE_UVD_INDEX];
-		ring->ring_obj = NULL;
-		r600_ring_init(rdev, ring, 4096);
-	}
+	cayman_uvd_init(rdev);
+	cayman_vce_init(rdev);
 
 	rdev->ih.ring_obj = NULL;
 	r600_ih_ring_init(rdev, 64 * 1024);
@@ -2325,6 +2494,8 @@ void cayman_fini(struct radeon_device *rdev)
 	radeon_irq_kms_fini(rdev);
 	uvd_v1_0_fini(rdev);
 	radeon_uvd_fini(rdev);
+	if (rdev->has_vce)
+		radeon_vce_fini(rdev);
 	cayman_pcie_gart_fini(rdev);
 	r600_vram_scratch_fini(rdev);
 	radeon_gem_fini(rdev);
@@ -2552,4 +2723,35 @@ void cayman_vm_flush(struct radeon_device *rdev, struct radeon_ring *ring,
 	/* sync PFP to ME, otherwise we might get invalid PFP reads */
 	radeon_ring_write(ring, PACKET3(PACKET3_PFP_SYNC_ME, 0));
 	radeon_ring_write(ring, 0x0);
+}
+
+int tn_set_vce_clocks(struct radeon_device *rdev, u32 evclk, u32 ecclk)
+{
+	struct atom_clock_dividers dividers;
+	int r, i;
+
+	r = radeon_atom_get_clock_dividers(rdev, COMPUTE_ENGINE_PLL_PARAM,
+					   ecclk, false, &dividers);
+	if (r)
+		return r;
+
+	for (i = 0; i < 100; i++) {
+		if (RREG32(CG_ECLK_STATUS) & ECLK_STATUS)
+			break;
+		mdelay(10);
+	}
+	if (i == 100)
+		return -ETIMEDOUT;
+
+	WREG32_P(CG_ECLK_CNTL, dividers.post_div, ~(ECLK_DIR_CNTL_EN|ECLK_DIVIDER_MASK));
+
+	for (i = 0; i < 100; i++) {
+		if (RREG32(CG_ECLK_STATUS) & ECLK_STATUS)
+			break;
+		mdelay(10);
+	}
+	if (i == 100)
+		return -ETIMEDOUT;
+
+	return 0;
 }

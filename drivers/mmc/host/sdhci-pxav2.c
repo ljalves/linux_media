@@ -177,7 +177,6 @@ static int sdhci_pxav2_probe(struct platform_device *pdev)
 		return PTR_ERR(host);
 
 	pltfm_host = sdhci_priv(host);
-	pltfm_host->priv = NULL;
 
 	clk = clk_get(dev, "PXA-SDHCLK");
 	if (IS_ERR(clk)) {
@@ -252,9 +251,7 @@ static int sdhci_pxav2_remove(struct platform_device *pdev)
 static struct platform_driver sdhci_pxav2_driver = {
 	.driver		= {
 		.name	= "sdhci-pxav2",
-#ifdef CONFIG_OF
-		.of_match_table = sdhci_pxav2_of_match,
-#endif
+		.of_match_table = of_match_ptr(sdhci_pxav2_of_match),
 		.pm	= SDHCI_PLTFM_PMOPS,
 	},
 	.probe		= sdhci_pxav2_probe,

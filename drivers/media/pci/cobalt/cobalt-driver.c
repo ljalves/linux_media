@@ -21,9 +21,9 @@
  */
 
 #include <linux/delay.h>
-#include <media/adv7604.h>
-#include <media/adv7842.h>
-#include <media/adv7511.h>
+#include <media/i2c/adv7604.h>
+#include <media/i2c/adv7842.h>
+#include <media/i2c/adv7511.h>
 #include <media/v4l2-event.h>
 #include <media/v4l2-ctrls.h>
 
@@ -339,15 +339,16 @@ static int cobalt_setup_pci(struct cobalt *cobalt, struct pci_dev *pci_dev,
 	}
 
 	if (pcie_link_get_lanes(cobalt) != 8) {
-		cobalt_err("PCI Express link width is not 8 lanes (%d)\n",
+		cobalt_warn("PCI Express link width is %d lanes.\n",
 				pcie_link_get_lanes(cobalt));
 		if (pcie_bus_link_get_lanes(cobalt) < 8)
-			cobalt_err("The current slot only supports %d lanes, at least 8 are needed\n",
+			cobalt_warn("The current slot only supports %d lanes, for best performance 8 are needed\n",
 					pcie_bus_link_get_lanes(cobalt));
-		else
+		if (pcie_link_get_lanes(cobalt) != pcie_bus_link_get_lanes(cobalt)) {
 			cobalt_err("The card is most likely not seated correctly in the PCIe slot\n");
-		ret = -EIO;
-		goto err_disable;
+			ret = -EIO;
+			goto err_disable;
+		}
 	}
 
 	if (pci_set_dma_mask(pci_dev, DMA_BIT_MASK(64))) {
@@ -602,6 +603,7 @@ static int cobalt_subdevs_hsma_init(struct cobalt *cobalt)
 	static struct adv7511_platform_data adv7511_pdata = {
 		.i2c_edid = 0x7e >> 1,
 		.i2c_cec = 0x7c >> 1,
+		.i2c_pktmem = 0x70 >> 1,
 		.cec_clk = 12000000,
 	};
 	static struct i2c_board_info adv7511_info = {

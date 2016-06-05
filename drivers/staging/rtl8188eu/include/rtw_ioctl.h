@@ -11,11 +11,6 @@
  * FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for
  * more details.
  *
- * You should have received a copy of the GNU General Public License along with
- * this program; if not, write to the Free Software Foundation, Inc.,
- * 51 Franklin Street, Fifth Floor, Boston, MA 02110, USA
- *
- *
  ******************************************************************************/
 #ifndef _RTW_IOCTL_H_
 #define _RTW_IOCTL_H_
@@ -116,7 +111,5 @@ int drv_set_info(struct  net_device *MiniportAdapterContext,
 		 NDIS_OID oid, void *informationbuffer,
 		 u32 informationbufferlength, u32 *bytesread,
 		 u32 *bytesneeded);
-
-extern int ui_pid[3];
 
 #endif /*  #ifndef __INC_CEINFO_ */

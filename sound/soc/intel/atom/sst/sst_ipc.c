@@ -318,7 +318,6 @@ void sst_process_reply_mrfld(struct intel_sst_drv *sst_drv_ctx,
 	union ipc_header_high msg_high;
 	u32 msg_low;
 	struct ipc_dsp_hdr *dsp_hdr;
-	unsigned int cmd_id;
 
 	msg_high = msg->mrfld_header.p.header_high;
 	msg_low = msg->mrfld_header.p.header_low_payload;
@@ -352,13 +351,11 @@ void sst_process_reply_mrfld(struct intel_sst_drv *sst_drv_ctx,
 	 * copy from mailbox
 	 **/
 	if (msg_high.part.large) {
-		data = kzalloc(msg_low, GFP_KERNEL);
+		data = kmemdup((void *)msg->mailbox_data, msg_low, GFP_KERNEL);
 		if (!data)
 			return;
-		memcpy(data, (void *) msg->mailbox_data, msg_low);
 		/* Copy command id so that we can use to put sst to reset */
 		dsp_hdr = (struct ipc_dsp_hdr *)data;
-		cmd_id = dsp_hdr->cmd_id;
 		dev_dbg(sst_drv_ctx->dev, "cmd_id %d\n", dsp_hdr->cmd_id);
 		if (sst_wake_up_block(sst_drv_ctx, msg_high.part.result,
 				msg_high.part.drv_id,

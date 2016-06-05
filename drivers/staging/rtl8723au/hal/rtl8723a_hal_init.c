@@ -249,13 +249,13 @@ int rtl8723a_FirmwareDownload(struct rtw_adapter *padapter)
 		goto Exit;
 	}
 	firmware_buf = kmemdup(fw->data, fw->size, GFP_KERNEL);
+	fw_size = fw->size;
+	release_firmware(fw);
 	if (!firmware_buf) {
 		rtStatus = _FAIL;
 		goto Exit;
 	}
 	buf = firmware_buf;
-	fw_size = fw->size;
-	release_firmware(fw);
 
 	/*  To Check Fw header. Added by tynli. 2009.12.04. */
 	pFwHdr = (struct rt_8723a_firmware_hdr *)firmware_buf;
@@ -399,10 +399,8 @@ hal_ReadEFuse_WiFi(struct rtw_adapter *padapter,
 	}
 
 	efuseTbl = kmalloc(EFUSE_MAP_LEN_8723A, GFP_KERNEL);
-	if (efuseTbl == NULL) {
-		DBG_8723A("%s: alloc efuseTbl fail!\n", __func__);
+	if (!efuseTbl)
 		return;
-	}
 	/*  0xff will be efuse default value instead of 0x00. */
 	memset(efuseTbl, 0xFF, EFUSE_MAP_LEN_8723A);
 
@@ -491,10 +489,8 @@ hal_ReadEFuse_BT(struct rtw_adapter *padapter,
 	}
 
 	efuseTbl = kmalloc(EFUSE_BT_MAP_LEN, GFP_KERNEL);
-	if (efuseTbl == NULL) {
-		DBG_8723A("%s: efuseTbl malloc fail!\n", __func__);
+	if (!efuseTbl)
 		return;
-	}
 	/*  0xff will be efuse default value instead of 0x00. */
 	memset(efuseTbl, 0xFF, EFUSE_BT_MAP_LEN);
 
@@ -1044,7 +1040,7 @@ void rtl8723a_InitAntenna_Selection(struct rtw_adapter *padapter)
 	u8 val;
 
 	val = rtl8723au_read8(padapter, REG_LEDCFG2);
-	/*  Let 8051 take control antenna settting */
+	/*  Let 8051 take control antenna setting */
 	val |= BIT(7);		/*  DPDT_SEL_EN, 0x4C[23] */
 	rtl8723au_write8(padapter, REG_LEDCFG2, val);
 }
@@ -1054,7 +1050,7 @@ void rtl8723a_CheckAntenna_Selection(struct rtw_adapter *padapter)
 	u8 val;
 
 	val = rtl8723au_read8(padapter, REG_LEDCFG2);
-	/*  Let 8051 take control antenna settting */
+	/*  Let 8051 take control antenna setting */
 	if (!(val & BIT(7))) {
 		val |= BIT(7);	/*  DPDT_SEL_EN, 0x4C[23] */
 		rtl8723au_write8(padapter, REG_LEDCFG2, val);
@@ -1066,7 +1062,7 @@ void rtl8723a_DeinitAntenna_Selection(struct rtw_adapter *padapter)
 	u8 val;
 
 	val = rtl8723au_read8(padapter, REG_LEDCFG2);
-	/*  Let 8051 take control antenna settting */
+	/*  Let 8051 take control antenna setting */
 	val &= ~BIT(7);		/*  DPDT_SEL_EN, clear 0x4C[23] */
 	rtl8723au_write8(padapter, REG_LEDCFG2, val);
 }
@@ -1179,8 +1175,6 @@ int InitLLTTable23a(struct rtw_adapter *padapter, u32 boundary)
 
 	/*  Let last entry point to the start entry of ring buffer */
 	status = _LLTWrite(padapter, Last_Entry_Of_TxPktBuf, txpktbuf_bndy);
-	if (status != _SUCCESS)
-		return status;
 
 	return status;
 }
@@ -1297,7 +1291,7 @@ static void _ResetDigitalProcedure1_92C(struct rtw_adapter *padapter,
 		/*  If we want to SS mode, we can not reset 8051. */
 		if ((val8 & BIT(1)) && padapter->bFWReady) {
 			/* IF fw in RAM code, do reset */
-			/*  2010/08/25 MH Accordign to RD alfred's
+			/*  2010/08/25 MH According to RD alfred's
 			    suggestion, we need to disable other */
 			/*  HRCV INT to influence 8051 reset. */
 			rtl8723au_write8(padapter, REG_FWIMR, 0x20);
@@ -1396,7 +1390,7 @@ static void _DisableAnalog(struct rtw_adapter *padapter, bool bWithoutHWSM)
 		/* value16 |= (APDM_HOST | FSM_HSUS |/PFM_ALDN); */
 		/*  2010/08/31 According to Filen description, we need to
 		    use HW to shut down 8051 automatically. */
-		/*  Becasue suspend operatione need the asistance of 8051
+		/*  Because suspend operation need the asistance of 8051
 		    to wait for 3ms. */
 		value16 = APDM_HOST | AFSM_HSUS | PFM_ALDN;
 	} else {
@@ -1485,7 +1479,7 @@ void Hal_EfuseParseIDCode(struct rtw_adapter *padapter, u8 *hwinfo)
 	u16 EEPROMId;
 
 	/*  Checl 0x8129 again for making sure autoload status!! */
-	EEPROMId = le16_to_cpu(*((u16 *) hwinfo));
+	EEPROMId = le16_to_cpu(*((__le16 *) hwinfo));
 	if (EEPROMId != RTL_EEPROM_ID) {
 		DBG_8723A("EEPROM ID(%#x) is invalid!!\n", EEPROMId);
 		pEEPROM->bautoload_fail_flag = true;
@@ -1495,29 +1489,6 @@ void Hal_EfuseParseIDCode(struct rtw_adapter *padapter, u8 *hwinfo)
 
 	RT_TRACE(_module_hal_init_c_, _drv_info_,
 		 "EEPROM ID = 0x%04x\n", EEPROMId);
-}
-
-static void Hal_EEValueCheck(u8 EEType, void *pInValue, void *pOutValue)
-{
-	switch (EEType) {
-	case EETYPE_TX_PWR:
-	{
-		u8 *pIn, *pOut;
-		pIn = (u8 *) pInValue;
-		pOut = (u8 *) pOutValue;
-		if (*pIn <= 63)
-			*pOut = *pIn;
-		else {
-			RT_TRACE(_module_hci_hal_init_c_, _drv_err_,
-				 "EETYPE_TX_PWR, value =%d is invalid, set to default = 0x%x\n",
-				 *pIn, EEPROM_Default_TxPowerLevel);
-			*pOut = EEPROM_Default_TxPowerLevel;
-		}
-	}
-		break;
-	default:
-		break;
-	}
 }
 
 static void
@@ -1555,16 +1526,19 @@ Hal_ReadPowerValueFromPROM_8723A(struct txpowerinfo *pwrInfo,
 		for (group = 0; group < MAX_CHNL_GROUP; group++) {
 			eeAddr =
 			    EEPROM_CCK_TX_PWR_INX_8723A + (rfPath * 3) + group;
-			/* pwrInfo->CCKIndex[rfPath][group] =
-			   PROMContent[eeAddr]; */
-			Hal_EEValueCheck(EETYPE_TX_PWR, &PROMContent[eeAddr],
-					 &pwrInfo->CCKIndex[rfPath][group]);
+
+			pwrInfo->CCKIndex[rfPath][group] = PROMContent[eeAddr];
+			if (pwrInfo->CCKIndex[rfPath][group] > 63)
+				pwrInfo->CCKIndex[rfPath][group] =
+					EEPROM_Default_TxPowerLevel;
+
 			eeAddr = EEPROM_HT40_1S_TX_PWR_INX_8723A +
 				(rfPath * 3) + group;
-			/* pwrInfo->HT40_1SIndex[rfPath][group] =
-			   PROMContent[eeAddr]; */
-			Hal_EEValueCheck(EETYPE_TX_PWR, &PROMContent[eeAddr],
-					 &pwrInfo->HT40_1SIndex[rfPath][group]);
+			pwrInfo->HT40_1SIndex[rfPath][group] =
+				PROMContent[eeAddr];
+			if (pwrInfo->HT40_1SIndex[rfPath][group] > 63)
+				pwrInfo->HT40_1SIndex[rfPath][group] =
+					EEPROM_Default_TxPowerLevel;
 		}
 	}
 
@@ -1838,7 +1812,7 @@ Hal_EfuseParseThermalMeter_8723A(struct rtw_adapter *padapter,
 
 static void rtl8723a_cal_txdesc_chksum(struct tx_desc *ptxdesc)
 {
-	u16 *usPtr = (u16 *) ptxdesc;
+	__le16 *usPtr = (__le16 *)ptxdesc;
 	u32 count = 16;		/*  (32 bytes / 2 bytes per XOR) => 16 times */
 	u32 index;
 	u16 checksum = 0;
@@ -1847,7 +1821,7 @@ static void rtl8723a_cal_txdesc_chksum(struct tx_desc *ptxdesc)
 	ptxdesc->txdw7 &= cpu_to_le32(0xffff0000);
 
 	for (index = 0; index < count; index++)
-		checksum ^= le16_to_cpu(*(usPtr + index));
+		checksum ^= le16_to_cpu(usPtr[index]);
 
 	ptxdesc->txdw7 |= cpu_to_le32(checksum & 0x0000ffff);
 }

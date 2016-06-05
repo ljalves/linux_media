@@ -435,7 +435,7 @@ static irqreturn_t pm860x_temp_handler(int irq, void *data)
 
 	psy = power_supply_get_by_name(pm860x_supplied_to[0]);
 	if (!psy)
-		goto out;
+		return IRQ_HANDLED;
 	ret = power_supply_get_property(psy, POWER_SUPPLY_PROP_TEMP, &temp);
 	if (ret)
 		goto out;
@@ -742,7 +742,6 @@ static int pm860x_charger_remove(struct platform_device *pdev)
 	int i;
 
 	power_supply_unregister(info->usb);
-	free_irq(info->irq[0], info);
 	for (i = 0; i < info->irq_nums; i++)
 		free_irq(info->irq[i], info);
 	return 0;

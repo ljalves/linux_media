@@ -18,6 +18,7 @@
 #include <linux/phy.h>
 
 struct cpsw_slave_data {
+	struct device_node *phy_node;
 	char		phy_id[MII_BUS_ID_SIZE];
 	int		phy_if;
 	u8		mac_addr[ETH_ALEN];
@@ -41,7 +42,6 @@ struct cpsw_platform_data {
 };
 
 void cpsw_phy_sel(struct device *dev, phy_interface_t phy_mode, int slave);
-int cpsw_am33xx_cm_get_macid(struct device *dev, u16 offset, int slave,
-			     u8 *mac_addr);
+int ti_cm_get_macid(struct device *dev, int slave, u8 *mac_addr);
 
 #endif /* __CPSW_H__ */

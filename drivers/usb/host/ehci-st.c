@@ -54,7 +54,6 @@ static int st_ehci_platform_reset(struct usb_hcd *hcd)
 	struct platform_device *pdev = to_platform_device(hcd->self.controller);
 	struct usb_ehci_pdata *pdata = dev_get_platdata(&pdev->dev);
 	struct ehci_hcd *ehci = hcd_to_ehci(hcd);
-	int retval;
 	u32 threshold;
 
 	/* Set EHCI packet buffer IN/OUT threshold to 128 bytes */
@@ -62,11 +61,7 @@ static int st_ehci_platform_reset(struct usb_hcd *hcd)
 	writel(threshold, hcd->regs + AHB2STBUS_INSREG01);
 
 	ehci->caps = hcd->regs + pdata->caps_offset;
-	retval = ehci_setup(hcd);
-	if (retval)
-		return retval;
-
-	return 0;
+	return ehci_setup(hcd);
 }
 
 static int st_ehci_platform_power_on(struct platform_device *dev)
@@ -292,8 +287,7 @@ static int st_ehci_suspend(struct device *dev)
 {
 	struct usb_hcd *hcd = dev_get_drvdata(dev);
 	struct usb_ehci_pdata *pdata = dev_get_platdata(dev);
-	struct platform_device *pdev =
-		container_of(dev, struct platform_device, dev);
+	struct platform_device *pdev = to_platform_device(dev);
 	bool do_wakeup = device_may_wakeup(dev);
 	int ret;
 
@@ -313,8 +307,7 @@ static int st_ehci_resume(struct device *dev)
 {
 	struct usb_hcd *hcd = dev_get_drvdata(dev);
 	struct usb_ehci_pdata *pdata = dev_get_platdata(dev);
-	struct platform_device *pdev =
-		container_of(dev, struct platform_device, dev);
+	struct platform_device *pdev = to_platform_device(dev);
 	int err;
 
 	pinctrl_pm_select_default_state(dev);

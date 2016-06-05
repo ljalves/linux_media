@@ -321,7 +321,7 @@ static struct tda1004x_config tda1004x_vp6090_config = {
 	.request_firmware	= tda1004x_vp6090_request_firmware,
 };
 
-static int vp6090_dvbs_set_voltage(struct dvb_frontend *fe, fe_sec_voltage_t voltage)
+static int vp6090_dvbs_set_voltage(struct dvb_frontend *fe, enum fe_sec_voltage voltage)
 {
 	struct saa716x_dev *saa716x = fe->dvb->priv;
 

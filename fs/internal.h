@@ -55,7 +55,7 @@ extern int vfs_path_lookup(struct dentry *, struct vfsmount *,
 /*
  * namespace.c
  */
-extern int copy_mount_options(const void __user *, unsigned long *);
+extern void *copy_mount_options(const void __user *);
 extern char *copy_mount_string(const void __user *);
 
 extern struct vfsmount *lookup_mnt(struct path *);
@@ -107,18 +107,18 @@ extern struct file *do_file_open_root(struct dentry *, struct vfsmount *,
 extern long do_handle_open(int mountdirfd,
 			   struct file_handle __user *ufh, int open_flag);
 extern int open_check_o_direct(struct file *f);
+extern int vfs_open(const struct path *, struct file *, const struct cred *);
 
 /*
  * inode.c
  */
-extern spinlock_t inode_sb_list_lock;
 extern long prune_icache_sb(struct super_block *sb, struct shrink_control *sc);
 extern void inode_add_lru(struct inode *inode);
 
 /*
  * fs-writeback.c
  */
-extern void inode_wb_list_del(struct inode *inode);
+extern void inode_io_list_del(struct inode *inode);
 
 extern long get_nr_dirty_inodes(void);
 extern void evict_inodes(struct super_block *);
@@ -151,3 +151,10 @@ extern void mnt_pin_kill(struct mount *m);
  * fs/nsfs.c
  */
 extern struct dentry_operations ns_dentry_operations;
+
+/*
+ * fs/ioctl.c
+ */
+extern int do_vfs_ioctl(struct file *file, unsigned int fd, unsigned int cmd,
+		    unsigned long arg);
+extern long vfs_ioctl(struct file *file, unsigned int cmd, unsigned long arg);

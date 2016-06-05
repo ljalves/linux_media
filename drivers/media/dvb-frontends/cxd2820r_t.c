@@ -138,10 +138,10 @@ error:
 	return ret;
 }
 
-int cxd2820r_get_frontend_t(struct dvb_frontend *fe)
+int cxd2820r_get_frontend_t(struct dvb_frontend *fe,
+			    struct dtv_frontend_properties *c)
 {
 	struct cxd2820r_priv *priv = fe->demodulator_priv;
-	struct dtv_frontend_properties *c = &fe->dtv_property_cache;
 	int ret;
 	u8 buf[2];
 
@@ -349,7 +349,7 @@ int cxd2820r_read_ucblocks_t(struct dvb_frontend *fe, u32 *ucblocks)
 	return 0;
 }
 
-int cxd2820r_read_status_t(struct dvb_frontend *fe, fe_status_t *status)
+int cxd2820r_read_status_t(struct dvb_frontend *fe, enum fe_status *status)
 {
 	struct cxd2820r_priv *priv = fe->demodulator_priv;
 	int ret;

@@ -26,9 +26,9 @@
 #include <media/v4l2-fh.h>
 #include <media/v4l2-event.h>
 #include <media/v4l2-device.h>
-#include <media/videobuf2-core.h>
+#include <media/videobuf2-v4l2.h>
+#include <media/v4l2-mc.h>
 
-#define CREATE_TRACE_POINTS
 #include <trace/events/v4l2.h>
 
 /* Zero out the end of the struct pointed to by p.  Everything after, but
@@ -142,6 +142,7 @@ const char *v4l2_field_names[] = {
 EXPORT_SYMBOL(v4l2_field_names);
 
 const char *v4l2_type_names[] = {
+	[0]				   = "0",
 	[V4L2_BUF_TYPE_VIDEO_CAPTURE]      = "vid-cap",
 	[V4L2_BUF_TYPE_VIDEO_OVERLAY]      = "vid-overlay",
 	[V4L2_BUF_TYPE_VIDEO_OUTPUT]       = "vid-out",
@@ -153,6 +154,7 @@ const char *v4l2_type_names[] = {
 	[V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE] = "vid-cap-mplane",
 	[V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE] = "vid-out-mplane",
 	[V4L2_BUF_TYPE_SDR_CAPTURE]        = "sdr-cap",
+	[V4L2_BUF_TYPE_SDR_OUTPUT]         = "sdr-out",
 };
 EXPORT_SYMBOL(v4l2_type_names);
 
@@ -257,7 +259,8 @@ static void v4l_print_format(const void *arg, bool write_only)
 		pr_cont(", width=%u, height=%u, "
 			"pixelformat=%c%c%c%c, field=%s, "
 			"bytesperline=%u, sizeimage=%u, colorspace=%d, "
-			"flags=0x%x, ycbcr_enc=%u, quantization=%u\n",
+			"flags=0x%x, ycbcr_enc=%u, quantization=%u, "
+			"xfer_func=%u\n",
 			pix->width, pix->height,
 			(pix->pixelformat & 0xff),
 			(pix->pixelformat >>  8) & 0xff,
@@ -266,7 +269,7 @@ static void v4l_print_format(const void *arg, bool write_only)
 			prt_names(pix->field, v4l2_field_names),
 			pix->bytesperline, pix->sizeimage,
 			pix->colorspace, pix->flags, pix->ycbcr_enc,
-			pix->quantization);
+			pix->quantization, pix->xfer_func);
 		break;
 	case V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE:
 	case V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE:
@@ -274,7 +277,7 @@ static void v4l_print_format(const void *arg, bool write_only)
 		pr_cont(", width=%u, height=%u, "
 			"format=%c%c%c%c, field=%s, "
 			"colorspace=%d, num_planes=%u, flags=0x%x, "
-			"ycbcr_enc=%u, quantization=%u\n",
+			"ycbcr_enc=%u, quantization=%u, xfer_func=%u\n",
 			mp->width, mp->height,
 			(mp->pixelformat & 0xff),
 			(mp->pixelformat >>  8) & 0xff,
@@ -282,7 +285,7 @@ static void v4l_print_format(const void *arg, bool write_only)
 			(mp->pixelformat >> 24) & 0xff,
 			prt_names(mp->field, v4l2_field_names),
 			mp->colorspace, mp->num_planes, mp->flags,
-			mp->ycbcr_enc, mp->quantization);
+			mp->ycbcr_enc, mp->quantization, mp->xfer_func);
 		for (i = 0; i < mp->num_planes; i++)
 			printk(KERN_DEBUG "plane %u: bytesperline=%u sizeimage=%u\n", i,
 					mp->plane_fmt[i].bytesperline,
@@ -325,6 +328,7 @@ static void v4l_print_format(const void *arg, bool write_only)
 				sliced->service_lines[1][i]);
 		break;
 	case V4L2_BUF_TYPE_SDR_CAPTURE:
+	case V4L2_BUF_TYPE_SDR_OUTPUT:
 		sdr = &p->fmt.sdr;
 		pr_cont(", pixelformat=%c%c%c%c\n",
 			(sdr->pixelformat >>  0) & 0xff,
@@ -562,8 +566,8 @@ static void v4l_print_ext_controls(const void *arg, bool write_only)
 	const struct v4l2_ext_controls *p = arg;
 	int i;
 
-	pr_cont("class=0x%x, count=%d, error_idx=%d",
-			p->ctrl_class, p->count, p->error_idx);
+	pr_cont("which=0x%x, count=%d, error_idx=%d",
+			p->which, p->count, p->error_idx);
 	for (i = 0; i < p->count; i++) {
 		if (!p->controls[i].size)
 			pr_cont(", id/val=0x%x/0x%x",
@@ -899,13 +903,13 @@ static int check_ext_ctrls(struct v4l2_ext_controls *c, int allow_priv)
 	   Only when passed in through VIDIOC_G_CTRL and VIDIOC_S_CTRL
 	   is it allowed for backwards compatibility.
 	 */
-	if (!allow_priv && c->ctrl_class == V4L2_CID_PRIVATE_BASE)
+	if (!allow_priv && c->which == V4L2_CID_PRIVATE_BASE)
 		return 0;
-	if (c->ctrl_class == 0)
+	if (!c->which)
 		return 1;
 	/* Check that all controls are from the same control class. */
 	for (i = 0; i < c->count; i++) {
-		if (V4L2_CTRL_ID2CLASS(c->controls[i].id) != c->ctrl_class) {
+		if (V4L2_CTRL_ID2WHICH(c->controls[i].id) != c->which) {
 			c->error_idx = i;
 			return 0;
 		}
@@ -973,6 +977,10 @@ static int check_fmt(struct file *file, enum v4l2_buf_type type)
 		if (is_sdr && is_rx && ops->vidioc_g_fmt_sdr_cap)
 			return 0;
 		break;
+	case V4L2_BUF_TYPE_SDR_OUTPUT:
+		if (is_sdr && is_tx && ops->vidioc_g_fmt_sdr_out)
+			return 0;
+		break;
 	default:
 		break;
 	}
@@ -1012,9 +1020,12 @@ static int v4l_querycap(const struct v4l2_ioctl_ops *ops,
 				struct file *file, void *fh, void *arg)
 {
 	struct v4l2_capability *cap = (struct v4l2_capability *)arg;
+	struct video_device *vfd = video_devdata(file);
 	int ret;
 
 	cap->version = LINUX_VERSION_CODE;
+	cap->device_caps = vfd->device_caps;
+	cap->capabilities = vfd->device_caps | V4L2_CAP_DEVICE_CAPS;
 
 	ret = ops->vidioc_querycap(file, fh, cap);
 
@@ -1023,8 +1034,9 @@ static int v4l_querycap(const struct v4l2_ioctl_ops *ops,
 	 * Drivers MUST fill in device_caps, so check for this and
 	 * warn if it was forgotten.
 	 */
-	WARN_ON(!(cap->capabilities & V4L2_CAP_DEVICE_CAPS) ||
-		!cap->device_caps);
+	WARN(!(cap->capabilities & V4L2_CAP_DEVICE_CAPS) ||
+		!cap->device_caps, "Bad caps for driver %s, %x %x",
+		cap->driver, cap->capabilities, cap->device_caps);
 	cap->device_caps |= V4L2_CAP_EXT_PIX_FORMAT;
 
 	return ret;
@@ -1033,6 +1045,12 @@ static int v4l_querycap(const struct v4l2_ioctl_ops *ops,
 static int v4l_s_input(const struct v4l2_ioctl_ops *ops,
 				struct file *file, void *fh, void *arg)
 {
+	struct video_device *vfd = video_devdata(file);
+	int ret;
+
+	ret = v4l_enable_media_source(vfd);
+	if (ret)
+		return ret;
 	return ops->vidioc_s_input(file, fh, *(unsigned int *)arg);
 }
 
@@ -1157,7 +1175,7 @@ static void v4l_fill_fmtdesc(struct v4l2_fmtdesc *fmt)
 	case V4L2_PIX_FMT_YVYU:		descr = "YVYU 4:2:2"; break;
 	case V4L2_PIX_FMT_UYVY:		descr = "UYVY 4:2:2"; break;
 	case V4L2_PIX_FMT_VYUY:		descr = "VYUY 4:2:2"; break;
-	case V4L2_PIX_FMT_YUV422P:	descr = "Planar YVU 4:2:2"; break;
+	case V4L2_PIX_FMT_YUV422P:	descr = "Planar YUV 4:2:2"; break;
 	case V4L2_PIX_FMT_YUV411P:	descr = "Planar YUV 4:1:1"; break;
 	case V4L2_PIX_FMT_Y41P:		descr = "YUV 4:1:1 (Packed)"; break;
 	case V4L2_PIX_FMT_YUV444:	descr = "16-bit A/XYUV 4-4-4-4"; break;
@@ -1183,6 +1201,10 @@ static void v4l_fill_fmtdesc(struct v4l2_fmtdesc *fmt)
 	case V4L2_PIX_FMT_NV12MT_16X16:	descr = "Y/CbCr 4:2:0 (16x16 MB, N-C)"; break;
 	case V4L2_PIX_FMT_YUV420M:	descr = "Planar YUV 4:2:0 (N-C)"; break;
 	case V4L2_PIX_FMT_YVU420M:	descr = "Planar YVU 4:2:0 (N-C)"; break;
+	case V4L2_PIX_FMT_YUV422M:	descr = "Planar YUV 4:2:2 (N-C)"; break;
+	case V4L2_PIX_FMT_YVU422M:	descr = "Planar YVU 4:2:2 (N-C)"; break;
+	case V4L2_PIX_FMT_YUV444M:	descr = "Planar YUV 4:4:4 (N-C)"; break;
+	case V4L2_PIX_FMT_YVU444M:	descr = "Planar YVU 4:4:4 (N-C)"; break;
 	case V4L2_PIX_FMT_SBGGR8:	descr = "8-bit Bayer BGBG/GRGR"; break;
 	case V4L2_PIX_FMT_SGBRG8:	descr = "8-bit Bayer GBGB/RGRG"; break;
 	case V4L2_PIX_FMT_SGRBG8:	descr = "8-bit Bayer GRGR/BGBG"; break;
@@ -1322,6 +1344,11 @@ static int v4l_enum_fmt(const struct v4l2_ioctl_ops *ops,
 			break;
 		ret = ops->vidioc_enum_fmt_sdr_cap(file, fh, arg);
 		break;
+	case V4L2_BUF_TYPE_SDR_OUTPUT:
+		if (unlikely(!is_tx || !is_sdr || !ops->vidioc_enum_fmt_sdr_out))
+			break;
+		ret = ops->vidioc_enum_fmt_sdr_out(file, fh, arg);
+		break;
 	}
 	if (ret == 0)
 		v4l_fill_fmtdesc(p);
@@ -1416,6 +1443,10 @@ static int v4l_g_fmt(const struct v4l2_ioctl_ops *ops,
 		if (unlikely(!is_rx || !is_sdr || !ops->vidioc_g_fmt_sdr_cap))
 			break;
 		return ops->vidioc_g_fmt_sdr_cap(file, fh, arg);
+	case V4L2_BUF_TYPE_SDR_OUTPUT:
+		if (unlikely(!is_tx || !is_sdr || !ops->vidioc_g_fmt_sdr_out))
+			break;
+		return ops->vidioc_g_fmt_sdr_out(file, fh, arg);
 	}
 	return -EINVAL;
 }
@@ -1431,6 +1462,9 @@ static int v4l_s_fmt(const struct v4l2_ioctl_ops *ops,
 	bool is_tx = vfd->vfl_dir != VFL_DIR_RX;
 	int ret;
 
+	ret = v4l_enable_media_source(vfd);
+	if (ret)
+		return ret;
 	v4l_sanitize_format(p);
 
 	switch (p->type) {
@@ -1495,6 +1529,11 @@ static int v4l_s_fmt(const struct v4l2_ioctl_ops *ops,
 			break;
 		CLEAR_AFTER_FIELD(p, fmt.sdr);
 		return ops->vidioc_s_fmt_sdr_cap(file, fh, arg);
+	case V4L2_BUF_TYPE_SDR_OUTPUT:
+		if (unlikely(!is_tx || !is_sdr || !ops->vidioc_s_fmt_sdr_out))
+			break;
+		CLEAR_AFTER_FIELD(p, fmt.sdr);
+		return ops->vidioc_s_fmt_sdr_out(file, fh, arg);
 	}
 	return -EINVAL;
 }
@@ -1574,6 +1613,11 @@ static int v4l_try_fmt(const struct v4l2_ioctl_ops *ops,
 			break;
 		CLEAR_AFTER_FIELD(p, fmt.sdr);
 		return ops->vidioc_try_fmt_sdr_cap(file, fh, arg);
+	case V4L2_BUF_TYPE_SDR_OUTPUT:
+		if (unlikely(!is_tx || !is_sdr || !ops->vidioc_try_fmt_sdr_out))
+			break;
+		CLEAR_AFTER_FIELD(p, fmt.sdr);
+		return ops->vidioc_try_fmt_sdr_out(file, fh, arg);
 	}
 	return -EINVAL;
 }
@@ -1610,7 +1654,11 @@ static int v4l_s_tuner(const struct v4l2_ioctl_ops *ops,
 {
 	struct video_device *vfd = video_devdata(file);
 	struct v4l2_tuner *p = arg;
+	int ret;
 
+	ret = v4l_enable_media_source(vfd);
+	if (ret)
+		return ret;
 	p->type = (vfd->vfl_type == VFL_TYPE_RADIO) ?
 			V4L2_TUNER_RADIO : V4L2_TUNER_ANALOG_TV;
 	return ops->vidioc_s_tuner(file, fh, p);
@@ -1619,13 +1667,29 @@ static int v4l_s_tuner(const struct v4l2_ioctl_ops *ops,
 static int v4l_g_modulator(const struct v4l2_ioctl_ops *ops,
 				struct file *file, void *fh, void *arg)
 {
+	struct video_device *vfd = video_devdata(file);
 	struct v4l2_modulator *p = arg;
 	int err;
+
+	if (vfd->vfl_type == VFL_TYPE_RADIO)
+		p->type = V4L2_TUNER_RADIO;
 
 	err = ops->vidioc_g_modulator(file, fh, p);
 	if (!err)
 		p->capability |= V4L2_TUNER_CAP_FREQ_BANDS;
 	return err;
+}
+
+static int v4l_s_modulator(const struct v4l2_ioctl_ops *ops,
+				struct file *file, void *fh, void *arg)
+{
+	struct video_device *vfd = video_devdata(file);
+	struct v4l2_modulator *p = arg;
+
+	if (vfd->vfl_type == VFL_TYPE_RADIO)
+		p->type = V4L2_TUNER_RADIO;
+
+	return ops->vidioc_s_modulator(file, fh, p);
 }
 
 static int v4l_g_frequency(const struct v4l2_ioctl_ops *ops,
@@ -1635,7 +1699,7 @@ static int v4l_g_frequency(const struct v4l2_ioctl_ops *ops,
 	struct v4l2_frequency *p = arg;
 
 	if (vfd->vfl_type == VFL_TYPE_SDR)
-		p->type = V4L2_TUNER_ADC;
+		p->type = V4L2_TUNER_SDR;
 	else
 		p->type = (vfd->vfl_type == VFL_TYPE_RADIO) ?
 				V4L2_TUNER_RADIO : V4L2_TUNER_ANALOG_TV;
@@ -1648,9 +1712,13 @@ static int v4l_s_frequency(const struct v4l2_ioctl_ops *ops,
 	struct video_device *vfd = video_devdata(file);
 	const struct v4l2_frequency *p = arg;
 	enum v4l2_tuner_type type;
+	int ret;
 
+	ret = v4l_enable_media_source(vfd);
+	if (ret)
+		return ret;
 	if (vfd->vfl_type == VFL_TYPE_SDR) {
-		if (p->type != V4L2_TUNER_ADC && p->type != V4L2_TUNER_RF)
+		if (p->type != V4L2_TUNER_SDR && p->type != V4L2_TUNER_RF)
 			return -EINVAL;
 	} else {
 		type = (vfd->vfl_type == VFL_TYPE_RADIO) ?
@@ -1703,7 +1771,11 @@ static int v4l_s_std(const struct v4l2_ioctl_ops *ops,
 {
 	struct video_device *vfd = video_devdata(file);
 	v4l2_std_id id = *(v4l2_std_id *)arg, norm;
+	int ret;
 
+	ret = v4l_enable_media_source(vfd);
+	if (ret)
+		return ret;
 	norm = id & vfd->tvnorms;
 	if (vfd->tvnorms && !norm)	/* Check if std is supported */
 		return -EINVAL;
@@ -1717,7 +1789,11 @@ static int v4l_querystd(const struct v4l2_ioctl_ops *ops,
 {
 	struct video_device *vfd = video_devdata(file);
 	v4l2_std_id *p = arg;
+	int ret;
 
+	ret = v4l_enable_media_source(vfd);
+	if (ret)
+		return ret;
 	/*
 	 * If no signal is detected, then the driver should return
 	 * V4L2_STD_UNKNOWN. Otherwise it should return tvnorms with
@@ -1736,7 +1812,11 @@ static int v4l_s_hw_freq_seek(const struct v4l2_ioctl_ops *ops,
 	struct video_device *vfd = video_devdata(file);
 	struct v4l2_hw_freq_seek *p = arg;
 	enum v4l2_tuner_type type;
+	int ret;
 
+	ret = v4l_enable_media_source(vfd);
+	if (ret)
+		return ret;
 	/* s_hw_freq_seek is not supported for SDR for now */
 	if (vfd->vfl_type == VFL_TYPE_SDR)
 		return -EINVAL;
@@ -1803,6 +1883,8 @@ static int v4l_create_bufs(const struct v4l2_ioctl_ops *ops,
 
 	if (ret)
 		return ret;
+
+	CLEAR_AFTER_FIELD(create, format);
 
 	v4l_sanitize_format(&create->format);
 
@@ -1924,7 +2006,7 @@ static int v4l_g_ctrl(const struct v4l2_ioctl_ops *ops,
 	if (ops->vidioc_g_ext_ctrls == NULL)
 		return -ENOTTY;
 
-	ctrls.ctrl_class = V4L2_CTRL_ID2CLASS(p->id);
+	ctrls.which = V4L2_CTRL_ID2WHICH(p->id);
 	ctrls.count = 1;
 	ctrls.controls = &ctrl;
 	ctrl.id = p->id;
@@ -1958,7 +2040,7 @@ static int v4l_s_ctrl(const struct v4l2_ioctl_ops *ops,
 	if (ops->vidioc_s_ext_ctrls == NULL)
 		return -ENOTTY;
 
-	ctrls.ctrl_class = V4L2_CTRL_ID2CLASS(p->id);
+	ctrls.which = V4L2_CTRL_ID2WHICH(p->id);
 	ctrls.count = 1;
 	ctrls.controls = &ctrl;
 	ctrl.id = p->id;
@@ -2078,40 +2160,56 @@ static int v4l_cropcap(const struct v4l2_ioctl_ops *ops,
 				struct file *file, void *fh, void *arg)
 {
 	struct v4l2_cropcap *p = arg;
-
-	if (ops->vidioc_g_selection) {
-		struct v4l2_selection s = { .type = p->type };
-		int ret;
-
-		/* obtaining bounds */
-		if (V4L2_TYPE_IS_OUTPUT(p->type))
-			s.target = V4L2_SEL_TGT_COMPOSE_BOUNDS;
-		else
-			s.target = V4L2_SEL_TGT_CROP_BOUNDS;
-
-		ret = ops->vidioc_g_selection(file, fh, &s);
-		if (ret)
-			return ret;
-		p->bounds = s.r;
-
-		/* obtaining defrect */
-		if (V4L2_TYPE_IS_OUTPUT(p->type))
-			s.target = V4L2_SEL_TGT_COMPOSE_DEFAULT;
-		else
-			s.target = V4L2_SEL_TGT_CROP_DEFAULT;
-
-		ret = ops->vidioc_g_selection(file, fh, &s);
-		if (ret)
-			return ret;
-		p->defrect = s.r;
-	}
+	struct v4l2_selection s = { .type = p->type };
+	int ret = 0;
 
 	/* setting trivial pixelaspect */
 	p->pixelaspect.numerator = 1;
 	p->pixelaspect.denominator = 1;
 
+	/*
+	 * The determine_valid_ioctls() call already should ensure
+	 * that this can never happen, but just in case...
+	 */
+	if (WARN_ON(!ops->vidioc_cropcap && !ops->vidioc_cropcap))
+		return -ENOTTY;
+
 	if (ops->vidioc_cropcap)
-		return ops->vidioc_cropcap(file, fh, p);
+		ret = ops->vidioc_cropcap(file, fh, p);
+
+	if (!ops->vidioc_g_selection)
+		return ret;
+
+	/*
+	 * Ignore ENOTTY or ENOIOCTLCMD error returns, just use the
+	 * square pixel aspect ratio in that case.
+	 */
+	if (ret && ret != -ENOTTY && ret != -ENOIOCTLCMD)
+		return ret;
+
+	/* Use g_selection() to fill in the bounds and defrect rectangles */
+
+	/* obtaining bounds */
+	if (V4L2_TYPE_IS_OUTPUT(p->type))
+		s.target = V4L2_SEL_TGT_COMPOSE_BOUNDS;
+	else
+		s.target = V4L2_SEL_TGT_CROP_BOUNDS;
+
+	ret = ops->vidioc_g_selection(file, fh, &s);
+	if (ret)
+		return ret;
+	p->bounds = s.r;
+
+	/* obtaining defrect */
+	if (V4L2_TYPE_IS_OUTPUT(p->type))
+		s.target = V4L2_SEL_TGT_COMPOSE_DEFAULT;
+	else
+		s.target = V4L2_SEL_TGT_CROP_DEFAULT;
+
+	ret = ops->vidioc_g_selection(file, fh, &s);
+	if (ret)
+		return ret;
+	p->defrect = s.r;
 
 	return 0;
 }
@@ -2273,7 +2371,7 @@ static int v4l_enum_freq_bands(const struct v4l2_ioctl_ops *ops,
 	int err;
 
 	if (vfd->vfl_type == VFL_TYPE_SDR) {
-		if (p->type != V4L2_TUNER_ADC && p->type != V4L2_TUNER_RF)
+		if (p->type != V4L2_TUNER_SDR && p->type != V4L2_TUNER_RF)
 			return -EINVAL;
 		type = p->type;
 	} else {
@@ -2412,7 +2510,7 @@ static struct v4l2_ioctl_info v4l2_ioctls[] = {
 	IOCTL_INFO_STD(VIDIOC_G_AUDOUT, vidioc_g_audout, v4l_print_audioout, 0),
 	IOCTL_INFO_STD(VIDIOC_S_AUDOUT, vidioc_s_audout, v4l_print_audioout, INFO_FL_PRIO),
 	IOCTL_INFO_FNC(VIDIOC_G_MODULATOR, v4l_g_modulator, v4l_print_modulator, INFO_FL_CLEAR(v4l2_modulator, index)),
-	IOCTL_INFO_STD(VIDIOC_S_MODULATOR, vidioc_s_modulator, v4l_print_modulator, INFO_FL_PRIO),
+	IOCTL_INFO_FNC(VIDIOC_S_MODULATOR, v4l_s_modulator, v4l_print_modulator, INFO_FL_PRIO),
 	IOCTL_INFO_FNC(VIDIOC_G_FREQUENCY, v4l_g_frequency, v4l_print_frequency, INFO_FL_CLEAR(v4l2_frequency, tuner)),
 	IOCTL_INFO_FNC(VIDIOC_S_FREQUENCY, v4l_s_frequency, v4l_print_frequency, INFO_FL_PRIO),
 	IOCTL_INFO_FNC(VIDIOC_CROPCAP, v4l_cropcap, v4l_print_cropcap, INFO_FL_CLEAR(v4l2_cropcap, type)),

@@ -29,8 +29,9 @@
 #define CEPH_OPT_NOSHARE          (1<<1) /* don't share client with other sbs */
 #define CEPH_OPT_MYIP             (1<<2) /* specified my ip */
 #define CEPH_OPT_NOCRC            (1<<3) /* no data crc on writes */
-#define CEPH_OPT_NOMSGAUTH	  (1<<4) /* not require cephx message signature */
+#define CEPH_OPT_NOMSGAUTH	  (1<<4) /* don't require msg signing feat */
 #define CEPH_OPT_TCP_NODELAY	  (1<<5) /* TCP_NODELAY on TCP sockets */
+#define CEPH_OPT_NOMSGSIGN	  (1<<6) /* don't sign msgs */
 
 #define CEPH_OPT_DEFAULT   (CEPH_OPT_TCP_NODELAY)
 
@@ -43,9 +44,9 @@ struct ceph_options {
 	int flags;
 	struct ceph_fsid fsid;
 	struct ceph_entity_addr my_addr;
-	int mount_timeout;
-	int osd_idle_ttl;
-	int osd_keepalive_timeout;
+	unsigned long mount_timeout;		/* jiffies */
+	unsigned long osd_idle_ttl;		/* jiffies */
+	unsigned long osd_keepalive_timeout;	/* jiffies */
 
 	/*
 	 * any type that can't be simply compared or doesn't need need
@@ -63,9 +64,15 @@ struct ceph_options {
 /*
  * defaults
  */
-#define CEPH_MOUNT_TIMEOUT_DEFAULT  60
-#define CEPH_OSD_KEEPALIVE_DEFAULT  5
-#define CEPH_OSD_IDLE_TTL_DEFAULT    60
+#define CEPH_MOUNT_TIMEOUT_DEFAULT	msecs_to_jiffies(60 * 1000)
+#define CEPH_OSD_KEEPALIVE_DEFAULT	msecs_to_jiffies(5 * 1000)
+#define CEPH_OSD_IDLE_TTL_DEFAULT	msecs_to_jiffies(60 * 1000)
+
+#define CEPH_MONC_HUNT_INTERVAL		msecs_to_jiffies(3 * 1000)
+#define CEPH_MONC_PING_INTERVAL		msecs_to_jiffies(10 * 1000)
+#define CEPH_MONC_PING_TIMEOUT		msecs_to_jiffies(30 * 1000)
+#define CEPH_MONC_HUNT_BACKOFF		2
+#define CEPH_MONC_HUNT_MAX_MULT		10
 
 #define CEPH_MSG_MAX_FRONT_LEN	(16*1024*1024)
 #define CEPH_MSG_MAX_MIDDLE_LEN	(16*1024*1024)
@@ -93,13 +100,9 @@ enum {
 	CEPH_MOUNT_SHUTDOWN,
 };
 
-/*
- * subtract jiffies
- */
-static inline unsigned long time_sub(unsigned long a, unsigned long b)
+static inline unsigned long ceph_timeout_jiffies(unsigned long timeout)
 {
-	BUG_ON(time_after(b, a));
-	return (long)a - (long)b;
+	return timeout ?: MAX_SCHEDULE_TIMEOUT;
 }
 
 struct ceph_mds_client;
@@ -139,6 +142,7 @@ struct ceph_client {
 #endif
 };
 
+#define from_msgr(ms)	container_of(ms, struct ceph_client, msgr)
 
 
 /*
@@ -172,12 +176,70 @@ extern void ceph_put_snap_context(struct ceph_snap_context *sc);
  */
 static inline int calc_pages_for(u64 off, u64 len)
 {
-	return ((off+len+PAGE_CACHE_SIZE-1) >> PAGE_CACHE_SHIFT) -
-		(off >> PAGE_CACHE_SHIFT);
+	return ((off+len+PAGE_SIZE-1) >> PAGE_SHIFT) -
+		(off >> PAGE_SHIFT);
 }
+
+/*
+ * These are not meant to be generic - an integer key is assumed.
+ */
+#define DEFINE_RB_INSDEL_FUNCS(name, type, keyfld, nodefld)		\
+static void insert_##name(struct rb_root *root, type *t)		\
+{									\
+	struct rb_node **n = &root->rb_node;				\
+	struct rb_node *parent = NULL;					\
+									\
+	BUG_ON(!RB_EMPTY_NODE(&t->nodefld));				\
+									\
+	while (*n) {							\
+		type *cur = rb_entry(*n, type, nodefld);		\
+									\
+		parent = *n;						\
+		if (t->keyfld < cur->keyfld)				\
+			n = &(*n)->rb_left;				\
+		else if (t->keyfld > cur->keyfld)			\
+			n = &(*n)->rb_right;				\
+		else							\
+			BUG();						\
+	}								\
+									\
+	rb_link_node(&t->nodefld, parent, n);				\
+	rb_insert_color(&t->nodefld, root);				\
+}									\
+static void erase_##name(struct rb_root *root, type *t)			\
+{									\
+	BUG_ON(RB_EMPTY_NODE(&t->nodefld));				\
+	rb_erase(&t->nodefld, root);					\
+	RB_CLEAR_NODE(&t->nodefld);					\
+}
+
+#define DEFINE_RB_LOOKUP_FUNC(name, type, keyfld, nodefld)		\
+static type *lookup_##name(struct rb_root *root,			\
+			   typeof(((type *)0)->keyfld) key)		\
+{									\
+	struct rb_node *n = root->rb_node;				\
+									\
+	while (n) {							\
+		type *cur = rb_entry(n, type, nodefld);			\
+									\
+		if (key < cur->keyfld)					\
+			n = n->rb_left;					\
+		else if (key > cur->keyfld)				\
+			n = n->rb_right;				\
+		else							\
+			return cur;					\
+	}								\
+									\
+	return NULL;							\
+}
+
+#define DEFINE_RB_FUNCS(name, type, keyfld, nodefld)			\
+DEFINE_RB_INSDEL_FUNCS(name, type, keyfld, nodefld)			\
+DEFINE_RB_LOOKUP_FUNC(name, type, keyfld, nodefld)
 
 extern struct kmem_cache *ceph_inode_cachep;
 extern struct kmem_cache *ceph_cap_cachep;
+extern struct kmem_cache *ceph_cap_flush_cachep;
 extern struct kmem_cache *ceph_dentry_cachep;
 extern struct kmem_cache *ceph_file_cachep;
 

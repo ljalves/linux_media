@@ -20,10 +20,10 @@ struct bpf_map_def SEC("maps") my_map = {
 /* kprobe is NOT a stable ABI. If kernel internals change this bpf+kprobe
  * example will no longer be meaningful
  */
-SEC("kprobe/blk_mq_start_request")
+SEC("kprobe/blk_start_request")
 int bpf_prog1(struct pt_regs *ctx)
 {
-	long rq = ctx->di;
+	long rq = PT_REGS_PARM1(ctx);
 	u64 val = bpf_ktime_get_ns();
 
 	bpf_map_update_elem(&my_map, &rq, &val, BPF_ANY);
@@ -42,16 +42,16 @@ static unsigned int log2l(unsigned long long n)
 #define SLOTS 100
 
 struct bpf_map_def SEC("maps") lat_map = {
-	.type = BPF_MAP_TYPE_ARRAY,
+	.type = BPF_MAP_TYPE_PERCPU_ARRAY,
 	.key_size = sizeof(u32),
 	.value_size = sizeof(u64),
 	.max_entries = SLOTS,
 };
 
-SEC("kprobe/blk_update_request")
+SEC("kprobe/blk_account_io_completion")
 int bpf_prog2(struct pt_regs *ctx)
 {
-	long rq = ctx->di;
+	long rq = PT_REGS_PARM1(ctx);
 	u64 *value, l, base;
 	u32 index;
 
@@ -81,7 +81,7 @@ int bpf_prog2(struct pt_regs *ctx)
 
 	value = bpf_map_lookup_elem(&lat_map, &index);
 	if (value)
-		__sync_fetch_and_add((long *)value, 1);
+		*value += 1;
 
 	return 0;
 }

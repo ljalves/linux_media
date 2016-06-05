@@ -507,7 +507,7 @@ static int inquiry(struct scsi_cmnd *srb, struct rtsx_chip *chip)
 	}
 
 	buf = vmalloc(scsi_bufflen(srb));
-	if (buf == NULL) {
+	if (!buf) {
 		rtsx_trace(chip);
 		return TRANSPORT_ERROR;
 	}
@@ -644,7 +644,7 @@ static int request_sense(struct scsi_cmnd *srb, struct rtsx_chip *chip)
 	}
 
 	buf = vmalloc(scsi_bufflen(srb));
-	if (buf == NULL) {
+	if (!buf) {
 		rtsx_trace(chip);
 		return TRANSPORT_ERROR;
 	}
@@ -792,7 +792,7 @@ static int mode_sense(struct scsi_cmnd *srb, struct rtsx_chip *chip)
 #endif
 
 	buf = kmalloc(dataSize, GFP_KERNEL);
-	if (buf == NULL) {
+	if (!buf) {
 		rtsx_trace(chip);
 		return TRANSPORT_ERROR;
 	}
@@ -915,6 +915,8 @@ static int read_write(struct scsi_cmnd *srb, struct rtsx_chip *chip)
 		start_sec = ((u32)(srb->cmnd[1] & 0x1F) << 16) |
 			((u32)srb->cmnd[2] << 8) | ((u32)srb->cmnd[3]);
 		sec_cnt = srb->cmnd[4];
+		if (sec_cnt == 0)
+			sec_cnt = 256;
 	} else if ((srb->cmnd[0] == VENDOR_CMND) &&
 		(srb->cmnd[1] == SCSI_APP_CMD) &&
 		((srb->cmnd[2] == PP_READ10) || (srb->cmnd[2] == PP_WRITE10))) {
@@ -1015,7 +1017,7 @@ static int read_format_capacity(struct scsi_cmnd *srb, struct rtsx_chip *chip)
 	buf_len = (scsi_bufflen(srb) > 12) ? 0x14 : 12;
 
 	buf = kmalloc(buf_len, GFP_KERNEL);
-	if (buf == NULL) {
+	if (!buf) {
 		rtsx_trace(chip);
 		return TRANSPORT_ERROR;
 	}
@@ -1094,7 +1096,7 @@ static int read_capacity(struct scsi_cmnd *srb, struct rtsx_chip *chip)
 	}
 
 	buf = kmalloc(8, GFP_KERNEL);
-	if (buf == NULL) {
+	if (!buf) {
 		rtsx_trace(chip);
 		return TRANSPORT_ERROR;
 	}
@@ -1204,7 +1206,7 @@ static int write_eeprom(struct scsi_cmnd *srb, struct rtsx_chip *chip)
 		len = (unsigned short)min_t(unsigned int, scsi_bufflen(srb),
 					len);
 		buf = vmalloc(len);
-		if (buf == NULL) {
+		if (!buf) {
 			rtsx_trace(chip);
 			return TRANSPORT_ERROR;
 		}
@@ -1313,7 +1315,7 @@ static int write_mem(struct scsi_cmnd *srb, struct rtsx_chip *chip)
 
 	len = (unsigned short)min_t(unsigned int, scsi_bufflen(srb), len);
 	buf = vmalloc(len);
-	if (buf == NULL) {
+	if (!buf) {
 		rtsx_trace(chip);
 		return TRANSPORT_ERROR;
 	}
@@ -1408,7 +1410,7 @@ static int trace_msg_cmd(struct scsi_cmnd *srb, struct rtsx_chip *chip)
 	clear = srb->cmnd[2];
 
 	buf = vmalloc(scsi_bufflen(srb));
-	if (buf == NULL) {
+	if (!buf) {
 		rtsx_trace(chip);
 		return TRANSPORT_ERROR;
 	}
@@ -1929,20 +1931,15 @@ static int rw_mem_cmd_buf(struct scsi_cmnd *srb, struct rtsx_chip *chip)
 
 static int suit_cmd(struct scsi_cmnd *srb, struct rtsx_chip *chip)
 {
-	int result;
-
 	switch (srb->cmnd[3]) {
 	case INIT_BATCHCMD:
 	case ADD_BATCHCMD:
 	case SEND_BATCHCMD:
 	case GET_BATCHRSP:
-		result = rw_mem_cmd_buf(srb, chip);
-		break;
+		return rw_mem_cmd_buf(srb, chip);
 	default:
-		result = TRANSPORT_ERROR;
+		return TRANSPORT_ERROR;
 	}
-
-	return result;
 }
 
 static int read_phy_register(struct scsi_cmnd *srb, struct rtsx_chip *chip)
@@ -2033,7 +2030,7 @@ static int write_phy_register(struct scsi_cmnd *srb, struct rtsx_chip *chip)
 					len);
 
 		buf = vmalloc(len);
-		if (buf == NULL) {
+		if (!buf) {
 			rtsx_trace(chip);
 			return TRANSPORT_ERROR;
 		}
@@ -2189,7 +2186,7 @@ static int write_eeprom2(struct scsi_cmnd *srb, struct rtsx_chip *chip)
 
 	len = (unsigned short)min_t(unsigned int, scsi_bufflen(srb), len);
 	buf = vmalloc(len);
-	if (buf == NULL) {
+	if (!buf) {
 		rtsx_trace(chip);
 		return TRANSPORT_ERROR;
 	}
@@ -2293,7 +2290,7 @@ static int write_efuse(struct scsi_cmnd *srb, struct rtsx_chip *chip)
 
 	len = (u8)min_t(unsigned int, scsi_bufflen(srb), len);
 	buf = vmalloc(len);
-	if (buf == NULL) {
+	if (!buf) {
 		rtsx_trace(chip);
 		return TRANSPORT_ERROR;
 	}
@@ -2904,9 +2901,11 @@ void led_shine(struct scsi_cmnd *srb, struct rtsx_chip *chip)
 
 	if ((srb->cmnd[0] == READ_10) || (srb->cmnd[0] == WRITE_10))
 		sec_cnt = ((u16)(srb->cmnd[7]) << 8) | srb->cmnd[8];
-	else if ((srb->cmnd[0] == READ_6) || (srb->cmnd[0] == WRITE_6))
+	else if ((srb->cmnd[0] == READ_6) || (srb->cmnd[0] == WRITE_6)) {
 		sec_cnt = srb->cmnd[4];
-	else
+		if (sec_cnt == 0)
+			sec_cnt = 256;
+	} else
 		return;
 
 	if (chip->rw_cap[lun] >= GPIO_TOGGLE_THRESHOLD) {

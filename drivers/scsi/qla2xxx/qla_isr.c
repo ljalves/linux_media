@@ -18,6 +18,10 @@ static void qla2x00_status_entry(scsi_qla_host_t *, struct rsp_que *, void *);
 static void qla2x00_status_cont_entry(struct rsp_que *, sts_cont_entry_t *);
 static void qla2x00_error_entry(scsi_qla_host_t *, struct rsp_que *,
 	sts_entry_t *);
+static void qla_irq_affinity_notify(struct irq_affinity_notify *,
+    const cpumask_t *);
+static void qla_irq_affinity_release(struct kref *);
+
 
 /**
  * qla2100_intr_handler() - Process interrupts for the ISP2100 and ISP2200.
@@ -116,7 +120,7 @@ bool
 qla2x00_check_reg32_for_disconnect(scsi_qla_host_t *vha, uint32_t reg)
 {
 	/* Check for PCI disconnection */
-	if (reg == 0xffffffff) {
+	if (reg == 0xffffffff && !pci_channel_offline(vha->hw->pdev)) {
 		if (!test_and_set_bit(PFLG_DISCONNECTED, &vha->pci_flags) &&
 		    !test_bit(PFLG_DRIVER_REMOVING, &vha->pci_flags) &&
 		    !test_bit(PFLG_DRIVER_PROBING, &vha->pci_flags)) {
@@ -560,6 +564,17 @@ qla2x00_is_a_vp_did(scsi_qla_host_t *vha, uint32_t rscn_entry)
 	return ret;
 }
 
+static inline fc_port_t *
+qla2x00_find_fcport_by_loopid(scsi_qla_host_t *vha, uint16_t loop_id)
+{
+	fc_port_t *fcport;
+
+	list_for_each_entry(fcport, &vha->vp_fcports, list)
+		if (fcport->loop_id == loop_id)
+			return fcport;
+	return NULL;
+}
+
 /**
  * qla2x00_async_event() - Process aynchronous events.
  * @ha: SCSI driver HA context
@@ -575,7 +590,7 @@ qla2x00_async_event(scsi_qla_host_t *vha, struct rsp_que *rsp, uint16_t *mb)
 	struct device_reg_2xxx __iomem *reg = &ha->iobase->isp;
 	struct device_reg_24xx __iomem *reg24 = &ha->iobase->isp24;
 	struct device_reg_82xx __iomem *reg82 = &ha->iobase->isp82;
-	uint32_t	rscn_entry, host_pid, tmp_pid;
+	uint32_t	rscn_entry, host_pid;
 	unsigned long	flags;
 	fc_port_t	*fcport = NULL;
 
@@ -897,14 +912,28 @@ skip_rio:
 			(mb[1] != 0xffff)) && vha->vp_idx != (mb[3] & 0xff))
 			break;
 
-		/* Global event -- port logout or port unavailable. */
-		if (mb[1] == 0xffff && mb[2] == 0x7) {
+		if (mb[2] == 0x7) {
 			ql_dbg(ql_dbg_async, vha, 0x5010,
-			    "Port unavailable %04x %04x %04x.\n",
+			    "Port %s %04x %04x %04x.\n",
+			    mb[1] == 0xffff ? "unavailable" : "logout",
 			    mb[1], mb[2], mb[3]);
-			ql_log(ql_log_warn, vha, 0x505e,
-			    "Link is offline.\n");
 
+			if (mb[1] == 0xffff)
+				goto global_port_update;
+
+			/* Port logout */
+			fcport = qla2x00_find_fcport_by_loopid(vha, mb[1]);
+			if (!fcport)
+				break;
+			if (atomic_read(&fcport->state) != FCS_ONLINE)
+				break;
+			ql_dbg(ql_dbg_async, vha, 0x508a,
+			    "Marking port lost loopid=%04x portid=%06x.\n",
+			    fcport->loop_id, fcport->d_id.b24);
+			qla2x00_mark_device_lost(fcport->vha, fcport, 1, 1);
+			break;
+
+global_port_update:
 			if (atomic_read(&vha->loop_state) != LOOP_DOWN) {
 				atomic_set(&vha->loop_state, LOOP_DOWN);
 				atomic_set(&vha->loop_down_timer,
@@ -998,7 +1027,6 @@ skip_rio:
 		list_for_each_entry(fcport, &vha->vp_fcports, list) {
 			if (atomic_read(&fcport->state) != FCS_ONLINE)
 				continue;
-			tmp_pid = fcport->d_id.b24;
 			if (fcport->d_id.b24 == rscn_entry) {
 				qla2x00_mark_device_lost(vha, fcport, 0, 0);
 				break;
@@ -1390,6 +1418,12 @@ qla24xx_els_ct_entry(scsi_qla_host_t *vha, struct req_que *req,
 	case SRB_CT_CMD:
 		type = "ct pass-through";
 		break;
+	case SRB_ELS_DCMD:
+		type = "Driver ELS logo";
+		ql_dbg(ql_dbg_user, vha, 0x5047,
+		    "Completing %s: (%p) type=%d.\n", type, sp, sp->type);
+		sp->done(vha, sp, 0);
+		return;
 	default:
 		ql_dbg(ql_dbg_user, vha, 0x503e,
 		    "Unrecognized SRB: (%p) type=%d.\n", sp, sp->type);
@@ -1565,7 +1599,7 @@ qla24xx_tm_iocb_entry(scsi_qla_host_t *vha, struct req_que *req, void *tsk)
 		    "Async-%s error - hdl=%x entry-status(%x).\n",
 		    type, sp->handle, sts->entry_status);
 		iocb->u.tmf.data = QLA_FUNCTION_FAILED;
-	} else if (sts->comp_status != __constant_cpu_to_le16(CS_COMPLETE)) {
+	} else if (sts->comp_status != cpu_to_le16(CS_COMPLETE)) {
 		ql_log(ql_log_warn, fcport->vha, 0x5039,
 		    "Async-%s error - hdl=%x completion status(%x).\n",
 		    type, sp->handle, sts->comp_status);
@@ -1580,7 +1614,7 @@ qla24xx_tm_iocb_entry(scsi_qla_host_t *vha, struct req_que *req, void *tsk)
 			ql_log(ql_log_warn, fcport->vha, 0x503c,
 			    "Async-%s error - hdl=%x response(%x).\n",
 			    type, sp->handle, sts->data[3]);
-		iocb->u.tmf.data = QLA_FUNCTION_FAILED;
+			iocb->u.tmf.data = QLA_FUNCTION_FAILED;
 		}
 	}
 
@@ -1979,7 +2013,7 @@ qla25xx_process_bidir_status_iocb(scsi_qla_host_t *vha, void *pkt,
 		rval = EXT_STATUS_ERR;
 		break;
 	}
-		bsg_job->reply->reply_payload_rcv_len = 0;
+	bsg_job->reply->reply_payload_rcv_len = 0;
 
 done:
 	/* Return the vendor specific reply to API */
@@ -2045,14 +2079,18 @@ qla2x00_status_entry(scsi_qla_host_t *vha, struct rsp_que *rsp, void *pkt)
 	}
 
 	/* Validate handle. */
-	if (handle < req->num_outstanding_cmds)
+	if (handle < req->num_outstanding_cmds) {
 		sp = req->outstanding_cmds[handle];
-	else
-		sp = NULL;
-
-	if (sp == NULL) {
+		if (!sp) {
+			ql_dbg(ql_dbg_io, vha, 0x3075,
+			    "%s(%ld): Already returned command for status handle (0x%x).\n",
+			    __func__, vha->host_no, sts->handle);
+			return;
+		}
+	} else {
 		ql_dbg(ql_dbg_io, vha, 0x3017,
-		    "Invalid status handle (0x%x).\n", sts->handle);
+		    "Invalid status handle, out of range (0x%x).\n",
+		    sts->handle);
 
 		if (!test_bit(ABORT_ISP_ACTIVE, &vha->dpc_flags)) {
 			if (IS_P3P_TYPE(ha))
@@ -2339,12 +2377,12 @@ out:
 		ql_dbg(ql_dbg_io, fcport->vha, 0x3022,
 		    "FCP command status: 0x%x-0x%x (0x%x) nexus=%ld:%d:%llu "
 		    "portid=%02x%02x%02x oxid=0x%x cdb=%10phN len=0x%x "
-		    "rsp_info=0x%x resid=0x%x fw_resid=0x%x.\n",
+		    "rsp_info=0x%x resid=0x%x fw_resid=0x%x sp=%p cp=%p.\n",
 		    comp_status, scsi_status, res, vha->host_no,
 		    cp->device->id, cp->device->lun, fcport->d_id.b.domain,
 		    fcport->d_id.b.area, fcport->d_id.b.al_pa, ox_id,
 		    cp->cmnd, scsi_bufflen(cp), rsp_info_len,
-		    resid_len, fw_resid_len);
+		    resid_len, fw_resid_len, sp, cp);
 
 	if (rsp->status_srb == NULL)
 		sp->done(ha, sp, res);
@@ -2441,13 +2479,7 @@ qla2x00_error_entry(scsi_qla_host_t *vha, struct rsp_que *rsp, sts_entry_t *pkt)
 	}
 fatal:
 	ql_log(ql_log_warn, vha, 0x5030,
-	    "Error entry - invalid handle/queue.\n");
-
-	if (IS_P3P_TYPE(ha))
-		set_bit(FCOE_CTX_RESET_NEEDED, &vha->dpc_flags);
-	else
-		set_bit(ISP_ABORT_NEEDED, &vha->dpc_flags);
-	qla2xxx_wake_dpc(vha);
+	    "Error entry - invalid handle/queue (%04x).\n", que);
 }
 
 /**
@@ -2516,6 +2548,14 @@ void qla24xx_process_response_queue(struct scsi_qla_host *vha,
 	if (!vha->flags.online)
 		return;
 
+	if (rsp->msix->cpuid != smp_processor_id()) {
+		/* if kernel does not notify qla of IRQ's CPU change,
+		 * then set it here.
+		 */
+		rsp->msix->cpuid = smp_processor_id();
+		ha->tgt.rspq_vector_cpuid = rsp->msix->cpuid;
+	}
+
 	while (rsp->ring_ptr->signature != RESPONSE_PROCESSED) {
 		pkt = (struct sts_entry_24xx *)rsp->ring_ptr;
 
@@ -2561,8 +2601,14 @@ process_err:
 			qla24xx_els_ct_entry(vha, rsp->req, pkt, ELS_IOCB_TYPE);
 			break;
 		case ABTS_RECV_24XX:
-			/* ensure that the ATIO queue is empty */
-			qlt_24xx_process_atio_queue(vha);
+			if (IS_QLA83XX(ha) || IS_QLA27XX(ha)) {
+				/* ensure that the ATIO queue is empty */
+				qlt_handle_abts_recv(vha, (response_t *)pkt);
+				break;
+			} else {
+				/* drop through */
+				qlt_24xx_process_atio_queue(vha, 1);
+			}
 		case ABTS_RESP_24XX:
 		case CTIO_TYPE7:
 		case NOTIFY_ACK_TYPE:
@@ -2729,13 +2775,22 @@ qla24xx_intr_handler(int irq, void *dev_id)
 		case INTR_RSP_QUE_UPDATE_83XX:
 			qla24xx_process_response_queue(vha, rsp);
 			break;
-		case INTR_ATIO_QUE_UPDATE:
-			qlt_24xx_process_atio_queue(vha);
+		case INTR_ATIO_QUE_UPDATE:{
+			unsigned long flags2;
+			spin_lock_irqsave(&ha->tgt.atio_lock, flags2);
+			qlt_24xx_process_atio_queue(vha, 1);
+			spin_unlock_irqrestore(&ha->tgt.atio_lock, flags2);
 			break;
-		case INTR_ATIO_RSP_QUE_UPDATE:
-			qlt_24xx_process_atio_queue(vha);
+		}
+		case INTR_ATIO_RSP_QUE_UPDATE: {
+			unsigned long flags2;
+			spin_lock_irqsave(&ha->tgt.atio_lock, flags2);
+			qlt_24xx_process_atio_queue(vha, 1);
+			spin_unlock_irqrestore(&ha->tgt.atio_lock, flags2);
+
 			qla24xx_process_response_queue(vha, rsp);
 			break;
+		}
 		default:
 			ql_dbg(ql_dbg_async, vha, 0x504f,
 			    "Unrecognized interrupt type (%d).\n", stat * 0xff);
@@ -2894,13 +2949,22 @@ qla24xx_msix_default(int irq, void *dev_id)
 		case INTR_RSP_QUE_UPDATE_83XX:
 			qla24xx_process_response_queue(vha, rsp);
 			break;
-		case INTR_ATIO_QUE_UPDATE:
-			qlt_24xx_process_atio_queue(vha);
+		case INTR_ATIO_QUE_UPDATE:{
+			unsigned long flags2;
+			spin_lock_irqsave(&ha->tgt.atio_lock, flags2);
+			qlt_24xx_process_atio_queue(vha, 1);
+			spin_unlock_irqrestore(&ha->tgt.atio_lock, flags2);
 			break;
-		case INTR_ATIO_RSP_QUE_UPDATE:
-			qlt_24xx_process_atio_queue(vha);
+		}
+		case INTR_ATIO_RSP_QUE_UPDATE: {
+			unsigned long flags2;
+			spin_lock_irqsave(&ha->tgt.atio_lock, flags2);
+			qlt_24xx_process_atio_queue(vha, 1);
+			spin_unlock_irqrestore(&ha->tgt.atio_lock, flags2);
+
 			qla24xx_process_response_queue(vha, rsp);
 			break;
+		}
 		default:
 			ql_dbg(ql_dbg_async, vha, 0x5051,
 			    "Unrecognized interrupt type (%d).\n", stat & 0xff);
@@ -2947,8 +3011,11 @@ qla24xx_disable_msix(struct qla_hw_data *ha)
 
 	for (i = 0; i < ha->msix_count; i++) {
 		qentry = &ha->msix_entries[i];
-		if (qentry->have_irq)
+		if (qentry->have_irq) {
+			/* un-register irq cpu affinity notification */
+			irq_set_affinity_notifier(qentry->vector, NULL);
 			free_irq(qentry->vector, qentry->rsp);
+		}
 	}
 	pci_disable_msix(ha->pdev);
 	kfree(ha->msix_entries);
@@ -2992,9 +3059,9 @@ qla24xx_enable_msix(struct qla_hw_data *ha, struct rsp_que *rsp)
 		    "MSI-X: Failed to enable support "
 		    "-- %d/%d\n Retry with %d vectors.\n",
 		    ha->msix_count, ret, ret);
+		ha->msix_count = ret;
+		ha->max_rsp_queues = ha->msix_count - 1;
 	}
-	ha->msix_count = ret;
-	ha->max_rsp_queues = ha->msix_count - 1;
 	ha->msix_entries = kzalloc(sizeof(struct qla_msix_entry) *
 				ha->msix_count, GFP_KERNEL);
 	if (!ha->msix_entries) {
@@ -3011,6 +3078,9 @@ qla24xx_enable_msix(struct qla_hw_data *ha, struct rsp_que *rsp)
 		qentry->entry = entries[i].entry;
 		qentry->have_irq = 0;
 		qentry->rsp = NULL;
+		qentry->irq_notify.notify  = qla_irq_affinity_notify;
+		qentry->irq_notify.release = qla_irq_affinity_release;
+		qentry->cpuid = -1;
 	}
 
 	/* Enable MSI-X vectors for the base queue */
@@ -3029,6 +3099,18 @@ qla24xx_enable_msix(struct qla_hw_data *ha, struct rsp_que *rsp)
 		qentry->have_irq = 1;
 		qentry->rsp = rsp;
 		rsp->msix = qentry;
+
+		/* Register for CPU affinity notification. */
+		irq_set_affinity_notifier(qentry->vector, &qentry->irq_notify);
+
+		/* Schedule work (ie. trigger a notification) to read cpu
+		 * mask for this specific irq.
+		 * kref_get is required because
+		* irq_affinity_notify() will do
+		* kref_put().
+		*/
+		kref_get(&qentry->irq_notify.kref);
+		schedule_work(&qentry->irq_notify.work);
 	}
 
 	/*
@@ -3207,4 +3289,48 @@ int qla25xx_request_irq(struct rsp_que *rsp)
 	msix->have_irq = 1;
 	msix->rsp = rsp;
 	return ret;
+}
+
+
+/* irq_set_affinity/irqbalance will trigger notification of cpu mask update */
+static void qla_irq_affinity_notify(struct irq_affinity_notify *notify,
+	const cpumask_t *mask)
+{
+	struct qla_msix_entry *e =
+		container_of(notify, struct qla_msix_entry, irq_notify);
+	struct qla_hw_data *ha;
+	struct scsi_qla_host *base_vha;
+
+	/* user is recommended to set mask to just 1 cpu */
+	e->cpuid = cpumask_first(mask);
+
+	ha = e->rsp->hw;
+	base_vha = pci_get_drvdata(ha->pdev);
+
+	ql_dbg(ql_dbg_init, base_vha, 0xffff,
+	    "%s: host %ld : vector %d cpu %d \n", __func__,
+	    base_vha->host_no, e->vector, e->cpuid);
+
+	if (e->have_irq) {
+		if ((IS_QLA83XX(ha) || IS_QLA27XX(ha)) &&
+		    (e->entry == QLA83XX_RSPQ_MSIX_ENTRY_NUMBER)) {
+			ha->tgt.rspq_vector_cpuid = e->cpuid;
+			ql_dbg(ql_dbg_init, base_vha, 0xffff,
+			    "%s: host%ld: rspq vector %d cpu %d  runtime change\n",
+			    __func__, base_vha->host_no, e->vector, e->cpuid);
+		}
+	}
+}
+
+static void qla_irq_affinity_release(struct kref *ref)
+{
+	struct irq_affinity_notify *notify =
+		container_of(ref, struct irq_affinity_notify, kref);
+	struct qla_msix_entry *e =
+		container_of(notify, struct qla_msix_entry, irq_notify);
+	struct scsi_qla_host *base_vha = pci_get_drvdata(e->rsp->hw->pdev);
+
+	ql_dbg(ql_dbg_init, base_vha, 0xffff,
+	    "%s: host%ld: vector %d cpu %d \n", __func__,
+	    base_vha->host_no, e->vector, e->cpuid);
 }

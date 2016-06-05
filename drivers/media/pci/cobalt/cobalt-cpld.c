@@ -240,8 +240,8 @@ static const struct multiplier multipliers[] = {
 bool cobalt_cpld_set_freq(struct cobalt *cobalt, unsigned f_out)
 {
 	const unsigned f_xtal = 39170000;	/* xtal for si598 */
-	unsigned long long dco;
-	unsigned long long rfreq;
+	u64 dco;
+	u64 rfreq;
 	unsigned delta = 0xffffffff;
 	unsigned i_best = 0;
 	unsigned i;
@@ -253,12 +253,12 @@ bool cobalt_cpld_set_freq(struct cobalt *cobalt, unsigned f_out)
 
 	for (i = 0; i < ARRAY_SIZE(multipliers); i++) {
 		unsigned mult = multipliers[i].mult;
-		unsigned d;
+		u32 d;
 
-		dco = (unsigned long long)f_out * mult;
+		dco = (u64)f_out * mult;
 		if (dco < DCO_MIN || dco > DCO_MAX)
 			continue;
-		d = ((dco << 28) + f_xtal / 2) % f_xtal;
+		div_u64_rem((dco << 28) + f_xtal / 2, f_xtal, &d);
 		if (d < delta) {
 			found = 1;
 			i_best = i;
@@ -267,10 +267,10 @@ bool cobalt_cpld_set_freq(struct cobalt *cobalt, unsigned f_out)
 	}
 	if (!found)
 		return false;
-	dco = (unsigned long long)f_out * multipliers[i_best].mult;
+	dco = (u64)f_out * multipliers[i_best].mult;
 	n1 = multipliers[i_best].n1 - 1;
 	hsdiv = multipliers[i_best].hsdiv - 4;
-	rfreq = (dco << 28) / f_xtal;
+	rfreq = div_u64(dco << 28, f_xtal);
 
 	clock_ctrl = cpld_read(cobalt, SI570_CLOCK_CTRL);
 	clock_ctrl |= S01755_REG_CLOCK_CTRL_BITMAP_CLKHSMA_FPGA_CTRL;
@@ -290,8 +290,8 @@ bool cobalt_cpld_set_freq(struct cobalt *cobalt, unsigned f_out)
 	   0x01, 0xc7, 0xfc, 0x7f, 0x53, 0x62).
 	 */
 
-	cobalt_dbg(1, "%u: %02x %02x %02x %02x %02x %02x\n", f_out,
-			regs[0], regs[1], regs[2], regs[3], regs[4], regs[5]);
+	cobalt_dbg(1, "%u: %6ph\n", f_out, regs);
+
 	while (retries--) {
 		u8 read_regs[6];
 
@@ -330,9 +330,7 @@ bool cobalt_cpld_set_freq(struct cobalt *cobalt, unsigned f_out)
 
 		if (!memcmp(read_regs, regs, sizeof(read_regs)))
 			break;
-		cobalt_dbg(1, "retry: %02x %02x %02x %02x %02x %02x\n",
-			read_regs[0], read_regs[1], read_regs[2],
-			read_regs[3], read_regs[4], read_regs[5]);
+		cobalt_dbg(1, "retry: %6ph\n", read_regs);
 	}
 	if (2 - retries)
 		cobalt_info("Needed %d retries\n", 2 - retries);

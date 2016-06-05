@@ -1,6 +1,7 @@
 #ifndef __PERF_THREAD_H
 #define __PERF_THREAD_H
 
+#include <linux/atomic.h>
 #include <linux/rbtree.h>
 #include <linux/list.h>
 #include <unistd.h>
@@ -8,6 +9,9 @@
 #include "symbol.h"
 #include <strlist.h>
 #include <intlist.h>
+#ifdef HAVE_LIBUNWIND_SUPPORT
+#include <libunwind.h>
+#endif
 
 struct thread_stack;
 
@@ -21,16 +25,19 @@ struct thread {
 	pid_t			tid;
 	pid_t			ppid;
 	int			cpu;
-	int			refcnt;
+	atomic_t		refcnt;
 	char			shortname[3];
 	bool			comm_set;
+	int			comm_len;
 	bool			dead; /* if set thread has exited */
 	struct list_head	comm_list;
-	int			comm_len;
 	u64			db_id;
 
 	void			*priv;
 	struct thread_stack	*ts;
+#ifdef HAVE_LIBUNWIND_SUPPORT
+	unw_addr_space_t	addr_space;
+#endif
 };
 
 struct machine;
@@ -63,6 +70,8 @@ static inline int thread__set_comm(struct thread *thread, const char *comm,
 {
 	return __thread__set_comm(thread, comm, timestamp, false);
 }
+
+int thread__set_comm_from_proc(struct thread *thread);
 
 int thread__comm_len(struct thread *thread);
 struct comm *thread__comm(const struct thread *thread);

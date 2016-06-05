@@ -118,7 +118,8 @@ static irqreturn_t nop_gpio_vbus_thread(int irq, void *data)
 		status = USB_EVENT_VBUS;
 		otg->state = OTG_STATE_B_PERIPHERAL;
 		nop->phy.last_event = status;
-		usb_gadget_vbus_connect(otg->gadget);
+		if (otg->gadget)
+			usb_gadget_vbus_connect(otg->gadget);
 
 		/* drawing a "unit load" is *always* OK, except for OTG */
 		nop_set_vbus_draw(nop, 100);
@@ -128,7 +129,8 @@ static irqreturn_t nop_gpio_vbus_thread(int irq, void *data)
 	} else {
 		nop_set_vbus_draw(nop, 0);
 
-		usb_gadget_vbus_disconnect(otg->gadget);
+		if (otg->gadget)
+			usb_gadget_vbus_disconnect(otg->gadget);
 		status = USB_EVENT_NONE;
 		otg->state = OTG_STATE_B_IDLE;
 		nop->phy.last_event = status;
@@ -184,7 +186,10 @@ static int nop_set_peripheral(struct usb_otg *otg, struct usb_gadget *gadget)
 	}
 
 	otg->gadget = gadget;
-	otg->state = OTG_STATE_B_IDLE;
+	if (otg->state == OTG_STATE_B_PERIPHERAL)
+		usb_gadget_vbus_connect(gadget);
+	else
+		otg->state = OTG_STATE_B_IDLE;
 	return 0;
 }
 
@@ -218,11 +223,13 @@ int usb_phy_gen_create_phy(struct device *dev, struct usb_phy_generic *nop,
 			clk_rate = 0;
 
 		needs_vcc = of_property_read_bool(node, "vcc-supply");
-		nop->gpiod_reset = devm_gpiod_get_optional(dev, "reset");
+		nop->gpiod_reset = devm_gpiod_get_optional(dev, "reset",
+							   GPIOD_ASIS);
 		err = PTR_ERR_OR_ZERO(nop->gpiod_reset);
 		if (!err) {
 			nop->gpiod_vbus = devm_gpiod_get_optional(dev,
-							 "vbus-detect");
+							 "vbus-detect",
+							 GPIOD_ASIS);
 			err = PTR_ERR_OR_ZERO(nop->gpiod_vbus);
 		}
 	} else if (pdata) {
@@ -230,7 +237,8 @@ int usb_phy_gen_create_phy(struct device *dev, struct usb_phy_generic *nop,
 		clk_rate = pdata->clk_rate;
 		needs_vcc = pdata->needs_vcc;
 		if (gpio_is_valid(pdata->gpio_reset)) {
-			err = devm_gpio_request_one(dev, pdata->gpio_reset, 0,
+			err = devm_gpio_request_one(dev, pdata->gpio_reset,
+						    GPIOF_ACTIVE_LOW,
 						    dev_name(dev));
 			if (!err)
 				nop->gpiod_reset =

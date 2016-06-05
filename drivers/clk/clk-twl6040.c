@@ -20,7 +20,6 @@
 *
 */
 
-#include <linux/clk.h>
 #include <linux/module.h>
 #include <linux/slab.h>
 #include <linux/platform_device.h>
@@ -75,7 +74,6 @@ static const struct clk_ops twl6040_mcpdm_ops = {
 static struct clk_init_data wm831x_clkout_init = {
 	.name = "mcpdm_fclk",
 	.ops = &twl6040_mcpdm_ops,
-	.flags = CLK_IS_ROOT,
 };
 
 static int twl6040_clk_probe(struct platform_device *pdev)
@@ -91,20 +89,11 @@ static int twl6040_clk_probe(struct platform_device *pdev)
 	clkdata->twl6040 = twl6040;
 
 	clkdata->mcpdm_fclk.init = &wm831x_clkout_init;
-	clkdata->clk = clk_register(&pdev->dev, &clkdata->mcpdm_fclk);
+	clkdata->clk = devm_clk_register(&pdev->dev, &clkdata->mcpdm_fclk);
 	if (IS_ERR(clkdata->clk))
 		return PTR_ERR(clkdata->clk);
 
 	platform_set_drvdata(pdev, clkdata);
-
-	return 0;
-}
-
-static int twl6040_clk_remove(struct platform_device *pdev)
-{
-	struct twl6040_clk *clkdata = platform_get_drvdata(pdev);
-
-	clk_unregister(clkdata->clk);
 
 	return 0;
 }
@@ -114,7 +103,6 @@ static struct platform_driver twl6040_clk_driver = {
 		.name = "twl6040-clk",
 	},
 	.probe = twl6040_clk_probe,
-	.remove = twl6040_clk_remove,
 };
 
 module_platform_driver(twl6040_clk_driver);

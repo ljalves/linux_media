@@ -376,7 +376,8 @@ static int tda10023_set_parameters(struct dvb_frontend *fe)
 	return 0;
 }
 
-static int tda10023_read_status(struct dvb_frontend* fe, fe_status_t* status)
+static int tda10023_read_status(struct dvb_frontend *fe,
+				enum fe_status *status)
 {
 	struct tda10023_state* state = fe->demodulator_priv;
 	int sync;
@@ -456,9 +457,9 @@ static int tda10023_read_ucblocks(struct dvb_frontend* fe, u32* ucblocks)
 	return 0;
 }
 
-static int tda10023_get_frontend(struct dvb_frontend *fe)
+static int tda10023_get_frontend(struct dvb_frontend *fe,
+				 struct dtv_frontend_properties *p)
 {
-	struct dtv_frontend_properties *p = &fe->dtv_property_cache;
 	struct tda10023_state* state = fe->demodulator_priv;
 	int sync,inv;
 	s8 afc = 0;

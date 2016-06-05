@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2005 - 2014 Emulex
+ * Copyright (C) 2005 - 2015 Emulex
  * All rights reserved.
  *
  * This program is free software; you can redistribute it and/or
@@ -65,7 +65,11 @@ enum mcc_base_status {
 enum mcc_addl_status {
 	MCC_ADDL_STATUS_INSUFFICIENT_RESOURCES = 0x16,
 	MCC_ADDL_STATUS_FLASH_IMAGE_CRC_MISMATCH = 0x4d,
-	MCC_ADDL_STATUS_TOO_MANY_INTERFACES = 0x4a
+	MCC_ADDL_STATUS_TOO_MANY_INTERFACES = 0x4a,
+	MCC_ADDL_STATUS_INSUFFICIENT_VLANS = 0xab,
+	MCC_ADDL_STATUS_INVALID_SIGNATURE = 0x56,
+	MCC_ADDL_STATUS_MISSING_SIGNATURE = 0x57,
+	MCC_ADDL_STATUS_INSUFFICIENT_PRIVILEGES = 0x60
 };
 
 #define CQE_BASE_STATUS_MASK		0xFFFF
@@ -104,6 +108,7 @@ struct be_mcc_compl {
 #define ASYNC_DEBUG_EVENT_TYPE_QNQ	1
 #define ASYNC_EVENT_CODE_SLIPORT	0x11
 #define ASYNC_EVENT_PORT_MISCONFIG	0x9
+#define ASYNC_EVENT_FW_CONTROL		0x5
 
 enum {
 	LINK_DOWN	= 0x0,
@@ -171,13 +176,72 @@ struct be_async_event_qnq {
 	u32 flags;
 } __packed;
 
-#define INCOMPATIBLE_SFP		0x3
+enum {
+	BE_PHY_FUNCTIONAL	= 0,
+	BE_PHY_NOT_PRESENT	= 1,
+	BE_PHY_DIFF_MEDIA	= 2,
+	BE_PHY_INCOMPATIBLE	= 3,
+	BE_PHY_UNQUALIFIED	= 4,
+	BE_PHY_UNCERTIFIED	= 5
+};
+
+#define PHY_STATE_MSG_SEVERITY		0x6
+#define PHY_STATE_OPER			0x1
+#define PHY_STATE_INFO_VALID		0x80
+#define	PHY_STATE_OPER_MSG_NONE		0x2
+#define DEFAULT_MSG_SEVERITY		0x1
+
+#define be_phy_state_unknown(phy_state) (phy_state > BE_PHY_UNCERTIFIED)
+#define be_phy_unqualified(phy_state)				\
+			(phy_state == BE_PHY_UNQUALIFIED ||	\
+			 phy_state == BE_PHY_UNCERTIFIED)
+#define be_phy_misconfigured(phy_state)				\
+			(phy_state == BE_PHY_INCOMPATIBLE ||	\
+			 phy_state == BE_PHY_UNQUALIFIED ||	\
+			 phy_state == BE_PHY_UNCERTIFIED)
+
+extern  char *be_misconfig_evt_port_state[];
+
 /* async event indicating misconfigured port */
 struct be_async_event_misconfig_port {
+ /* DATA_WORD1:
+  * phy state of port 0: bits 7 - 0
+  * phy state of port 1: bits 15 - 8
+  * phy state of port 2: bits 23 - 16
+  * phy state of port 3: bits 31 - 24
+  */
 	u32 event_data_word1;
+ /* DATA_WORD2:
+  * phy state info of port 0: bits 7 - 0
+  * phy state info of port 1: bits 15 - 8
+  * phy state info of port 2: bits 23 - 16
+  * phy state info of port 3: bits 31 - 24
+  *
+  * PHY STATE INFO:
+  * Link operability	 :bit 0
+  * Message severity	 :bit 2 - 1
+  * Rsvd			 :bits 6 - 3
+  * phy state info valid	 :bit 7
+  */
 	u32 event_data_word2;
 	u32 rsvd0;
 	u32 flags;
+} __packed;
+
+#define BMC_FILT_BROADCAST_ARP				BIT(0)
+#define BMC_FILT_BROADCAST_DHCP_CLIENT			BIT(1)
+#define BMC_FILT_BROADCAST_DHCP_SERVER			BIT(2)
+#define BMC_FILT_BROADCAST_NET_BIOS			BIT(3)
+#define BMC_FILT_BROADCAST				BIT(7)
+#define BMC_FILT_MULTICAST_IPV6_NEIGH_ADVER		BIT(8)
+#define BMC_FILT_MULTICAST_IPV6_RA			BIT(9)
+#define BMC_FILT_MULTICAST_IPV6_RAS			BIT(10)
+#define BMC_FILT_MULTICAST				BIT(15)
+struct be_async_fw_control {
+	u32 event_data_word1;
+	u32 event_data_word2;
+	u32 evt_tag;
+	u32 event_data_word4;
 } __packed;
 
 struct be_mcc_mailbox {
@@ -601,6 +665,14 @@ enum be_if_flags {
 #define BE_IF_FLAGS_ALL_PROMISCUOUS	(BE_IF_FLAGS_PROMISCUOUS | \
 					 BE_IF_FLAGS_VLAN_PROMISCUOUS |\
 					 BE_IF_FLAGS_MCAST_PROMISCUOUS)
+
+#define BE_IF_FILT_FLAGS_BASIC (BE_IF_FLAGS_BROADCAST | \
+				BE_IF_FLAGS_PASS_L3L4_ERRORS | \
+				BE_IF_FLAGS_UNTAGGED)
+
+#define BE_IF_ALL_FILT_FLAGS	(BE_IF_FILT_FLAGS_BASIC | \
+				 BE_IF_FLAGS_MULTICAST | \
+				 BE_IF_FLAGS_ALL_PROMISCUOUS)
 
 /* An RX interface is an object with one or more MAC addresses and
  * filtering capabilities. */
@@ -1109,10 +1181,6 @@ struct be_cmd_req_query_fw_cfg {
 	u32 rsvd[31];
 };
 
-/* ASIC revisions */
-#define ASIC_REV_B0		0x10
-#define ASIC_REV_P2		0x11
-
 struct be_cmd_resp_query_fw_cfg {
 	struct be_cmd_resp_hdr hdr;
 	u32 be_config_number;
@@ -1186,68 +1254,85 @@ struct be_cmd_resp_get_beacon_state {
 /* Flashrom related descriptors */
 #define MAX_FLASH_COMP			32
 
-#define OPTYPE_ISCSI_ACTIVE		0
-#define OPTYPE_REDBOOT			1
-#define OPTYPE_BIOS			2
-#define OPTYPE_PXE_BIOS			3
-#define OPTYPE_OFFSET_SPECIFIED		7
-#define OPTYPE_FCOE_BIOS		8
-#define OPTYPE_ISCSI_BACKUP		9
-#define OPTYPE_FCOE_FW_ACTIVE		10
-#define OPTYPE_FCOE_FW_BACKUP		11
-#define OPTYPE_NCSI_FW			13
-#define OPTYPE_REDBOOT_DIR		18
-#define OPTYPE_REDBOOT_CONFIG		19
-#define OPTYPE_SH_PHY_FW		21
-#define OPTYPE_FLASHISM_JUMPVECTOR	22
-#define OPTYPE_UFI_DIR			23
-#define OPTYPE_PHY_FW			99
+/* Optypes of each component in the UFI */
+enum {
+	OPTYPE_ISCSI_ACTIVE = 0,
+	OPTYPE_REDBOOT = 1,
+	OPTYPE_BIOS = 2,
+	OPTYPE_PXE_BIOS = 3,
+	OPTYPE_OFFSET_SPECIFIED = 7,
+	OPTYPE_FCOE_BIOS = 8,
+	OPTYPE_ISCSI_BACKUP = 9,
+	OPTYPE_FCOE_FW_ACTIVE = 10,
+	OPTYPE_FCOE_FW_BACKUP = 11,
+	OPTYPE_NCSI_FW = 13,
+	OPTYPE_REDBOOT_DIR = 18,
+	OPTYPE_REDBOOT_CONFIG = 19,
+	OPTYPE_SH_PHY_FW = 21,
+	OPTYPE_FLASHISM_JUMPVECTOR = 22,
+	OPTYPE_UFI_DIR = 23,
+	OPTYPE_PHY_FW = 99
+};
 
-#define FLASH_BIOS_IMAGE_MAX_SIZE_g2	262144  /* Max OPTION ROM image sz */
-#define FLASH_REDBOOT_IMAGE_MAX_SIZE_g2	262144  /* Max Redboot image sz    */
-#define FLASH_IMAGE_MAX_SIZE_g2		1310720 /* Max firmware image size */
+/* Maximum sizes of components in BE2 FW UFI */
+enum {
+	BE2_BIOS_COMP_MAX_SIZE = 0x40000,
+	BE2_REDBOOT_COMP_MAX_SIZE = 0x40000,
+	BE2_COMP_MAX_SIZE = 0x140000
+};
 
-#define FLASH_NCSI_IMAGE_MAX_SIZE_g3	262144
-#define FLASH_PHY_FW_IMAGE_MAX_SIZE_g3	262144
-#define FLASH_BIOS_IMAGE_MAX_SIZE_g3	524288  /* Max OPTION ROM image sz */
-#define FLASH_REDBOOT_IMAGE_MAX_SIZE_g3	1048576 /* Max Redboot image sz    */
-#define FLASH_IMAGE_MAX_SIZE_g3		2097152 /* Max firmware image size */
+/* Maximum sizes of components in BE3 FW UFI */
+enum {
+	BE3_NCSI_COMP_MAX_SIZE = 0x40000,
+	BE3_PHY_FW_COMP_MAX_SIZE = 0x40000,
+	BE3_BIOS_COMP_MAX_SIZE = 0x80000,
+	BE3_REDBOOT_COMP_MAX_SIZE = 0x100000,
+	BE3_COMP_MAX_SIZE = 0x200000
+};
 
-/* Offsets for components on Flash. */
-#define FLASH_REDBOOT_START_g2			0
-#define FLASH_FCoE_BIOS_START_g2		524288
-#define FLASH_iSCSI_PRIMARY_IMAGE_START_g2	1048576
-#define FLASH_iSCSI_BACKUP_IMAGE_START_g2	2359296
-#define FLASH_FCoE_PRIMARY_IMAGE_START_g2	3670016
-#define FLASH_FCoE_BACKUP_IMAGE_START_g2	4980736
-#define FLASH_iSCSI_BIOS_START_g2		7340032
-#define FLASH_PXE_BIOS_START_g2			7864320
+/* Offsets for components in BE2 FW UFI */
+enum {
+	BE2_REDBOOT_START = 0x8000,
+	BE2_FCOE_BIOS_START = 0x80000,
+	BE2_ISCSI_PRIMARY_IMAGE_START = 0x100000,
+	BE2_ISCSI_BACKUP_IMAGE_START = 0x240000,
+	BE2_FCOE_PRIMARY_IMAGE_START = 0x380000,
+	BE2_FCOE_BACKUP_IMAGE_START = 0x4c0000,
+	BE2_ISCSI_BIOS_START = 0x700000,
+	BE2_PXE_BIOS_START = 0x780000
+};
 
-#define FLASH_REDBOOT_START_g3			262144
-#define FLASH_PHY_FW_START_g3			1310720
-#define FLASH_iSCSI_PRIMARY_IMAGE_START_g3	2097152
-#define FLASH_iSCSI_BACKUP_IMAGE_START_g3	4194304
-#define FLASH_FCoE_PRIMARY_IMAGE_START_g3	6291456
-#define FLASH_FCoE_BACKUP_IMAGE_START_g3	8388608
-#define FLASH_iSCSI_BIOS_START_g3		12582912
-#define FLASH_PXE_BIOS_START_g3			13107200
-#define FLASH_FCoE_BIOS_START_g3		13631488
-#define FLASH_NCSI_START_g3			15990784
+/* Offsets for components in BE3 FW UFI */
+enum {
+	BE3_REDBOOT_START = 0x40000,
+	BE3_PHY_FW_START = 0x140000,
+	BE3_ISCSI_PRIMARY_IMAGE_START = 0x200000,
+	BE3_ISCSI_BACKUP_IMAGE_START = 0x400000,
+	BE3_FCOE_PRIMARY_IMAGE_START = 0x600000,
+	BE3_FCOE_BACKUP_IMAGE_START = 0x800000,
+	BE3_ISCSI_BIOS_START = 0xc00000,
+	BE3_PXE_BIOS_START = 0xc80000,
+	BE3_FCOE_BIOS_START = 0xd00000,
+	BE3_NCSI_START = 0xf40000
+};
 
-#define IMAGE_NCSI			16
-#define IMAGE_OPTION_ROM_PXE		32
-#define IMAGE_OPTION_ROM_FCoE		33
-#define IMAGE_OPTION_ROM_ISCSI		34
-#define IMAGE_FLASHISM_JUMPVECTOR	48
-#define IMAGE_FIRMWARE_iSCSI		160
-#define IMAGE_FIRMWARE_FCoE		162
-#define IMAGE_FIRMWARE_BACKUP_iSCSI	176
-#define IMAGE_FIRMWARE_BACKUP_FCoE	178
-#define IMAGE_FIRMWARE_PHY		192
-#define IMAGE_REDBOOT_DIR		208
-#define IMAGE_REDBOOT_CONFIG		209
-#define IMAGE_UFI_DIR			210
-#define IMAGE_BOOT_CODE			224
+/* Component entry types */
+enum {
+	IMAGE_NCSI = 0x10,
+	IMAGE_OPTION_ROM_PXE = 0x20,
+	IMAGE_OPTION_ROM_FCOE = 0x21,
+	IMAGE_OPTION_ROM_ISCSI = 0x22,
+	IMAGE_FLASHISM_JUMPVECTOR = 0x30,
+	IMAGE_FIRMWARE_ISCSI = 0xa0,
+	IMAGE_FIRMWARE_FCOE = 0xa2,
+	IMAGE_FIRMWARE_BACKUP_ISCSI = 0xb0,
+	IMAGE_FIRMWARE_BACKUP_FCOE = 0xb2,
+	IMAGE_FIRMWARE_PHY = 0xc0,
+	IMAGE_REDBOOT_DIR = 0xd0,
+	IMAGE_REDBOOT_CONFIG = 0xd1,
+	IMAGE_UFI_DIR = 0xd2,
+	IMAGE_BOOT_CODE = 0xe2
+};
 
 struct controller_id {
 	u32 vendor;
@@ -1373,6 +1458,9 @@ struct be_cmd_read_flash_crc {
 } __packed;
 
 /**************** Lancer Firmware Flash ************/
+#define LANCER_FW_DOWNLOAD_CHUNK      (32 * 1024)
+#define LANCER_FW_DOWNLOAD_LOCATION   "/prg"
+
 struct amap_lancer_write_obj_context {
 	u8 write_length[24];
 	u8 reserved1[7];
@@ -1481,6 +1569,8 @@ struct be_cmd_resp_acpi_wol_magic_config_v1 {
 #define BE_PME_D3COLD_CAP		0x80
 
 /********************** LoopBack test *********************/
+#define SET_LB_MODE_TIMEOUT		12000
+
 struct be_cmd_req_loopback_test {
 	struct be_cmd_req_hdr hdr;
 	u32 loopback_type;
@@ -1621,10 +1711,12 @@ struct be_cmd_req_set_qos {
 struct mgmt_hba_attribs {
 	u32 rsvd0[24];
 	u8 controller_model_number[32];
-	u32 rsvd1[79];
-	u8 rsvd2[3];
+	u32 rsvd1[16];
+	u32 controller_serial_number[8];
+	u32 rsvd2[55];
+	u8 rsvd3[3];
 	u8 phy_port;
-	u32 rsvd3[13];
+	u32 rsvd4[13];
 } __packed;
 
 struct mgmt_controller_attrib {
@@ -1744,19 +1836,26 @@ struct be_cmd_req_set_mac_list {
 /*********************** HSW Config ***********************/
 #define PORT_FWD_TYPE_VEPA		0x3
 #define PORT_FWD_TYPE_VEB		0x2
+#define PORT_FWD_TYPE_PASSTHRU		0x1
+
+#define ENABLE_MAC_SPOOFCHK		0x2
+#define DISABLE_MAC_SPOOFCHK		0x3
 
 struct amap_set_hsw_context {
 	u8 interface_id[16];
-	u8 rsvd0[14];
+	u8 rsvd0[8];
+	u8 mac_spoofchk[2];
+	u8 rsvd1[4];
 	u8 pvid_valid;
 	u8 pport;
-	u8 rsvd1[6];
+	u8 rsvd2[6];
 	u8 port_fwd_type[3];
-	u8 rsvd2[7];
+	u8 rsvd3[5];
+	u8 vlan_spoofchk[2];
 	u8 pvid[16];
-	u8 rsvd3[32];
 	u8 rsvd4[32];
 	u8 rsvd5[32];
+	u8 rsvd6[32];
 } __packed;
 
 struct be_cmd_req_set_hsw_config {
@@ -1774,11 +1873,13 @@ struct amap_get_hsw_req_context {
 struct amap_get_hsw_resp_context {
 	u8 rsvd0[6];
 	u8 port_fwd_type[3];
-	u8 rsvd1[7];
+	u8 rsvd1[5];
+	u8 spoofchk;
+	u8 rsvd2;
 	u8 pvid[16];
-	u8 rsvd2[32];
 	u8 rsvd3[32];
 	u8 rsvd4[32];
+	u8 rsvd5[32];
 } __packed;
 
 struct be_cmd_req_get_hsw_config {
@@ -2045,6 +2146,7 @@ struct be_port_res_desc {
 #define NV_TYPE_VXLAN				3
 #define SOCVID_SHIFT				2	/* Strip outer vlan */
 #define RCVID_SHIFT				4	/* Report vlan */
+#define PF_NUM_IGNORE				255
 	u8 nv_flags;
 	u8 rsvd2;
 	__le16 nv_port;					/* vxlan/gre port */
@@ -2208,7 +2310,8 @@ struct be_cmd_resp_get_iface_list {
 };
 
 /*************** Set logical link ********************/
-#define PLINK_TRACK_SHIFT	8
+#define PLINK_ENABLE            BIT(0)
+#define PLINK_TRACK             BIT(8)
 struct be_cmd_req_set_ll_link {
 	struct be_cmd_req_hdr hdr;
 	u32 link_config; /* Bit 0: UP_DOWN, Bit 9: PLINK */
@@ -2283,19 +2386,11 @@ int be_cmd_read_port_transceiver_data(struct be_adapter *adapter,
 				      u8 page_num, u8 *data);
 int be_cmd_query_cable_type(struct be_adapter *adapter);
 int be_cmd_query_sfp_info(struct be_adapter *adapter);
-int be_cmd_write_flashrom(struct be_adapter *adapter, struct be_dma_mem *cmd,
-			  u32 flash_oper, u32 flash_opcode, u32 img_offset,
-			  u32 buf_size);
-int lancer_cmd_write_object(struct be_adapter *adapter, struct be_dma_mem *cmd,
-			    u32 data_size, u32 data_offset,
-			    const char *obj_name, u32 *data_written,
-			    u8 *change_status, u8 *addn_status);
 int lancer_cmd_read_object(struct be_adapter *adapter, struct be_dma_mem *cmd,
 			   u32 data_size, u32 data_offset, const char *obj_name,
 			   u32 *data_read, u32 *eof, u8 *addn_status);
-int lancer_cmd_delete_object(struct be_adapter *adapter, const char *obj_name);
-int be_cmd_get_flash_crc(struct be_adapter *adapter, u8 *flashed_crc,
-			 u16 img_optype, u32 img_offset, u32 crc_offset);
+int lancer_fw_download(struct be_adapter *adapter, const struct firmware *fw);
+int be_fw_download(struct be_adapter *adapter, const struct firmware *fw);
 int be_cmd_enable_magic_wol(struct be_adapter *adapter, u8 *mac,
 			    struct be_dma_mem *nonemb_cmd);
 int be_cmd_fw_init(struct be_adapter *adapter);
@@ -2317,9 +2412,9 @@ int be_cmd_config_qos(struct be_adapter *adapter, u32 max_rate,
 void be_detect_error(struct be_adapter *adapter);
 int be_cmd_get_die_temperature(struct be_adapter *adapter);
 int be_cmd_get_cntl_attributes(struct be_adapter *adapter);
+int be_cmd_get_fat_dump_len(struct be_adapter *adapter, u32 *dump_size);
+int be_cmd_get_fat_dump(struct be_adapter *adapter, u32 buf_len, void *buf);
 int be_cmd_req_native_mode(struct be_adapter *adapter);
-int be_cmd_get_reg_len(struct be_adapter *adapter, u32 *log_size);
-int be_cmd_get_regs(struct be_adapter *adapter, u32 buf_len, void *buf);
 int be_cmd_get_fn_privileges(struct be_adapter *adapter, u32 *privilege,
 			     u32 domain);
 int be_cmd_set_fn_privileges(struct be_adapter *adapter, u32 privileges,
@@ -2334,9 +2429,9 @@ int be_cmd_set_mac_list(struct be_adapter *adapter, u8 *mac_array, u8 mac_count,
 			u32 domain);
 int be_cmd_set_mac(struct be_adapter *adapter, u8 *mac, int if_id, u32 dom);
 int be_cmd_set_hsw_config(struct be_adapter *adapter, u16 pvid, u32 domain,
-			  u16 intf_id, u16 hsw_mode);
+			  u16 intf_id, u16 hsw_mode, u8 spoofchk);
 int be_cmd_get_hsw_config(struct be_adapter *adapter, u16 *pvid, u32 domain,
-			  u16 intf_id, u8 *mode);
+			  u16 intf_id, u8 *mode, bool *spoofchk);
 int be_cmd_get_acpi_wol_cap(struct be_adapter *adapter);
 int be_cmd_set_fw_log_level(struct be_adapter *adapter, u32 level);
 int be_cmd_get_fw_log_level(struct be_adapter *adapter);

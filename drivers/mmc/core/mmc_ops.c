@@ -19,6 +19,7 @@
 #include <linux/mmc/mmc.h>
 
 #include "core.h"
+#include "host.h"
 #include "mmc_ops.h"
 
 #define MMC_OPS_TIMEOUT_MS	(10 * 60 * 1000) /* 10 minute timeout */
@@ -89,7 +90,6 @@ int mmc_send_status(struct mmc_card *card, u32 *status)
 
 static int _mmc_select_card(struct mmc_host *host, struct mmc_card *card)
 {
-	int err;
 	struct mmc_command cmd = {0};
 
 	BUG_ON(!host);
@@ -104,11 +104,7 @@ static int _mmc_select_card(struct mmc_host *host, struct mmc_card *card)
 		cmd.flags = MMC_RSP_NONE | MMC_CMD_AC;
 	}
 
-	err = mmc_wait_for_cmd(host, &cmd, MMC_CMD_RETRIES);
-	if (err)
-		return err;
-
-	return 0;
+	return mmc_wait_for_cmd(host, &cmd, MMC_CMD_RETRIES);
 }
 
 int mmc_select_card(struct mmc_card *card)
@@ -243,7 +239,6 @@ int mmc_all_send_cid(struct mmc_host *host, u32 *cid)
 
 int mmc_set_relative_addr(struct mmc_card *card)
 {
-	int err;
 	struct mmc_command cmd = {0};
 
 	BUG_ON(!card);
@@ -253,11 +248,7 @@ int mmc_set_relative_addr(struct mmc_card *card)
 	cmd.arg = card->rca << 16;
 	cmd.flags = MMC_RSP_R1 | MMC_CMD_AC;
 
-	err = mmc_wait_for_cmd(card->host, &cmd, MMC_CMD_RETRIES);
-	if (err)
-		return err;
-
-	return 0;
+	return mmc_wait_for_cmd(card->host, &cmd, MMC_CMD_RETRIES);
 }
 
 static int
@@ -449,6 +440,21 @@ int mmc_spi_set_crc(struct mmc_host *host, int use_crc)
 	return err;
 }
 
+int mmc_switch_status_error(struct mmc_host *host, u32 status)
+{
+	if (mmc_host_is_spi(host)) {
+		if (status & R1_SPI_ILLEGAL_COMMAND)
+			return -EBADMSG;
+	} else {
+		if (status & 0xFDFFA000)
+			pr_warn("%s: unexpected status %#x after switch\n",
+				mmc_hostname(host), status);
+		if (status & R1_SWITCH_ERROR)
+			return -EBADMSG;
+	}
+	return 0;
+}
+
 /**
  *	__mmc_switch - modify EXT_CSD register
  *	@card: the MMC card associated with the data transfer
@@ -473,6 +479,9 @@ int __mmc_switch(struct mmc_card *card, u8 set, u8 index, u8 value,
 	unsigned long timeout;
 	u32 status = 0;
 	bool use_r1b_resp = use_busy_signal;
+	bool expired = false;
+
+	mmc_retune_hold(host);
 
 	/*
 	 * If the cmd timeout and the max_busy_timeout of the host are both
@@ -506,11 +515,11 @@ int __mmc_switch(struct mmc_card *card, u8 set, u8 index, u8 value,
 
 	err = mmc_wait_for_cmd(host, &cmd, MMC_CMD_RETRIES);
 	if (err)
-		return err;
+		goto out;
 
 	/* No need to check card status in case of unblocking command */
 	if (!use_busy_signal)
-		return 0;
+		goto out;
 
 	/*
 	 * CRC errors shall only be ignored in cases were CMD13 is used to poll
@@ -527,9 +536,15 @@ int __mmc_switch(struct mmc_card *card, u8 set, u8 index, u8 value,
 	timeout = jiffies + msecs_to_jiffies(timeout_ms);
 	do {
 		if (send_status) {
+			/*
+			 * Due to the possibility of being preempted after
+			 * sending the status command, check the expiration
+			 * time first.
+			 */
+			expired = time_after(jiffies, timeout);
 			err = __mmc_send_status(card, &status, ignore_crc);
 			if (err)
-				return err;
+				goto out;
 		}
 		if ((host->caps & MMC_CAP_WAIT_WHILE_BUSY) && use_r1b_resp)
 			break;
@@ -543,31 +558,24 @@ int __mmc_switch(struct mmc_card *card, u8 set, u8 index, u8 value,
 		 */
 		if (!send_status) {
 			mmc_delay(timeout_ms);
-			return 0;
+			goto out;
 		}
 
 		/* Timeout if the device never leaves the program state. */
-		if (time_after(jiffies, timeout)) {
+		if (expired && R1_CURRENT_STATE(status) == R1_STATE_PRG) {
 			pr_err("%s: Card stuck in programming state! %s\n",
 				mmc_hostname(host), __func__);
-			return -ETIMEDOUT;
+			err = -ETIMEDOUT;
+			goto out;
 		}
 	} while (R1_CURRENT_STATE(status) == R1_STATE_PRG);
 
-	if (mmc_host_is_spi(host)) {
-		if (status & R1_SPI_ILLEGAL_COMMAND)
-			return -EBADMSG;
-	} else {
-		if (status & 0xFDFFA000)
-			pr_warn("%s: unexpected status %#x after switch\n",
-				mmc_hostname(host), status);
-		if (status & R1_SWITCH_ERROR)
-			return -EBADMSG;
-	}
+	err = mmc_switch_status_error(host, status);
+out:
+	mmc_retune_release(host);
 
-	return 0;
+	return err;
 }
-EXPORT_SYMBOL_GPL(__mmc_switch);
 
 int mmc_switch(struct mmc_card *card, u8 set, u8 index, u8 value,
 		unsigned int timeout_ms)
@@ -577,7 +585,7 @@ int mmc_switch(struct mmc_card *card, u8 set, u8 index, u8 value,
 }
 EXPORT_SYMBOL_GPL(mmc_switch);
 
-int mmc_send_tuning(struct mmc_host *host)
+int mmc_send_tuning(struct mmc_host *host, u32 opcode, int *cmd_error)
 {
 	struct mmc_request mrq = {NULL};
 	struct mmc_command cmd = {0};
@@ -587,16 +595,13 @@ int mmc_send_tuning(struct mmc_host *host)
 	const u8 *tuning_block_pattern;
 	int size, err = 0;
 	u8 *data_buf;
-	u32 opcode;
 
 	if (ios->bus_width == MMC_BUS_WIDTH_8) {
 		tuning_block_pattern = tuning_blk_pattern_8bit;
 		size = sizeof(tuning_blk_pattern_8bit);
-		opcode = MMC_SEND_TUNING_BLOCK_HS200;
 	} else if (ios->bus_width == MMC_BUS_WIDTH_4) {
 		tuning_block_pattern = tuning_blk_pattern_4bit;
 		size = sizeof(tuning_blk_pattern_4bit);
-		opcode = MMC_SEND_TUNING_BLOCK;
 	} else
 		return -EINVAL;
 
@@ -626,6 +631,9 @@ int mmc_send_tuning(struct mmc_host *host)
 	sg_init_one(&sg, data_buf, size);
 
 	mmc_wait_for_req(host, &mrq);
+
+	if (cmd_error)
+		*cmd_error = cmd.error;
 
 	if (cmd.error) {
 		err = cmd.error;
@@ -725,7 +733,7 @@ mmc_send_bus_test(struct mmc_card *card, struct mmc_host *host, u8 opcode,
 
 int mmc_bus_test(struct mmc_card *card, u8 bus_width)
 {
-	int err, width;
+	int width;
 
 	if (bus_width == MMC_BUS_WIDTH_8)
 		width = 8;
@@ -741,8 +749,7 @@ int mmc_bus_test(struct mmc_card *card, u8 bus_width)
 	 * is a problem.  This improves chances that the test will work.
 	 */
 	mmc_send_bus_test(card, card->host, MMC_BUS_TEST_W, width);
-	err = mmc_send_bus_test(card, card->host, MMC_BUS_TEST_R, width);
-	return err;
+	return mmc_send_bus_test(card, card->host, MMC_BUS_TEST_R, width);
 }
 
 int mmc_send_hpi_cmd(struct mmc_card *card, u32 *status)

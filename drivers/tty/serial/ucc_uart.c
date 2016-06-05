@@ -31,7 +31,7 @@
 #include <linux/dma-mapping.h>
 
 #include <linux/fs_uart_pd.h>
-#include <asm/ucc_slow.h>
+#include <soc/fsl/qe/ucc_slow.h>
 
 #include <linux/firmware.h>
 #include <asm/reg.h>
@@ -950,7 +950,7 @@ static void qe_uart_set_termios(struct uart_port *port,
 	if ((termios->c_cflag & CREAD) == 0)
 		port->read_status_mask &= ~BD_SC_EMPTY;
 
-	baud = uart_get_baud_rate(port, termios, old, 0, 115200);
+	baud = uart_get_baud_rate(port, termios, old, 0, port->uartclk / 16);
 
 	/* Do we really need a spinlock here? */
 	spin_lock_irqsave(&port->lock, flags);
@@ -1477,6 +1477,9 @@ static const struct of_device_id ucc_uart_match[] = {
 	{
 		.type = "serial",
 		.compatible = "ucc_uart",
+	},
+	{
+		.compatible = "fsl,t1040-ucc-uart",
 	},
 	{},
 };

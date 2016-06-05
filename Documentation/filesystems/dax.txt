@@ -18,8 +18,10 @@ Usage
 -----
 
 If you have a block device which supports DAX, you can make a filesystem
-on it as usual.  When mounting it, use the -o dax option manually
-or add 'dax' to the options in /etc/fstab.
+on it as usual.  The DAX code currently only supports files with a block
+size equal to your kernel's PAGE_SIZE, so you may need to specify a block
+size when creating the filesystem.  When mounting it, use the "-o dax"
+option on the command line or add 'dax' to the options in /etc/fstab.
 
 
 Implementation Tips for Block Driver Writers
@@ -58,9 +60,10 @@ Filesystem support consists of
 - implementing the direct_IO address space operation, and calling
   dax_do_io() instead of blockdev_direct_IO() if S_DAX is set
 - implementing an mmap file operation for DAX files which sets the
-  VM_MIXEDMAP flag on the VMA, and setting the vm_ops to include handlers
-  for fault and page_mkwrite (which should probably call dax_fault() and
-  dax_mkwrite(), passing the appropriate get_block() callback)
+  VM_MIXEDMAP and VM_HUGEPAGE flags on the VMA, and setting the vm_ops to
+  include handlers for fault, pmd_fault and page_mkwrite (which should
+  probably call dax_fault(), dax_pmd_fault() and dax_mkwrite(), passing the
+  appropriate get_block() callback)
 - calling dax_truncate_page() instead of block_truncate_page() for DAX files
 - calling dax_zero_page_range() instead of zero_user() for DAX files
 - ensuring that there is sufficient locking between reads, writes,
@@ -74,6 +77,38 @@ or a write()) work correctly.
 These filesystems may be used for inspiration:
 - ext2: the second extended filesystem, see Documentation/filesystems/ext2.txt
 - ext4: the fourth extended filesystem, see Documentation/filesystems/ext4.txt
+
+
+Handling Media Errors
+---------------------
+
+The libnvdimm subsystem stores a record of known media error locations for
+each pmem block device (in gendisk->badblocks). If we fault at such location,
+or one with a latent error not yet discovered, the application can expect
+to receive a SIGBUS. Libnvdimm also allows clearing of these errors by simply
+writing the affected sectors (through the pmem driver, and if the underlying
+NVDIMM supports the clear_poison DSM defined by ACPI).
+
+Since DAX IO normally doesn't go through the driver/bio path, applications or
+sysadmins have an option to restore the lost data from a prior backup/inbuilt
+redundancy in the following ways:
+
+1. Delete the affected file, and restore from a backup (sysadmin route):
+   This will free the file system blocks that were being used by the file,
+   and the next time they're allocated, they will be zeroed first, which
+   happens through the driver, and will clear bad sectors.
+
+2. Truncate or hole-punch the part of the file that has a bad-block (at least
+   an entire aligned sector has to be hole-punched, but not necessarily an
+   entire filesystem block).
+
+These are the two basic paths that allow DAX filesystems to continue operating
+in the presence of media errors. More robust error recovery mechanisms can be
+built on top of this in the future, for example, involving redundancy/mirroring
+provided at the block layer through DM, or additionally, at the filesystem
+level. These would have to rely on the above two tenets, that error clearing
+can happen either by sending an IO through the driver, or zeroing (also through
+the driver).
 
 
 Shortcomings

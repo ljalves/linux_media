@@ -19,6 +19,9 @@
 #include <linux/radix-tree.h>
 #include <linux/fs.h>
 #include <linux/slab.h>
+#ifdef CONFIG_BLK_DEV_RAM_DAX
+#include <linux/pfn_t.h>
+#endif
 
 #include <asm/uaccess.h>
 
@@ -323,7 +326,7 @@ out:
 	return err;
 }
 
-static void brd_make_request(struct request_queue *q, struct bio *bio)
+static blk_qc_t brd_make_request(struct request_queue *q, struct bio *bio)
 {
 	struct block_device *bdev = bio->bi_bdev;
 	struct brd_device *brd = bdev->bd_disk->private_data;
@@ -331,14 +334,15 @@ static void brd_make_request(struct request_queue *q, struct bio *bio)
 	struct bio_vec bvec;
 	sector_t sector;
 	struct bvec_iter iter;
-	int err = -EIO;
 
 	sector = bio->bi_iter.bi_sector;
 	if (bio_end_sector(bio) > get_capacity(bdev->bd_disk))
-		goto out;
+		goto io_error;
 
 	if (unlikely(bio->bi_rw & REQ_DISCARD)) {
-		err = 0;
+		if (sector & ((PAGE_SIZE >> SECTOR_SHIFT) - 1) ||
+		    bio->bi_iter.bi_size & ~PAGE_MASK)
+			goto io_error;
 		discard_from_brd(brd, sector, bio->bi_iter.bi_size);
 		goto out;
 	}
@@ -349,29 +353,35 @@ static void brd_make_request(struct request_queue *q, struct bio *bio)
 
 	bio_for_each_segment(bvec, bio, iter) {
 		unsigned int len = bvec.bv_len;
+		int err;
+
 		err = brd_do_bvec(brd, bvec.bv_page, len,
 					bvec.bv_offset, rw, sector);
 		if (err)
-			break;
+			goto io_error;
 		sector += len >> SECTOR_SHIFT;
 	}
 
 out:
-	bio_endio(bio, err);
+	bio_endio(bio);
+	return BLK_QC_T_NONE;
+io_error:
+	bio_io_error(bio);
+	return BLK_QC_T_NONE;
 }
 
 static int brd_rw_page(struct block_device *bdev, sector_t sector,
 		       struct page *page, int rw)
 {
 	struct brd_device *brd = bdev->bd_disk->private_data;
-	int err = brd_do_bvec(brd, page, PAGE_CACHE_SIZE, 0, rw, sector);
+	int err = brd_do_bvec(brd, page, PAGE_SIZE, 0, rw, sector);
 	page_endio(page, rw & WRITE, err);
 	return err;
 }
 
 #ifdef CONFIG_BLK_DEV_RAM_DAX
 static long brd_direct_access(struct block_device *bdev, sector_t sector,
-			void **kaddr, unsigned long *pfn, long size)
+			void __pmem **kaddr, pfn_t *pfn, long size)
 {
 	struct brd_device *brd = bdev->bd_disk->private_data;
 	struct page *page;
@@ -381,13 +391,9 @@ static long brd_direct_access(struct block_device *bdev, sector_t sector,
 	page = brd_insert_page(brd, sector);
 	if (!page)
 		return -ENOSPC;
-	*kaddr = page_address(page);
-	*pfn = page_to_pfn(page);
+	*kaddr = (void __pmem *)page_address(page);
+	*pfn = page_to_pfn_t(page);
 
-	/*
-	 * TODO: If size > PAGE_SIZE, we could look to see if the next page in
-	 * the file happens to be mapped to the next page of physical RAM.
-	 */
 	return PAGE_SIZE;
 }
 #else
@@ -500,7 +506,7 @@ static struct brd_device *brd_alloc(int i)
 	blk_queue_physical_block_size(brd->brd_queue, PAGE_SIZE);
 
 	brd->brd_queue->limits.discard_granularity = PAGE_SIZE;
-	brd->brd_queue->limits.max_discard_sectors = UINT_MAX;
+	blk_queue_max_discard_sectors(brd->brd_queue, UINT_MAX);
 	brd->brd_queue->limits.discard_zeroes_data = 1;
 	queue_flag_set_unlocked(QUEUE_FLAG_DISCARD, brd->brd_queue);
 

@@ -78,7 +78,7 @@ struct ps3_bmp {
 /**
  * struct ps3_private - a per cpu data structure
  * @bmp: ps3_bmp structure
- * @bmp_lock: Syncronize access to bmp.
+ * @bmp_lock: Synchronize access to bmp.
  * @ipi_debug_brk_mask: Mask for debug break IPIs
  * @ppe_id: HV logical_ppe_id
  * @thread_id: HV thread_id
@@ -678,7 +678,8 @@ static int ps3_host_map(struct irq_domain *h, unsigned int virq,
 	return 0;
 }
 
-static int ps3_host_match(struct irq_domain *h, struct device_node *np)
+static int ps3_host_match(struct irq_domain *h, struct device_node *np,
+			  enum irq_domain_bus_token bus_token)
 {
 	/* Match all */
 	return 1;

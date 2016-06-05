@@ -113,12 +113,12 @@ static int dm816x_usb_phy_init(struct phy *x)
 	return 0;
 }
 
-static struct phy_ops ops = {
+static const struct phy_ops ops = {
 	.init		= dm816x_usb_phy_init,
 	.owner		= THIS_MODULE,
 };
 
-static int dm816x_usb_phy_runtime_suspend(struct device *dev)
+static int __maybe_unused dm816x_usb_phy_runtime_suspend(struct device *dev)
 {
 	struct dm816x_usb_phy *phy = dev_get_drvdata(dev);
 	unsigned int mask, val;
@@ -136,7 +136,7 @@ static int dm816x_usb_phy_runtime_suspend(struct device *dev)
 	return 0;
 }
 
-static int dm816x_usb_phy_runtime_resume(struct device *dev)
+static int __maybe_unused dm816x_usb_phy_runtime_resume(struct device *dev)
 {
 	struct dm816x_usb_phy *phy = dev_get_drvdata(dev);
 	unsigned int mask, val;

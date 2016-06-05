@@ -5,7 +5,7 @@
  *****************************************************************************/
 
 /*
- * Copyright (C) 2000 - 2015, Intel Corp.
+ * Copyright (C) 2000 - 2016, Intel Corp.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -73,7 +73,7 @@ acpi_tb_init_table_descriptor(struct acpi_table_desc *table_desc,
 	 * Initialize the table descriptor. Set the pointer to NULL, since the
 	 * table is not fully mapped at this time.
 	 */
-	ACPI_MEMSET(table_desc, 0, sizeof(struct acpi_table_desc));
+	memset(table_desc, 0, sizeof(struct acpi_table_desc));
 	table_desc->address = address;
 	table_desc->length = table->length;
 	table_desc->flags = flags;
@@ -368,7 +368,7 @@ acpi_status acpi_tb_validate_temp_table(struct acpi_table_desc *table_desc)
  *****************************************************************************/
 
 acpi_status
-acpi_tb_verify_temp_table(struct acpi_table_desc * table_desc, char *signature)
+acpi_tb_verify_temp_table(struct acpi_table_desc *table_desc, char *signature)
 {
 	acpi_status status = AE_OK;
 
@@ -401,12 +401,13 @@ acpi_tb_verify_temp_table(struct acpi_table_desc * table_desc, char *signature)
 			ACPI_EXCEPTION((AE_INFO, AE_NO_MEMORY,
 					"%4.4s 0x%8.8X%8.8X"
 					" Attempted table install failed",
-					acpi_ut_valid_acpi_name(table_desc->
-								signature.
-								ascii) ?
+					acpi_ut_valid_nameseg(table_desc->
+							      signature.
+							      ascii) ?
 					table_desc->signature.ascii : "????",
 					ACPI_FORMAT_UINT64(table_desc->
 							   address)));
+
 			goto invalidate_and_exit;
 		}
 	}
@@ -453,7 +454,7 @@ acpi_status acpi_tb_resize_root_table_list(void)
 		table_count = acpi_gbl_root_table_list.current_table_count;
 	}
 
-	tables = ACPI_ALLOCATE_ZEROED(((acpi_size) table_count +
+	tables = ACPI_ALLOCATE_ZEROED(((acpi_size)table_count +
 				       ACPI_ROOT_TABLE_SIZE_INCREMENT) *
 				      sizeof(struct acpi_table_desc));
 	if (!tables) {
@@ -465,9 +466,8 @@ acpi_status acpi_tb_resize_root_table_list(void)
 	/* Copy and free the previous table array */
 
 	if (acpi_gbl_root_table_list.tables) {
-		ACPI_MEMCPY(tables, acpi_gbl_root_table_list.tables,
-			    (acpi_size) table_count *
-			    sizeof(struct acpi_table_desc));
+		memcpy(tables, acpi_gbl_root_table_list.tables,
+		       (acpi_size)table_count * sizeof(struct acpi_table_desc));
 
 		if (acpi_gbl_root_table_list.flags & ACPI_ROOT_ORIGIN_ALLOCATED) {
 			ACPI_FREE(acpi_gbl_root_table_list.tables);
@@ -700,7 +700,7 @@ acpi_status acpi_tb_release_owner_id(u32 table_index)
  *
  ******************************************************************************/
 
-acpi_status acpi_tb_get_owner_id(u32 table_index, acpi_owner_id * owner_id)
+acpi_status acpi_tb_get_owner_id(u32 table_index, acpi_owner_id *owner_id)
 {
 	acpi_status status = AE_BAD_PARAMETER;
 

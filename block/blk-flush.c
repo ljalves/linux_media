@@ -73,6 +73,7 @@
 
 #include "blk.h"
 #include "blk-mq.h"
+#include "blk-mq-tag.h"
 
 /* FLUSH/FUA sequences */
 enum {
@@ -94,17 +95,18 @@ enum {
 static bool blk_kick_flush(struct request_queue *q,
 			   struct blk_flush_queue *fq);
 
-static unsigned int blk_flush_policy(unsigned int fflags, struct request *rq)
+static unsigned int blk_flush_policy(unsigned long fflags, struct request *rq)
 {
 	unsigned int policy = 0;
 
 	if (blk_rq_sectors(rq))
 		policy |= REQ_FSEQ_DATA;
 
-	if (fflags & REQ_FLUSH) {
+	if (fflags & (1UL << QUEUE_FLAG_WC)) {
 		if (rq->cmd_flags & REQ_FLUSH)
 			policy |= REQ_FSEQ_PREFLUSH;
-		if (!(fflags & REQ_FUA) && (rq->cmd_flags & REQ_FUA))
+		if (!(fflags & (1UL << QUEUE_FLAG_FUA)) &&
+		    (rq->cmd_flags & REQ_FUA))
 			policy |= REQ_FSEQ_POSTFLUSH;
 	}
 	return policy;
@@ -226,7 +228,12 @@ static void flush_end_io(struct request *flush_rq, int error)
 	struct blk_flush_queue *fq = blk_get_flush_queue(q, flush_rq->mq_ctx);
 
 	if (q->mq_ops) {
+		struct blk_mq_hw_ctx *hctx;
+
+		/* release the tag's ownership to the req cloned from */
 		spin_lock_irqsave(&fq->mq_flush_lock, flags);
+		hctx = q->mq_ops->map_queue(q, flush_rq->mq_ctx->cpu);
+		blk_mq_tag_set_rq(hctx, flush_rq->tag, fq->orig_rq);
 		flush_rq->tag = -1;
 	}
 
@@ -308,11 +315,18 @@ static bool blk_kick_flush(struct request_queue *q, struct blk_flush_queue *fq)
 
 	/*
 	 * Borrow tag from the first request since they can't
-	 * be in flight at the same time.
+	 * be in flight at the same time. And acquire the tag's
+	 * ownership for flush req.
 	 */
 	if (q->mq_ops) {
+		struct blk_mq_hw_ctx *hctx;
+
 		flush_rq->mq_ctx = first_rq->mq_ctx;
 		flush_rq->tag = first_rq->tag;
+		fq->orig_rq = first_rq;
+
+		hctx = q->mq_ops->map_queue(q, first_rq->mq_ctx->cpu);
+		blk_mq_tag_set_rq(hctx, first_rq->tag, flush_rq);
 	}
 
 	flush_rq->cmd_type = REQ_TYPE_FS;
@@ -371,7 +385,7 @@ static void mq_flush_data_end_io(struct request *rq, int error)
 void blk_insert_flush(struct request *rq)
 {
 	struct request_queue *q = rq->q;
-	unsigned int fflags = q->flush_flags;	/* may change, cache */
+	unsigned long fflags = q->queue_flags;	/* may change, cache */
 	unsigned int policy = blk_flush_policy(fflags, rq);
 	struct blk_flush_queue *fq = blk_get_flush_queue(q, rq->mq_ctx);
 
@@ -380,7 +394,7 @@ void blk_insert_flush(struct request *rq)
 	 * REQ_FLUSH and FUA for the driver.
 	 */
 	rq->cmd_flags &= ~REQ_FLUSH;
-	if (!(fflags & REQ_FUA))
+	if (!(fflags & (1UL << QUEUE_FLAG_FUA)))
 		rq->cmd_flags &= ~REQ_FUA;
 
 	/*

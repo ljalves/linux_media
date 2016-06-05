@@ -426,7 +426,7 @@ static bool is_root_export(struct svc_export *exp)
 
 static struct super_block *exp_sb(struct svc_export *exp)
 {
-	return d_inode(exp->ex_path.dentry)->i_sb;
+	return exp->ex_path.dentry->d_sb;
 }
 
 static bool fsid_type_ok_for_exp(u8 fsid_type, struct svc_export *exp)
@@ -631,10 +631,7 @@ fh_put(struct svc_fh *fhp)
 		fh_unlock(fhp);
 		fhp->fh_dentry = NULL;
 		dput(dentry);
-#ifdef CONFIG_NFSD_V3
-		fhp->fh_pre_saved = 0;
-		fhp->fh_post_saved = 0;
-#endif
+		fh_clear_wcc(fhp);
 	}
 	fh_drop_write(fhp);
 	if (exp) {

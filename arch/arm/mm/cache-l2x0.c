@@ -38,10 +38,11 @@ struct l2c_init_data {
 	unsigned way_size_0;
 	unsigned num_lock;
 	void (*of_parse)(const struct device_node *, u32 *, u32 *);
-	void (*enable)(void __iomem *, u32, unsigned);
+	void (*enable)(void __iomem *, unsigned);
 	void (*fixup)(void __iomem *, u32, struct outer_cache_fns *);
 	void (*save)(void __iomem *);
 	void (*configure)(void __iomem *);
+	void (*unlock)(void __iomem *, unsigned);
 	struct outer_cache_fns outer_cache;
 };
 
@@ -110,14 +111,6 @@ static inline void l2c_unlock(void __iomem *base, unsigned num)
 
 static void l2c_configure(void __iomem *base)
 {
-	if (outer_cache.configure) {
-		outer_cache.configure(&l2x0_saved_regs);
-		return;
-	}
-
-	if (l2x0_data->configure)
-		l2x0_data->configure(base);
-
 	l2c_write_sec(l2x0_saved_regs.aux_ctrl, base, L2X0_AUX_CTRL);
 }
 
@@ -125,18 +118,16 @@ static void l2c_configure(void __iomem *base)
  * Enable the L2 cache controller.  This function must only be
  * called when the cache controller is known to be disabled.
  */
-static void l2c_enable(void __iomem *base, u32 aux, unsigned num_lock)
+static void l2c_enable(void __iomem *base, unsigned num_lock)
 {
 	unsigned long flags;
 
-	/* Do not touch the controller if already enabled. */
-	if (readl_relaxed(base + L2X0_CTRL) & L2X0_CTRL_EN)
-		return;
+	if (outer_cache.configure)
+		outer_cache.configure(&l2x0_saved_regs);
+	else
+		l2x0_data->configure(base);
 
-	l2x0_saved_regs.aux_ctrl = aux;
-	l2c_configure(base);
-
-	l2c_unlock(base, num_lock);
+	l2x0_data->unlock(base, num_lock);
 
 	local_irq_save(flags);
 	__l2c_op_way(base + L2X0_INV_WAY);
@@ -163,7 +154,11 @@ static void l2c_save(void __iomem *base)
 
 static void l2c_resume(void)
 {
-	l2c_enable(l2x0_base, l2x0_saved_regs.aux_ctrl, l2x0_data->num_lock);
+	void __iomem *base = l2x0_base;
+
+	/* Do not touch the controller if already enabled. */
+	if (!(readl_relaxed(base + L2X0_CTRL) & L2X0_CTRL_EN))
+		l2c_enable(base, l2x0_data->num_lock);
 }
 
 /*
@@ -252,6 +247,8 @@ static const struct l2c_init_data l2c210_data __initconst = {
 	.num_lock = 1,
 	.enable = l2c_enable,
 	.save = l2c_save,
+	.configure = l2c_configure,
+	.unlock = l2c_unlock,
 	.outer_cache = {
 		.inv_range = l2c210_inv_range,
 		.clean_range = l2c210_clean_range,
@@ -391,16 +388,22 @@ static void l2c220_sync(void)
 	raw_spin_unlock_irqrestore(&l2x0_lock, flags);
 }
 
-static void l2c220_enable(void __iomem *base, u32 aux, unsigned num_lock)
+static void l2c220_enable(void __iomem *base, unsigned num_lock)
 {
 	/*
 	 * Always enable non-secure access to the lockdown registers -
 	 * we write to them as part of the L2C enable sequence so they
 	 * need to be accessible.
 	 */
-	aux |= L220_AUX_CTRL_NS_LOCKDOWN;
+	l2x0_saved_regs.aux_ctrl |= L220_AUX_CTRL_NS_LOCKDOWN;
 
-	l2c_enable(base, aux, num_lock);
+	l2c_enable(base, num_lock);
+}
+
+static void l2c220_unlock(void __iomem *base, unsigned num_lock)
+{
+	if (readl_relaxed(base + L2X0_AUX_CTRL) & L220_AUX_CTRL_NS_LOCKDOWN)
+		l2c_unlock(base, num_lock);
 }
 
 static const struct l2c_init_data l2c220_data = {
@@ -409,6 +412,8 @@ static const struct l2c_init_data l2c220_data = {
 	.num_lock = 1,
 	.enable = l2c220_enable,
 	.save = l2c_save,
+	.configure = l2c_configure,
+	.unlock = l2c220_unlock,
 	.outer_cache = {
 		.inv_range = l2c220_inv_range,
 		.clean_range = l2c220_clean_range,
@@ -569,6 +574,8 @@ static void l2c310_configure(void __iomem *base)
 {
 	unsigned revision;
 
+	l2c_configure(base);
+
 	/* restore pl310 setup */
 	l2c_write_sec(l2x0_saved_regs.tag_latency, base,
 		      L310_TAG_LATENCY_CTRL);
@@ -603,10 +610,11 @@ static int l2c310_cpu_enable_flz(struct notifier_block *nb, unsigned long act, v
 	return NOTIFY_OK;
 }
 
-static void __init l2c310_enable(void __iomem *base, u32 aux, unsigned num_lock)
+static void __init l2c310_enable(void __iomem *base, unsigned num_lock)
 {
 	unsigned rev = readl_relaxed(base + L2X0_CACHE_ID) & L2X0_CACHE_ID_RTL_MASK;
 	bool cortex_a9 = read_cpuid_part() == ARM_CPU_PART_CORTEX_A9;
+	u32 aux = l2x0_saved_regs.aux_ctrl;
 
 	if (rev >= L310_CACHE_ID_RTL_R2P0) {
 		if (cortex_a9) {
@@ -639,19 +647,14 @@ static void __init l2c310_enable(void __iomem *base, u32 aux, unsigned num_lock)
 		aux &= ~(L310_AUX_CTRL_FULL_LINE_ZERO | L310_AUX_CTRL_EARLY_BRESP);
 	}
 
-	/* r3p0 or later has power control register */
-	if (rev >= L310_CACHE_ID_RTL_R3P0)
-		l2x0_saved_regs.pwr_ctrl = L310_DYNAMIC_CLK_GATING_EN |
-						L310_STNDBY_MODE_EN;
-
 	/*
 	 * Always enable non-secure access to the lockdown registers -
 	 * we write to them as part of the L2C enable sequence so they
 	 * need to be accessible.
 	 */
-	aux |= L310_AUX_CTRL_NS_LOCKDOWN;
+	l2x0_saved_regs.aux_ctrl = aux | L310_AUX_CTRL_NS_LOCKDOWN;
 
-	l2c_enable(base, aux, num_lock);
+	l2c_enable(base, num_lock);
 
 	/* Read back resulting AUX_CTRL value as it could have been altered. */
 	aux = readl_relaxed(base + L2X0_AUX_CTRL);
@@ -755,6 +758,12 @@ static void l2c310_resume(void)
 		set_auxcr(get_auxcr() | BIT(3) | BIT(2) | BIT(1));
 }
 
+static void l2c310_unlock(void __iomem *base, unsigned num_lock)
+{
+	if (readl_relaxed(base + L2X0_AUX_CTRL) & L310_AUX_CTRL_NS_LOCKDOWN)
+		l2c_unlock(base, num_lock);
+}
+
 static const struct l2c_init_data l2c310_init_fns __initconst = {
 	.type = "L2C-310",
 	.way_size_0 = SZ_8K,
@@ -763,6 +772,7 @@ static const struct l2c_init_data l2c310_init_fns __initconst = {
 	.fixup = l2c310_fixup,
 	.save = l2c310_save,
 	.configure = l2c310_configure,
+	.unlock = l2c310_unlock,
 	.outer_cache = {
 		.inv_range = l2c210_inv_range,
 		.clean_range = l2c210_clean_range,
@@ -775,7 +785,7 @@ static const struct l2c_init_data l2c310_init_fns __initconst = {
 };
 
 static int __init __l2c_init(const struct l2c_init_data *data,
-			     u32 aux_val, u32 aux_mask, u32 cache_id)
+			     u32 aux_val, u32 aux_mask, u32 cache_id, bool nosync)
 {
 	struct outer_cache_fns fns;
 	unsigned way_size_bits, ways;
@@ -851,13 +861,20 @@ static int __init __l2c_init(const struct l2c_init_data *data,
 	fns.configure = outer_cache.configure;
 	if (data->fixup)
 		data->fixup(l2x0_base, cache_id, &fns);
+	if (nosync) {
+		pr_info("L2C: disabling outer sync\n");
+		fns.sync = NULL;
+	}
 
 	/*
 	 * Check if l2x0 controller is already enabled.  If we are booting
 	 * in non-secure mode accessing the below registers will fault.
 	 */
-	if (!(readl_relaxed(l2x0_base + L2X0_CTRL) & L2X0_CTRL_EN))
-		data->enable(l2x0_base, aux, data->num_lock);
+	if (!(readl_relaxed(l2x0_base + L2X0_CTRL) & L2X0_CTRL_EN)) {
+		l2x0_saved_regs.aux_ctrl = aux;
+
+		data->enable(l2x0_base, data->num_lock);
+	}
 
 	outer_cache = fns;
 
@@ -907,7 +924,7 @@ void __init l2x0_init(void __iomem *base, u32 aux_val, u32 aux_mask)
 	if (data->save)
 		data->save(l2x0_base);
 
-	__l2c_init(data, aux_val, aux_mask, cache_id);
+	__l2c_init(data, aux_val, aux_mask, cache_id, false);
 }
 
 #ifdef CONFIG_OF
@@ -1042,6 +1059,18 @@ static void __init l2x0_of_parse(const struct device_node *np,
 		val |= (dirty - 1) << L2X0_AUX_CTRL_DIRTY_LATENCY_SHIFT;
 	}
 
+	if (of_property_read_bool(np, "arm,parity-enable")) {
+		mask &= ~L2C_AUX_CTRL_PARITY_ENABLE;
+		val |= L2C_AUX_CTRL_PARITY_ENABLE;
+	} else if (of_property_read_bool(np, "arm,parity-disable")) {
+		mask &= ~L2C_AUX_CTRL_PARITY_ENABLE;
+	}
+
+	if (of_property_read_bool(np, "arm,shared-override")) {
+		mask &= ~L2C_AUX_CTRL_SHARED_OVERRIDE;
+		val |= L2C_AUX_CTRL_SHARED_OVERRIDE;
+	}
+
 	ret = l2x0_cache_size_of_parse(np, aux_val, aux_mask, &assoc, SZ_256K);
 	if (ret)
 		return;
@@ -1066,6 +1095,8 @@ static const struct l2c_init_data of_l2c210_data __initconst = {
 	.of_parse = l2x0_of_parse,
 	.enable = l2c_enable,
 	.save = l2c_save,
+	.configure = l2c_configure,
+	.unlock = l2c_unlock,
 	.outer_cache = {
 		.inv_range   = l2c210_inv_range,
 		.clean_range = l2c210_clean_range,
@@ -1084,6 +1115,8 @@ static const struct l2c_init_data of_l2c220_data __initconst = {
 	.of_parse = l2x0_of_parse,
 	.enable = l2c220_enable,
 	.save = l2c_save,
+	.configure = l2c_configure,
+	.unlock = l2c220_unlock,
 	.outer_cache = {
 		.inv_range   = l2c220_inv_range,
 		.clean_range = l2c220_clean_range,
@@ -1103,6 +1136,7 @@ static void __init l2c310_of_parse(const struct device_node *np,
 	u32 filter[2] = { 0, 0 };
 	u32 assoc;
 	u32 prefetch;
+	u32 power;
 	u32 val;
 	int ret;
 
@@ -1147,6 +1181,19 @@ static void __init l2c310_of_parse(const struct device_node *np,
 			       assoc);
 			break;
 		}
+	}
+
+	if (of_property_read_bool(np, "arm,shared-override")) {
+		*aux_val |= L2C_AUX_CTRL_SHARED_OVERRIDE;
+		*aux_mask &= ~L2C_AUX_CTRL_SHARED_OVERRIDE;
+	}
+
+	if (of_property_read_bool(np, "arm,parity-enable")) {
+		*aux_val |= L2C_AUX_CTRL_PARITY_ENABLE;
+		*aux_mask &= ~L2C_AUX_CTRL_PARITY_ENABLE;
+	} else if (of_property_read_bool(np, "arm,parity-disable")) {
+		*aux_val &= ~L2C_AUX_CTRL_PARITY_ENABLE;
+		*aux_mask &= ~L2C_AUX_CTRL_PARITY_ENABLE;
 	}
 
 	prefetch = l2x0_saved_regs.prefetch_ctrl;
@@ -1199,7 +1246,47 @@ static void __init l2c310_of_parse(const struct device_node *np,
 		pr_err("L2C-310 OF arm,prefetch-offset property value is missing\n");
 	}
 
+	ret = of_property_read_u32(np, "prefetch-data", &val);
+	if (ret == 0) {
+		if (val)
+			prefetch |= L310_PREFETCH_CTRL_DATA_PREFETCH;
+		else
+			prefetch &= ~L310_PREFETCH_CTRL_DATA_PREFETCH;
+	} else if (ret != -EINVAL) {
+		pr_err("L2C-310 OF prefetch-data property value is missing\n");
+	}
+
+	ret = of_property_read_u32(np, "prefetch-instr", &val);
+	if (ret == 0) {
+		if (val)
+			prefetch |= L310_PREFETCH_CTRL_INSTR_PREFETCH;
+		else
+			prefetch &= ~L310_PREFETCH_CTRL_INSTR_PREFETCH;
+	} else if (ret != -EINVAL) {
+		pr_err("L2C-310 OF prefetch-instr property value is missing\n");
+	}
+
 	l2x0_saved_regs.prefetch_ctrl = prefetch;
+
+	power = l2x0_saved_regs.pwr_ctrl |
+		L310_DYNAMIC_CLK_GATING_EN | L310_STNDBY_MODE_EN;
+
+	ret = of_property_read_u32(np, "arm,dynamic-clock-gating", &val);
+	if (!ret) {
+		if (!val)
+			power &= ~L310_DYNAMIC_CLK_GATING_EN;
+	} else if (ret != -EINVAL) {
+		pr_err("L2C-310 OF dynamic-clock-gating property value is missing or invalid\n");
+	}
+	ret = of_property_read_u32(np, "arm,standby-mode", &val);
+	if (!ret) {
+		if (!val)
+			power &= ~L310_STNDBY_MODE_EN;
+	} else if (ret != -EINVAL) {
+		pr_err("L2C-310 OF standby-mode property value is missing or invalid\n");
+	}
+
+	l2x0_saved_regs.pwr_ctrl = power;
 }
 
 static const struct l2c_init_data of_l2c310_data __initconst = {
@@ -1211,6 +1298,7 @@ static const struct l2c_init_data of_l2c310_data __initconst = {
 	.fixup = l2c310_fixup,
 	.save  = l2c310_save,
 	.configure = l2c310_configure,
+	.unlock = l2c310_unlock,
 	.outer_cache = {
 		.inv_range   = l2c210_inv_range,
 		.clean_range = l2c210_clean_range,
@@ -1240,6 +1328,7 @@ static const struct l2c_init_data of_l2c310_coherent_data __initconst = {
 	.fixup = l2c310_fixup,
 	.save  = l2c310_save,
 	.configure = l2c310_configure,
+	.unlock = l2c310_unlock,
 	.outer_cache = {
 		.inv_range   = l2c210_inv_range,
 		.clean_range = l2c210_clean_range,
@@ -1366,7 +1455,7 @@ static void aurora_save(void __iomem *base)
  * For Aurora cache in no outer mode, enable via the CP15 coprocessor
  * broadcasting of cache commands to L2.
  */
-static void __init aurora_enable_no_outer(void __iomem *base, u32 aux,
+static void __init aurora_enable_no_outer(void __iomem *base,
 	unsigned num_lock)
 {
 	u32 u;
@@ -1377,7 +1466,7 @@ static void __init aurora_enable_no_outer(void __iomem *base, u32 aux,
 
 	isb();
 
-	l2c_enable(base, aux, num_lock);
+	l2c_enable(base, num_lock);
 }
 
 static void __init aurora_fixup(void __iomem *base, u32 cache_id,
@@ -1416,6 +1505,8 @@ static const struct l2c_init_data of_aurora_with_outer_data __initconst = {
 	.enable = l2c_enable,
 	.fixup = aurora_fixup,
 	.save  = aurora_save,
+	.configure = l2c_configure,
+	.unlock = l2c_unlock,
 	.outer_cache = {
 		.inv_range   = aurora_inv_range,
 		.clean_range = aurora_clean_range,
@@ -1435,6 +1526,8 @@ static const struct l2c_init_data of_aurora_no_outer_data __initconst = {
 	.enable = aurora_enable_no_outer,
 	.fixup = aurora_fixup,
 	.save  = aurora_save,
+	.configure = l2c_configure,
+	.unlock = l2c_unlock,
 	.outer_cache = {
 		.resume      = l2c_resume,
 	},
@@ -1585,6 +1678,7 @@ static const struct l2c_init_data of_bcm_l2x0_data __initconst = {
 	.enable = l2c310_enable,
 	.save  = l2c310_save,
 	.configure = l2c310_configure,
+	.unlock = l2c310_unlock,
 	.outer_cache = {
 		.inv_range   = bcm_inv_range,
 		.clean_range = bcm_clean_range,
@@ -1608,6 +1702,7 @@ static void __init tauros3_save(void __iomem *base)
 
 static void tauros3_configure(void __iomem *base)
 {
+	l2c_configure(base);
 	writel_relaxed(l2x0_saved_regs.aux2_ctrl,
 		       base + TAUROS3_AUX2_CTRL);
 	writel_relaxed(l2x0_saved_regs.prefetch_ctrl,
@@ -1621,6 +1716,7 @@ static const struct l2c_init_data of_tauros3_data __initconst = {
 	.enable = l2c_enable,
 	.save  = tauros3_save,
 	.configure = tauros3_configure,
+	.unlock = l2c_unlock,
 	/* Tauros3 broadcasts L1 cache operations to L2 */
 	.outer_cache = {
 		.resume      = l2c_resume,
@@ -1648,6 +1744,7 @@ int __init l2x0_of_init(u32 aux_val, u32 aux_mask)
 	struct resource res;
 	u32 cache_id, old_aux;
 	u32 cache_level = 2;
+	bool nosync = false;
 
 	np = of_find_matching_node(NULL, l2x0_ids);
 	if (!np)
@@ -1686,6 +1783,8 @@ int __init l2x0_of_init(u32 aux_val, u32 aux_mask)
 	if (cache_level != 2)
 		pr_err("L2C: device tree specifies invalid cache level\n");
 
+	nosync = of_property_read_bool(np, "arm,outer-sync-disable");
+
 	/* Read back current (default) hardware configuration */
 	if (data->save)
 		data->save(l2x0_base);
@@ -1700,6 +1799,6 @@ int __init l2x0_of_init(u32 aux_val, u32 aux_mask)
 	else
 		cache_id = readl_relaxed(l2x0_base + L2X0_CACHE_ID);
 
-	return __l2c_init(data, aux_val, aux_mask, cache_id);
+	return __l2c_init(data, aux_val, aux_mask, cache_id, nosync);
 }
 #endif

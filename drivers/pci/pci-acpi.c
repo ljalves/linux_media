@@ -9,7 +9,9 @@
 
 #include <linux/delay.h>
 #include <linux/init.h>
+#include <linux/irqdomain.h>
 #include <linux/pci.h>
+#include <linux/msi.h>
 #include <linux/pci_hotplug.h>
 #include <linux/module.h>
 #include <linux/pci-aspm.h>
@@ -420,7 +422,7 @@ static int acpi_pci_set_power_state(struct pci_dev *dev, pci_power_t state)
 		[PCI_D0] = ACPI_STATE_D0,
 		[PCI_D1] = ACPI_STATE_D1,
 		[PCI_D2] = ACPI_STATE_D2,
-		[PCI_D3hot] = ACPI_STATE_D3_COLD,
+		[PCI_D3hot] = ACPI_STATE_D3_HOT,
 		[PCI_D3cold] = ACPI_STATE_D3_COLD,
 	};
 	int error = -EINVAL;
@@ -529,7 +531,7 @@ static bool acpi_pci_need_resume(struct pci_dev *dev)
 	return !!adev->power.flags.dsw_present;
 }
 
-static struct pci_platform_pm_ops acpi_pci_platform_pm = {
+static const struct pci_platform_pm_ops acpi_pci_platform_pm = {
 	.is_manageable = acpi_pci_power_manageable,
 	.set_state = acpi_pci_set_power_state,
 	.choose_state = acpi_pci_choose_state,
@@ -594,7 +596,7 @@ static struct acpi_device *acpi_pci_find_companion(struct device *dev)
 /**
  * pci_acpi_optimize_delay - optimize PCI D3 and D3cold delay from ACPI
  * @pdev: the PCI device whose delay is to be updated
- * @adev: the companion ACPI device of this PCI device
+ * @handle: ACPI handle of this device
  *
  * Update the d3_delay and d3cold_delay of a PCI device from the ACPI _DSM
  * control method of either the device itself or the PCI host bridge.
@@ -688,6 +690,46 @@ static struct acpi_bus_type acpi_pci_bus = {
 	.setup = pci_acpi_setup,
 	.cleanup = pci_acpi_cleanup,
 };
+
+
+static struct fwnode_handle *(*pci_msi_get_fwnode_cb)(struct device *dev);
+
+/**
+ * pci_msi_register_fwnode_provider - Register callback to retrieve fwnode
+ * @fn:       Callback matching a device to a fwnode that identifies a PCI
+ *            MSI domain.
+ *
+ * This should be called by irqchip driver, which is the parent of
+ * the MSI domain to provide callback interface to query fwnode.
+ */
+void
+pci_msi_register_fwnode_provider(struct fwnode_handle *(*fn)(struct device *))
+{
+	pci_msi_get_fwnode_cb = fn;
+}
+
+/**
+ * pci_host_bridge_acpi_msi_domain - Retrieve MSI domain of a PCI host bridge
+ * @bus:      The PCI host bridge bus.
+ *
+ * This function uses the callback function registered by
+ * pci_msi_register_fwnode_provider() to retrieve the irq_domain with
+ * type DOMAIN_BUS_PCI_MSI of the specified host bridge bus.
+ * This returns NULL on error or when the domain is not found.
+ */
+struct irq_domain *pci_host_bridge_acpi_msi_domain(struct pci_bus *bus)
+{
+	struct fwnode_handle *fwnode;
+
+	if (!pci_msi_get_fwnode_cb)
+		return NULL;
+
+	fwnode = pci_msi_get_fwnode_cb(&bus->dev);
+	if (!fwnode)
+		return NULL;
+
+	return irq_find_matching_fwnode(fwnode, DOMAIN_BUS_PCI_MSI);
+}
 
 static int __init acpi_pci_init(void)
 {

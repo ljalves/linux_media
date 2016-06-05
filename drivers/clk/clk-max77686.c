@@ -23,6 +23,7 @@
 #include <linux/kernel.h>
 #include <linux/slab.h>
 #include <linux/err.h>
+#include <linux/module.h>
 #include <linux/platform_device.h>
 #include <linux/mfd/max77686.h>
 #include <linux/mfd/max77686-private.h>
@@ -37,17 +38,14 @@ static struct clk_init_data max77686_clks_init[MAX77686_CLKS_NUM] = {
 	[MAX77686_CLK_AP] = {
 		.name = "32khz_ap",
 		.ops = &max_gen_clk_ops,
-		.flags = CLK_IS_ROOT,
 	},
 	[MAX77686_CLK_CP] = {
 		.name = "32khz_cp",
 		.ops = &max_gen_clk_ops,
-		.flags = CLK_IS_ROOT,
 	},
 	[MAX77686_CLK_PMIC] = {
 		.name = "32khz_pmic",
 		.ops = &max_gen_clk_ops,
-		.flags = CLK_IS_ROOT,
 	},
 };
 

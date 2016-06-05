@@ -41,7 +41,6 @@
 #error Do not #include this file directly. #include <linux/libcfs/libcfs.h> instead
 #endif
 
-
 #include <linux/bitops.h>
 #include <linux/compiler.h>
 #include <linux/ctype.h>
@@ -61,7 +60,7 @@
 #include <linux/moduleparam.h>
 #include <linux/mutex.h>
 #include <linux/notifier.h>
-#include <linux/proc_fs.h>
+#include <linux/pagemap.h>
 #include <linux/random.h>
 #include <linux/rbtree.h>
 #include <linux/rwsem.h>
@@ -85,8 +84,6 @@
 #include <stdarg.h>
 #include "linux-cpu.h"
 #include "linux-time.h"
-#include "linux-mem.h"
-
 
 #define LUSTRE_TRACE_SIZE (THREAD_SIZE >> 5)
 
@@ -121,9 +118,6 @@ do {								    \
 #define CDEBUG_STACK() (0L)
 #endif /* __x86_64__ */
 
-/* initial pid  */
-#define LUSTRE_LNET_PID	  12345
-
 #define __current_nesting_level() (0)
 
 /**
@@ -142,6 +136,5 @@ typedef long long_ptr_t;
 #ifndef WITH_WATCHDOG
 #define WITH_WATCHDOG
 #endif
-
 
 #endif /* _LINUX_LIBCFS_H */

@@ -27,7 +27,7 @@
 #define FE_SUPPORTED(fe) (defined(CONFIG_DVB_##fe) || \
 	(defined(CONFIG_DVB_##fe##_MODULE) && defined(MODULE)))
 
-#if FE_SUPPORTED(BCM3510) || FE_SUPPORTED(CX24120)
+#if FE_SUPPORTED(BCM3510) || (FE_SUPPORTED(CX24120) && FE_SUPPORTED(ISL6421))
 static int flexcop_fe_request_firmware(struct dvb_frontend *fe,
 	const struct firmware **fw, char *name)
 {
@@ -38,8 +38,9 @@ static int flexcop_fe_request_firmware(struct dvb_frontend *fe,
 #endif
 
 /* lnb control */
-#if FE_SUPPORTED(MT312) || FE_SUPPORTED(STV0299)
-static int flexcop_set_voltage(struct dvb_frontend *fe, fe_sec_voltage_t voltage)
+#if (FE_SUPPORTED(MT312) || FE_SUPPORTED(STV0299)) && FE_SUPPORTED(PLL)
+static int flexcop_set_voltage(struct dvb_frontend *fe,
+			       enum fe_sec_voltage voltage)
 {
 	struct flexcop_device *fc = fe->dvb->priv;
 	flexcop_ibi_value v;
@@ -67,7 +68,7 @@ static int flexcop_set_voltage(struct dvb_frontend *fe, fe_sec_voltage_t voltage
 #endif
 
 #if FE_SUPPORTED(S5H1420) || FE_SUPPORTED(STV0299) || FE_SUPPORTED(MT312)
-static int flexcop_sleep(struct dvb_frontend* fe)
+static int __maybe_unused flexcop_sleep(struct dvb_frontend* fe)
 {
 	struct flexcop_device *fc = fe->dvb->priv;
 	if (fc->fe_sleep)
@@ -78,7 +79,7 @@ static int flexcop_sleep(struct dvb_frontend* fe)
 
 /* SkyStar2 DVB-S rev 2.3 */
 #if FE_SUPPORTED(MT312) && FE_SUPPORTED(PLL)
-static int flexcop_set_tone(struct dvb_frontend *fe, fe_sec_tone_mode_t tone)
+static int flexcop_set_tone(struct dvb_frontend *fe, enum fe_sec_tone_mode tone)
 {
 /* u16 wz_half_period_for_45_mhz[] = { 0x01ff, 0x0154, 0x00ff, 0x00cc }; */
 	struct flexcop_device *fc = fe->dvb->priv;
@@ -157,7 +158,7 @@ static int flexcop_diseqc_send_master_cmd(struct dvb_frontend *fe,
 }
 
 static int flexcop_diseqc_send_burst(struct dvb_frontend *fe,
-	fe_sec_mini_cmd_t minicmd)
+				     enum fe_sec_mini_cmd minicmd)
 {
 	return flexcop_send_diseqc_msg(fe, 0, NULL, minicmd);
 }
@@ -650,6 +651,9 @@ static int skystarS2_rev33_attach(struct flexcop_device *fc,
 		return 0;
 	}
 	info("ISL6421 successfully attached.");
+
+	if (fc->has_32_hw_pid_filter)
+		fc->skip_6_hw_pid_filter = 1;
 
 	return 1;
 }

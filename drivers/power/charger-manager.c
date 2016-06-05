@@ -619,7 +619,7 @@ static int cm_get_battery_temperature(struct charger_manager *cm,
 
 #ifdef CONFIG_THERMAL
 	if (cm->tzd_batt) {
-		ret = thermal_zone_get_temp(cm->tzd_batt, (unsigned long *)temp);
+		ret = thermal_zone_get_temp(cm->tzd_batt, temp);
 		if (!ret)
 			/* Calibrate temperature unit */
 			*temp /= 100;
@@ -1581,8 +1581,10 @@ static struct charger_desc *of_cm_parse_desc(struct device *dev)
 				cables = devm_kzalloc(dev, sizeof(*cables)
 						* chg_regs->num_cables,
 						GFP_KERNEL);
-				if (!cables)
+				if (!cables) {
+					of_node_put(child);
 					return ERR_PTR(-ENOMEM);
+				}
 
 				chg_regs->cables = cables;
 
@@ -1768,7 +1770,8 @@ static int charger_manager_probe(struct platform_device *pdev)
 
 	INIT_DELAYED_WORK(&cm->fullbatt_vchk_work, fullbatt_vchk);
 
-	cm->charger_psy = power_supply_register(NULL, &cm->charger_psy_desc,
+	cm->charger_psy = power_supply_register(&pdev->dev,
+						&cm->charger_psy_desc,
 						&psy_cfg);
 	if (IS_ERR(cm->charger_psy)) {
 		dev_err(&pdev->dev, "Cannot register charger-manager with name \"%s\"\n",
@@ -2017,27 +2020,6 @@ static void __exit charger_manager_cleanup(void)
 module_exit(charger_manager_cleanup);
 
 /**
- * find_power_supply - find the associated power_supply of charger
- * @cm: the Charger Manager representing the battery
- * @psy: pointer to instance of charger's power_supply
- */
-static bool find_power_supply(struct charger_manager *cm,
-			struct power_supply *psy)
-{
-	int i;
-	bool found = false;
-
-	for (i = 0; cm->desc->psy_charger_stat[i]; i++) {
-		if (!strcmp(psy->desc->name, cm->desc->psy_charger_stat[i])) {
-			found = true;
-			break;
-		}
-	}
-
-	return found;
-}
-
-/**
  * cm_notify_event - charger driver notify Charger Manager of charger event
  * @psy: pointer to instance of charger's power_supply
  * @type: type of charger event
@@ -2054,9 +2036,11 @@ void cm_notify_event(struct power_supply *psy, enum cm_event_types type,
 
 	mutex_lock(&cm_list_mtx);
 	list_for_each_entry(cm, &cm_list, entry) {
-		found_power_supply = find_power_supply(cm, psy);
-		if (found_power_supply)
+		if (match_string(cm->desc->psy_charger_stat, -1,
+				 psy->desc->name) >= 0) {
+			found_power_supply = true;
 			break;
+		}
 	}
 	mutex_unlock(&cm_list_mtx);
 

@@ -130,18 +130,18 @@
 #define SAHARA_REG_IDAR		0x20
 
 struct sahara_hw_desc {
-	u32		hdr;
-	u32		len1;
-	dma_addr_t	p1;
-	u32		len2;
-	dma_addr_t	p2;
-	dma_addr_t	next;
+	u32	hdr;
+	u32	len1;
+	u32	p1;
+	u32	len2;
+	u32	p2;
+	u32	next;
 };
 
 struct sahara_hw_link {
-	u32		len;
-	dma_addr_t	p;
-	dma_addr_t	next;
+	u32	len;
+	u32	p;
+	u32	next;
 };
 
 struct sahara_ctx {
@@ -173,7 +173,6 @@ struct sahara_aes_reqctx {
  * @sg_in_idx: number of hw links
  * @in_sg: scatterlist for input data
  * @in_sg_chain: scatterlists for chained input data
- * @in_sg_chained: specifies if chained scatterlists are used or not
  * @total: total number of bytes for transfer
  * @last: is this the last block
  * @first: is this the first block
@@ -183,7 +182,6 @@ struct sahara_sha_reqctx {
 	u8			buf[SAHARA_MAX_SHA_BLOCK_SIZE];
 	u8			rembuf[SAHARA_MAX_SHA_BLOCK_SIZE];
 	u8			context[SHA256_DIGEST_SIZE + 4];
-	struct mutex		mutex;
 	unsigned int		mode;
 	unsigned int		digest_size;
 	unsigned int		context_size;
@@ -191,7 +189,6 @@ struct sahara_sha_reqctx {
 	unsigned int		sg_in_idx;
 	struct scatterlist	*in_sg;
 	struct scatterlist	in_sg_chain[2];
-	bool			in_sg_chained;
 	size_t			total;
 	unsigned int		last;
 	unsigned int		first;
@@ -230,9 +227,9 @@ struct sahara_dev {
 
 	size_t			total;
 	struct scatterlist	*in_sg;
-	unsigned int		nb_in_sg;
+	int		nb_in_sg;
 	struct scatterlist	*out_sg;
-	unsigned int		nb_out_sg;
+	int		nb_out_sg;
 
 	u32			error;
 };
@@ -274,31 +271,7 @@ static u32 sahara_aes_data_link_hdr(struct sahara_dev *dev)
 			SAHARA_HDR_CHA_SKHA | SAHARA_HDR_PARITY_BIT;
 }
 
-static int sahara_sg_length(struct scatterlist *sg,
-			    unsigned int total)
-{
-	int sg_nb;
-	unsigned int len;
-	struct scatterlist *sg_list;
-
-	sg_nb = 0;
-	sg_list = sg;
-
-	while (total) {
-		len = min(sg_list->length, total);
-
-		sg_nb++;
-		total -= len;
-
-		sg_list = sg_next(sg_list);
-		if (!sg_list)
-			total = 0;
-	}
-
-	return sg_nb;
-}
-
-static char *sahara_err_src[16] = {
+static const char *sahara_err_src[16] = {
 	"No error",
 	"Header error",
 	"Descriptor length error",
@@ -317,14 +290,14 @@ static char *sahara_err_src[16] = {
 	"DMA error"
 };
 
-static char *sahara_err_dmasize[4] = {
+static const char *sahara_err_dmasize[4] = {
 	"Byte transfer",
 	"Half-word transfer",
 	"Word transfer",
 	"Reserved"
 };
 
-static char *sahara_err_dmasrc[8] = {
+static const char *sahara_err_dmasrc[8] = {
 	"No error",
 	"AHB bus error",
 	"Internal IP bus error",
@@ -335,7 +308,7 @@ static char *sahara_err_dmasrc[8] = {
 	"DMA HW error"
 };
 
-static char *sahara_cha_errsrc[12] = {
+static const char *sahara_cha_errsrc[12] = {
 	"Input buffer non-empty",
 	"Illegal address",
 	"Illegal mode",
@@ -350,7 +323,7 @@ static char *sahara_cha_errsrc[12] = {
 	"Reserved"
 };
 
-static char *sahara_cha_err[4] = { "No error", "SKHA", "MDHA", "RNG" };
+static const char *sahara_cha_err[4] = { "No error", "SKHA", "MDHA", "RNG" };
 
 static void sahara_decode_error(struct sahara_dev *dev, unsigned int error)
 {
@@ -380,7 +353,7 @@ static void sahara_decode_error(struct sahara_dev *dev, unsigned int error)
 	dev_err(dev->device, "\n");
 }
 
-static char *sahara_state[4] = { "Idle", "Busy", "Error", "HW Fault" };
+static const char *sahara_state[4] = { "Idle", "Busy", "Error", "HW Fault" };
 
 static void sahara_decode_status(struct sahara_dev *dev, unsigned int status)
 {
@@ -442,8 +415,8 @@ static void sahara_dump_descriptors(struct sahara_dev *dev)
 		return;
 
 	for (i = 0; i < SAHARA_MAX_HW_DESC; i++) {
-		dev_dbg(dev->device, "Descriptor (%d) (0x%08x):\n",
-			i, dev->hw_phys_desc[i]);
+		dev_dbg(dev->device, "Descriptor (%d) (%pad):\n",
+			i, &dev->hw_phys_desc[i]);
 		dev_dbg(dev->device, "\thdr = 0x%08x\n", dev->hw_desc[i]->hdr);
 		dev_dbg(dev->device, "\tlen1 = %u\n", dev->hw_desc[i]->len1);
 		dev_dbg(dev->device, "\tp1 = 0x%08x\n", dev->hw_desc[i]->p1);
@@ -463,8 +436,8 @@ static void sahara_dump_links(struct sahara_dev *dev)
 		return;
 
 	for (i = 0; i < SAHARA_MAX_HW_LINK; i++) {
-		dev_dbg(dev->device, "Link (%d) (0x%08x):\n",
-			i, dev->hw_phys_link[i]);
+		dev_dbg(dev->device, "Link (%d) (%pad):\n",
+			i, &dev->hw_phys_link[i]);
 		dev_dbg(dev->device, "\tlen = %u\n", dev->hw_link[i]->len);
 		dev_dbg(dev->device, "\tp = 0x%08x\n", dev->hw_link[i]->p);
 		dev_dbg(dev->device, "\tnext = 0x%08x\n",
@@ -502,8 +475,16 @@ static int sahara_hw_descriptor_create(struct sahara_dev *dev)
 		idx++;
 	}
 
-	dev->nb_in_sg = sahara_sg_length(dev->in_sg, dev->total);
-	dev->nb_out_sg = sahara_sg_length(dev->out_sg, dev->total);
+	dev->nb_in_sg = sg_nents_for_len(dev->in_sg, dev->total);
+	if (dev->nb_in_sg < 0) {
+		dev_err(dev->device, "Invalid numbers of src SG.\n");
+		return dev->nb_in_sg;
+	}
+	dev->nb_out_sg = sg_nents_for_len(dev->out_sg, dev->total);
+	if (dev->nb_out_sg < 0) {
+		dev_err(dev->device, "Invalid numbers of dst SG.\n");
+		return dev->nb_out_sg;
+	}
 	if ((dev->nb_in_sg + dev->nb_out_sg) > SAHARA_MAX_HW_LINK) {
 		dev_err(dev->device, "not enough hw links (%d)\n",
 			dev->nb_in_sg + dev->nb_out_sg);
@@ -818,45 +799,30 @@ static int sahara_sha_hw_links_create(struct sahara_dev *dev,
 
 	dev->in_sg = rctx->in_sg;
 
-	dev->nb_in_sg = sahara_sg_length(dev->in_sg, rctx->total);
+	dev->nb_in_sg = sg_nents_for_len(dev->in_sg, rctx->total);
+	if (dev->nb_in_sg < 0) {
+		dev_err(dev->device, "Invalid numbers of src SG.\n");
+		return dev->nb_in_sg;
+	}
 	if ((dev->nb_in_sg) > SAHARA_MAX_HW_LINK) {
 		dev_err(dev->device, "not enough hw links (%d)\n",
 			dev->nb_in_sg + dev->nb_out_sg);
 		return -EINVAL;
 	}
 
-	if (rctx->in_sg_chained) {
-		i = start;
-		sg = dev->in_sg;
-		while (sg) {
-			ret = dma_map_sg(dev->device, sg, 1,
-					 DMA_TO_DEVICE);
-			if (!ret)
-				return -EFAULT;
+	sg = dev->in_sg;
+	ret = dma_map_sg(dev->device, dev->in_sg, dev->nb_in_sg, DMA_TO_DEVICE);
+	if (!ret)
+		return -EFAULT;
 
-			dev->hw_link[i]->len = sg->length;
-			dev->hw_link[i]->p = sg->dma_address;
+	for (i = start; i < dev->nb_in_sg + start; i++) {
+		dev->hw_link[i]->len = sg->length;
+		dev->hw_link[i]->p = sg->dma_address;
+		if (i == (dev->nb_in_sg + start - 1)) {
+			dev->hw_link[i]->next = 0;
+		} else {
 			dev->hw_link[i]->next = dev->hw_phys_link[i + 1];
 			sg = sg_next(sg);
-			i += 1;
-		}
-		dev->hw_link[i-1]->next = 0;
-	} else {
-		sg = dev->in_sg;
-		ret = dma_map_sg(dev->device, dev->in_sg, dev->nb_in_sg,
-				 DMA_TO_DEVICE);
-		if (!ret)
-			return -EFAULT;
-
-		for (i = start; i < dev->nb_in_sg + start; i++) {
-			dev->hw_link[i]->len = sg->length;
-			dev->hw_link[i]->p = sg->dma_address;
-			if (i == (dev->nb_in_sg + start - 1)) {
-				dev->hw_link[i]->next = 0;
-			} else {
-				dev->hw_link[i]->next = dev->hw_phys_link[i + 1];
-				sg = sg_next(sg);
-			}
 		}
 	}
 
@@ -999,12 +965,11 @@ static int sahara_sha_prepare_request(struct ahash_request *req)
 		sg_init_table(rctx->in_sg_chain, 2);
 		sg_set_buf(rctx->in_sg_chain, rctx->rembuf, rctx->buf_cnt);
 
-		scatterwalk_sg_chain(rctx->in_sg_chain, 2, req->src);
+		sg_chain(rctx->in_sg_chain, 2, req->src);
 
 		rctx->total = req->nbytes + rctx->buf_cnt;
 		rctx->in_sg = rctx->in_sg_chain;
 
-		rctx->in_sg_chained = true;
 		req->src = rctx->in_sg_chain;
 	/* only data from previous operation */
 	} else if (rctx->buf_cnt) {
@@ -1015,36 +980,17 @@ static int sahara_sha_prepare_request(struct ahash_request *req)
 		/* buf was copied into rembuf above */
 		sg_init_one(rctx->in_sg, rctx->rembuf, rctx->buf_cnt);
 		rctx->total = rctx->buf_cnt;
-		rctx->in_sg_chained = false;
 	/* no data from previous operation */
 	} else {
 		rctx->in_sg = req->src;
 		rctx->total = req->nbytes;
 		req->src = rctx->in_sg;
-		rctx->in_sg_chained = false;
 	}
 
 	/* on next call, we only have the remaining data in the buffer */
 	rctx->buf_cnt = hash_later;
 
 	return -EINPROGRESS;
-}
-
-static void sahara_sha_unmap_sg(struct sahara_dev *dev,
-				struct sahara_sha_reqctx *rctx)
-{
-	struct scatterlist *sg;
-
-	if (rctx->in_sg_chained) {
-		sg = dev->in_sg;
-		while (sg) {
-			dma_unmap_sg(dev->device, sg, 1, DMA_TO_DEVICE);
-			sg = sg_next(sg);
-		}
-	} else {
-		dma_unmap_sg(dev->device, dev->in_sg, dev->nb_in_sg,
-			DMA_TO_DEVICE);
-	}
 }
 
 static int sahara_sha_process(struct ahash_request *req)
@@ -1086,7 +1032,8 @@ static int sahara_sha_process(struct ahash_request *req)
 	}
 
 	if (rctx->sg_in_idx)
-		sahara_sha_unmap_sg(dev, rctx);
+		dma_unmap_sg(dev->device, dev->in_sg, dev->nb_in_sg,
+			     DMA_TO_DEVICE);
 
 	memcpy(rctx->context, dev->context_base, rctx->context_size);
 
@@ -1148,7 +1095,6 @@ static int sahara_sha_enqueue(struct ahash_request *req, int last)
 	if (!req->nbytes && !last)
 		return 0;
 
-	mutex_lock(&rctx->mutex);
 	rctx->last = last;
 
 	if (!rctx->active) {
@@ -1161,7 +1107,6 @@ static int sahara_sha_enqueue(struct ahash_request *req, int last)
 	mutex_unlock(&dev->queue_mutex);
 
 	wake_up_process(dev->kthread);
-	mutex_unlock(&rctx->mutex);
 
 	return ret;
 }
@@ -1188,8 +1133,6 @@ static int sahara_sha_init(struct ahash_request *req)
 
 	rctx->context_size = rctx->digest_size + 4;
 	rctx->active = 0;
-
-	mutex_init(&rctx->mutex);
 
 	return 0;
 }
@@ -1219,26 +1162,18 @@ static int sahara_sha_digest(struct ahash_request *req)
 
 static int sahara_sha_export(struct ahash_request *req, void *out)
 {
-	struct crypto_ahash *ahash = crypto_ahash_reqtfm(req);
-	struct sahara_ctx *ctx = crypto_ahash_ctx(ahash);
 	struct sahara_sha_reqctx *rctx = ahash_request_ctx(req);
 
-	memcpy(out, ctx, sizeof(struct sahara_ctx));
-	memcpy(out + sizeof(struct sahara_sha_reqctx), rctx,
-	       sizeof(struct sahara_sha_reqctx));
+	memcpy(out, rctx, sizeof(struct sahara_sha_reqctx));
 
 	return 0;
 }
 
 static int sahara_sha_import(struct ahash_request *req, const void *in)
 {
-	struct crypto_ahash *ahash = crypto_ahash_reqtfm(req);
-	struct sahara_ctx *ctx = crypto_ahash_ctx(ahash);
 	struct sahara_sha_reqctx *rctx = ahash_request_ctx(req);
 
-	memcpy(ctx, in, sizeof(struct sahara_ctx));
-	memcpy(rctx, in + sizeof(struct sahara_sha_reqctx),
-	       sizeof(struct sahara_sha_reqctx));
+	memcpy(rctx, in, sizeof(struct sahara_sha_reqctx));
 
 	return 0;
 }
@@ -1324,6 +1259,7 @@ static struct ahash_alg sha_v3_algs[] = {
 	.export		= sahara_sha_export,
 	.import		= sahara_sha_import,
 	.halg.digestsize	= SHA1_DIGEST_SIZE,
+	.halg.statesize         = sizeof(struct sahara_sha_reqctx),
 	.halg.base	= {
 		.cra_name		= "sha1",
 		.cra_driver_name	= "sahara-sha1",
@@ -1351,6 +1287,7 @@ static struct ahash_alg sha_v4_algs[] = {
 	.export		= sahara_sha_export,
 	.import		= sahara_sha_import,
 	.halg.digestsize	= SHA256_DIGEST_SIZE,
+	.halg.statesize         = sizeof(struct sahara_sha_reqctx),
 	.halg.base	= {
 		.cra_name		= "sha256",
 		.cra_driver_name	= "sahara-sha256",
@@ -1516,7 +1453,7 @@ static int sahara_probe(struct platform_device *pdev)
 	}
 
 	/* Allocate HW descriptors */
-	dev->hw_desc[0] = dma_alloc_coherent(&pdev->dev,
+	dev->hw_desc[0] = dmam_alloc_coherent(&pdev->dev,
 			SAHARA_MAX_HW_DESC * sizeof(struct sahara_hw_desc),
 			&dev->hw_phys_desc[0], GFP_KERNEL);
 	if (!dev->hw_desc[0]) {
@@ -1528,34 +1465,31 @@ static int sahara_probe(struct platform_device *pdev)
 				sizeof(struct sahara_hw_desc);
 
 	/* Allocate space for iv and key */
-	dev->key_base = dma_alloc_coherent(&pdev->dev, 2 * AES_KEYSIZE_128,
+	dev->key_base = dmam_alloc_coherent(&pdev->dev, 2 * AES_KEYSIZE_128,
 				&dev->key_phys_base, GFP_KERNEL);
 	if (!dev->key_base) {
 		dev_err(&pdev->dev, "Could not allocate memory for key\n");
-		err = -ENOMEM;
-		goto err_key;
+		return -ENOMEM;
 	}
 	dev->iv_base = dev->key_base + AES_KEYSIZE_128;
 	dev->iv_phys_base = dev->key_phys_base + AES_KEYSIZE_128;
 
 	/* Allocate space for context: largest digest + message length field */
-	dev->context_base = dma_alloc_coherent(&pdev->dev,
+	dev->context_base = dmam_alloc_coherent(&pdev->dev,
 					SHA256_DIGEST_SIZE + 4,
 					&dev->context_phys_base, GFP_KERNEL);
 	if (!dev->context_base) {
 		dev_err(&pdev->dev, "Could not allocate memory for MDHA context\n");
-		err = -ENOMEM;
-		goto err_key;
+		return -ENOMEM;
 	}
 
 	/* Allocate space for HW links */
-	dev->hw_link[0] = dma_alloc_coherent(&pdev->dev,
+	dev->hw_link[0] = dmam_alloc_coherent(&pdev->dev,
 			SAHARA_MAX_HW_LINK * sizeof(struct sahara_hw_link),
 			&dev->hw_phys_link[0], GFP_KERNEL);
 	if (!dev->hw_link[0]) {
 		dev_err(&pdev->dev, "Could not allocate hw links\n");
-		err = -ENOMEM;
-		goto err_link;
+		return -ENOMEM;
 	}
 	for (i = 1; i < SAHARA_MAX_HW_LINK; i++) {
 		dev->hw_phys_link[i] = dev->hw_phys_link[i - 1] +
@@ -1572,14 +1506,17 @@ static int sahara_probe(struct platform_device *pdev)
 
 	dev->kthread = kthread_run(sahara_queue_manage, dev, "sahara_crypto");
 	if (IS_ERR(dev->kthread)) {
-		err = PTR_ERR(dev->kthread);
-		goto err_link;
+		return PTR_ERR(dev->kthread);
 	}
 
 	init_completion(&dev->dma_completion);
 
-	clk_prepare_enable(dev->clk_ipg);
-	clk_prepare_enable(dev->clk_ahb);
+	err = clk_prepare_enable(dev->clk_ipg);
+	if (err)
+		return err;
+	err = clk_prepare_enable(dev->clk_ahb);
+	if (err)
+		goto clk_ipg_disable;
 
 	version = sahara_read(dev, SAHARA_REG_VERSION);
 	if (of_device_is_compatible(pdev->dev.of_node, "fsl,imx27-sahara")) {
@@ -1616,24 +1553,11 @@ static int sahara_probe(struct platform_device *pdev)
 	return 0;
 
 err_algs:
-	dma_free_coherent(&pdev->dev,
-			  SAHARA_MAX_HW_LINK * sizeof(struct sahara_hw_link),
-			  dev->hw_link[0], dev->hw_phys_link[0]);
-	clk_disable_unprepare(dev->clk_ipg);
-	clk_disable_unprepare(dev->clk_ahb);
 	kthread_stop(dev->kthread);
 	dev_ptr = NULL;
-err_link:
-	dma_free_coherent(&pdev->dev,
-			  2 * AES_KEYSIZE_128,
-			  dev->key_base, dev->key_phys_base);
-	dma_free_coherent(&pdev->dev,
-			  SHA256_DIGEST_SIZE,
-			  dev->context_base, dev->context_phys_base);
-err_key:
-	dma_free_coherent(&pdev->dev,
-			  SAHARA_MAX_HW_DESC * sizeof(struct sahara_hw_desc),
-			  dev->hw_desc[0], dev->hw_phys_desc[0]);
+	clk_disable_unprepare(dev->clk_ahb);
+clk_ipg_disable:
+	clk_disable_unprepare(dev->clk_ipg);
 
 	return err;
 }
@@ -1641,16 +1565,6 @@ err_key:
 static int sahara_remove(struct platform_device *pdev)
 {
 	struct sahara_dev *dev = platform_get_drvdata(pdev);
-
-	dma_free_coherent(&pdev->dev,
-			  SAHARA_MAX_HW_LINK * sizeof(struct sahara_hw_link),
-			  dev->hw_link[0], dev->hw_phys_link[0]);
-	dma_free_coherent(&pdev->dev,
-			  2 * AES_KEYSIZE_128,
-			  dev->key_base, dev->key_phys_base);
-	dma_free_coherent(&pdev->dev,
-			  SAHARA_MAX_HW_DESC * sizeof(struct sahara_hw_desc),
-			  dev->hw_desc[0], dev->hw_phys_desc[0]);
 
 	kthread_stop(dev->kthread);
 

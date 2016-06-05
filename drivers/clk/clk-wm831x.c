@@ -12,7 +12,6 @@
  *
  */
 
-#include <linux/clk.h>
 #include <linux/clk-provider.h>
 #include <linux/delay.h>
 #include <linux/module.h>
@@ -59,7 +58,6 @@ static const struct clk_ops wm831x_xtal_ops = {
 static struct clk_init_data wm831x_xtal_init = {
 	.name = "xtal",
 	.ops = &wm831x_xtal_ops,
-	.flags = CLK_IS_ROOT,
 };
 
 static const unsigned long wm831x_fll_auto_rates[] = {

@@ -25,11 +25,6 @@
 static struct vfsmount *mount;
 static int mount_count;
 
-static inline int positive(struct dentry *dentry)
-{
-	return d_really_is_positive(dentry) && !d_unhashed(dentry);
-}
-
 static int fill_super(struct super_block *sb, void *data, int silent)
 {
 	static struct tree_descr files[] = {{""}};
@@ -104,7 +99,7 @@ struct dentry *securityfs_create_file(const char *name, umode_t mode,
 
 	dir = d_inode(parent);
 
-	mutex_lock(&dir->i_mutex);
+	inode_lock(dir);
 	dentry = lookup_one_len(name, parent, strlen(name));
 	if (IS_ERR(dentry))
 		goto out;
@@ -134,14 +129,14 @@ struct dentry *securityfs_create_file(const char *name, umode_t mode,
 	}
 	d_instantiate(dentry, inode);
 	dget(dentry);
-	mutex_unlock(&dir->i_mutex);
+	inode_unlock(dir);
 	return dentry;
 
 out1:
 	dput(dentry);
 	dentry = ERR_PTR(error);
 out:
-	mutex_unlock(&dir->i_mutex);
+	inode_unlock(dir);
 	simple_release_fs(&mount, &mount_count);
 	return dentry;
 }
@@ -200,34 +195,30 @@ void securityfs_remove(struct dentry *dentry)
 	if (!parent || d_really_is_negative(parent))
 		return;
 
-	mutex_lock(&d_inode(parent)->i_mutex);
-	if (positive(dentry)) {
-		if (d_really_is_positive(dentry)) {
-			if (d_is_dir(dentry))
-				simple_rmdir(d_inode(parent), dentry);
-			else
-				simple_unlink(d_inode(parent), dentry);
-			dput(dentry);
-		}
+	inode_lock(d_inode(parent));
+	if (simple_positive(dentry)) {
+		if (d_is_dir(dentry))
+			simple_rmdir(d_inode(parent), dentry);
+		else
+			simple_unlink(d_inode(parent), dentry);
+		dput(dentry);
 	}
-	mutex_unlock(&d_inode(parent)->i_mutex);
+	inode_unlock(d_inode(parent));
 	simple_release_fs(&mount, &mount_count);
 }
 EXPORT_SYMBOL_GPL(securityfs_remove);
-
-static struct kobject *security_kobj;
 
 static int __init securityfs_init(void)
 {
 	int retval;
 
-	security_kobj = kobject_create_and_add("security", kernel_kobj);
-	if (!security_kobj)
-		return -EINVAL;
+	retval = sysfs_create_mount_point(kernel_kobj, "security");
+	if (retval)
+		return retval;
 
 	retval = register_filesystem(&fs_type);
 	if (retval)
-		kobject_put(security_kobj);
+		sysfs_remove_mount_point(kernel_kobj, "security");
 	return retval;
 }
 

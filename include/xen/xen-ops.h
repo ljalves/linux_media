@@ -5,6 +5,7 @@
 #include <linux/notifier.h>
 #include <linux/efi.h>
 #include <asm/xen/interface.h>
+#include <xen/interface/vcpu.h>
 
 DECLARE_PER_CPU(struct vcpu_info *, xen_vcpu);
 
@@ -18,6 +19,10 @@ void xen_arch_suspend(void);
 void xen_resume_notifier_register(struct notifier_block *nb);
 void xen_resume_notifier_unregister(struct notifier_block *nb);
 
+bool xen_vcpu_stolen(int vcpu);
+void xen_setup_runstate_info(int cpu);
+void xen_get_runstate_snapshot(struct vcpu_runstate_info *res);
+
 int xen_setup_shutdown_event(void);
 
 extern unsigned long *xen_contiguous_bitmap;
@@ -30,7 +35,7 @@ void xen_destroy_contiguous_region(phys_addr_t pstart, unsigned int order);
 struct vm_area_struct;
 
 /*
- * xen_remap_domain_mfn_array() - map an array of foreign frames
+ * xen_remap_domain_gfn_array() - map an array of foreign frames
  * @vma:     VMA to map the pages into
  * @addr:    Address at which to map the pages
  * @gfn:     Array of GFNs to map
@@ -46,14 +51,14 @@ struct vm_area_struct;
  * Returns the number of successfully mapped frames, or a -ve error
  * code.
  */
-int xen_remap_domain_mfn_array(struct vm_area_struct *vma,
+int xen_remap_domain_gfn_array(struct vm_area_struct *vma,
 			       unsigned long addr,
 			       xen_pfn_t *gfn, int nr,
 			       int *err_ptr, pgprot_t prot,
 			       unsigned domid,
 			       struct page **pages);
 
-/* xen_remap_domain_mfn_range() - map a range of foreign frames
+/* xen_remap_domain_gfn_range() - map a range of foreign frames
  * @vma:     VMA to map the pages into
  * @addr:    Address at which to map the pages
  * @gfn:     First GFN to map.
@@ -65,12 +70,12 @@ int xen_remap_domain_mfn_array(struct vm_area_struct *vma,
  * Returns the number of successfully mapped frames, or a -ve error
  * code.
  */
-int xen_remap_domain_mfn_range(struct vm_area_struct *vma,
+int xen_remap_domain_gfn_range(struct vm_area_struct *vma,
 			       unsigned long addr,
 			       xen_pfn_t gfn, int nr,
 			       pgprot_t prot, unsigned domid,
 			       struct page **pages);
-int xen_unmap_domain_mfn_range(struct vm_area_struct *vma,
+int xen_unmap_domain_gfn_range(struct vm_area_struct *vma,
 			       int numpgs, struct page **pages);
 int xen_xlate_remap_gfn_array(struct vm_area_struct *vma,
 			      unsigned long addr,

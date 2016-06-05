@@ -791,7 +791,6 @@ static void tlan_get_drvinfo(struct net_device *dev,
 			sizeof(info->bus_info));
 	else
 		strlcpy(info->bus_info, "EISA",	sizeof(info->bus_info));
-	info->eedump_len = TLAN_EEPROM_SIZE;
 }
 
 static int tlan_get_eeprom_len(struct net_device *dev)
@@ -1008,7 +1007,7 @@ static void tlan_tx_timeout(struct net_device *dev)
 	tlan_reset_lists(dev);
 	tlan_read_and_clear_stats(dev, TLAN_IGNORE);
 	tlan_reset_adapter(dev);
-	dev->trans_start = jiffies; /* prevent tx timeout */
+	netif_trans_update(dev); /* prevent tx timeout */
 	netif_wake_queue(dev);
 
 }

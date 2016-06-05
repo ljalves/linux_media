@@ -52,12 +52,15 @@
 #include <linux/errno.h>
 #include <linux/init.h>
 #include <linux/if_ether.h>
+#include <linux/of_net.h>
+#include <linux/pci.h>
 #include <net/dst.h>
 #include <net/arp.h>
 #include <net/sock.h>
 #include <net/ipv6.h>
 #include <net/ip.h>
 #include <net/dsa.h>
+#include <net/flow_dissector.h>
 #include <linux/uaccess.h>
 
 __setup("ether=", netdev_boot_setup);
@@ -113,7 +116,7 @@ int eth_header(struct sk_buff *skb, struct net_device *dev,
 EXPORT_SYMBOL(eth_header);
 
 /**
- * eth_get_headlen - determine the the length of header for an ethernet frame
+ * eth_get_headlen - determine the length of header for an ethernet frame
  * @data: pointer to start of frame
  * @len: total length of frame
  *
@@ -122,17 +125,18 @@ EXPORT_SYMBOL(eth_header);
  */
 u32 eth_get_headlen(void *data, unsigned int len)
 {
+	const unsigned int flags = FLOW_DISSECTOR_F_PARSE_1ST_FRAG;
 	const struct ethhdr *eth = (const struct ethhdr *)data;
 	struct flow_keys keys;
 
 	/* this should never happen, but better safe than sorry */
-	if (len < sizeof(*eth))
+	if (unlikely(len < sizeof(*eth)))
 		return len;
 
 	/* parse any remaining L2/L3 headers, check for L4 */
-	if (!__skb_flow_dissect(NULL, &keys, data,
-				eth->h_proto, sizeof(*eth), len))
-		return max_t(u32, keys.thoff, sizeof(*eth));
+	if (!skb_flow_dissect_flow_keys_buf(&keys, data, eth->h_proto,
+					    sizeof(*eth), len, flags))
+		return max_t(u32, keys.control.thoff, sizeof(*eth));
 
 	/* parse for any L4 headers */
 	return min_t(u32, __skb_get_poff(NULL, data, &keys, len), len);
@@ -156,10 +160,11 @@ __be16 eth_type_trans(struct sk_buff *skb, struct net_device *dev)
 
 	skb->dev = dev;
 	skb_reset_mac_header(skb);
-	skb_pull_inline(skb, ETH_HLEN);
-	eth = eth_hdr(skb);
 
-	if (unlikely(is_multicast_ether_addr(eth->h_dest))) {
+	eth = (struct ethhdr *)skb->data;
+	skb_pull_inline(skb, ETH_HLEN);
+
+	if (unlikely(is_multicast_ether_addr_64bits(eth->h_dest))) {
 		if (ether_addr_equal_64bits(eth->h_dest, dev->broadcast))
 			skb->pkt_type = PACKET_BROADCAST;
 		else
@@ -178,7 +183,7 @@ __be16 eth_type_trans(struct sk_buff *skb, struct net_device *dev)
 	if (unlikely(netdev_uses_dsa(dev)))
 		return htons(ETH_P_XDSA);
 
-	if (likely(ntohs(eth->h_proto) >= ETH_P_802_3_MIN))
+	if (likely(eth_proto_is_802_3(eth->h_proto)))
 		return eth->h_proto;
 
 	/*
@@ -468,6 +473,7 @@ EXPORT_SYMBOL(eth_gro_complete);
 
 static struct packet_offload eth_packet_offload __read_mostly = {
 	.type = cpu_to_be16(ETH_P_TEB),
+	.priority = 10,
 	.callbacks = {
 		.gro_receive = eth_gro_receive,
 		.gro_complete = eth_gro_complete,
@@ -482,3 +488,32 @@ static int __init eth_offload_init(void)
 }
 
 fs_initcall(eth_offload_init);
+
+unsigned char * __weak arch_get_platform_mac_address(void)
+{
+	return NULL;
+}
+
+int eth_platform_get_mac_address(struct device *dev, u8 *mac_addr)
+{
+	const unsigned char *addr;
+	struct device_node *dp;
+
+	if (dev_is_pci(dev))
+		dp = pci_device_to_OF_node(to_pci_dev(dev));
+	else
+		dp = dev->of_node;
+
+	addr = NULL;
+	if (dp)
+		addr = of_get_mac_address(dp);
+	if (!addr)
+		addr = arch_get_platform_mac_address();
+
+	if (!addr)
+		return -ENODEV;
+
+	ether_addr_copy(mac_addr, addr);
+	return 0;
+}
+EXPORT_SYMBOL(eth_platform_get_mac_address);

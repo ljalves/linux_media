@@ -30,10 +30,15 @@
 #include <linux/bitops.h>
 #include <asm/uaccess.h>
 #include <asm/page.h>
-#include <asm/edac.h>
 #include "edac_core.h"
 #include "edac_module.h"
 #include <ras/ras_event.h>
+
+#ifdef CONFIG_EDAC_ATOMIC_SCRUB
+#include <asm/edac.h>
+#else
+#define edac_atomic_scrub(va, size) do { } while (0)
+#endif
 
 /* lock to memory controller's control array */
 static DEFINE_MUTEX(mem_ctls_mutex);
@@ -530,69 +535,18 @@ static void edac_mc_workq_function(struct work_struct *work_req)
 
 	mutex_lock(&mem_ctls_mutex);
 
-	/* if this control struct has movd to offline state, we are done */
-	if (mci->op_state == OP_OFFLINE) {
+	if (mci->op_state != OP_RUNNING_POLL) {
 		mutex_unlock(&mem_ctls_mutex);
 		return;
 	}
 
-	/* Only poll controllers that are running polled and have a check */
-	if (edac_mc_assert_error_check_and_clear() && (mci->edac_check != NULL))
+	if (edac_mc_assert_error_check_and_clear())
 		mci->edac_check(mci);
 
 	mutex_unlock(&mem_ctls_mutex);
 
-	/* Reschedule */
-	queue_delayed_work(edac_workqueue, &mci->work,
-			msecs_to_jiffies(edac_mc_get_poll_msec()));
-}
-
-/*
- * edac_mc_workq_setup
- *	initialize a workq item for this mci
- *	passing in the new delay period in msec
- *
- *	locking model:
- *
- *		called with the mem_ctls_mutex held
- */
-static void edac_mc_workq_setup(struct mem_ctl_info *mci, unsigned msec,
-				bool init)
-{
-	edac_dbg(0, "\n");
-
-	/* if this instance is not in the POLL state, then simply return */
-	if (mci->op_state != OP_RUNNING_POLL)
-		return;
-
-	if (init)
-		INIT_DELAYED_WORK(&mci->work, edac_mc_workq_function);
-
-	mod_delayed_work(edac_workqueue, &mci->work, msecs_to_jiffies(msec));
-}
-
-/*
- * edac_mc_workq_teardown
- *	stop the workq processing on this mci
- *
- *	locking model:
- *
- *		called WITHOUT lock held
- */
-static void edac_mc_workq_teardown(struct mem_ctl_info *mci)
-{
-	int status;
-
-	if (mci->op_state != OP_RUNNING_POLL)
-		return;
-
-	status = cancel_delayed_work(&mci->work);
-	if (status == 0) {
-		edac_dbg(0, "not canceled, flush the queue\n");
-
-		/* workq instance might be running, wait for it */
-		flush_workqueue(edac_workqueue);
-	}
+	/* Queue ourselves again. */
+	edac_queue_work(&mci->work, msecs_to_jiffies(edac_mc_get_poll_msec()));
 }
 
 /*
@@ -611,9 +565,8 @@ void edac_mc_reset_delay_period(unsigned long value)
 	list_for_each(item, &mc_devices) {
 		mci = list_entry(item, struct mem_ctl_info, link);
 
-		edac_mc_workq_setup(mci, value, false);
+		edac_mod_work(&mci->work, value);
 	}
-
 	mutex_unlock(&mem_ctls_mutex);
 }
 
@@ -779,12 +732,12 @@ int edac_mc_add_mc_with_groups(struct mem_ctl_info *mci,
 		goto fail1;
 	}
 
-	/* If there IS a check routine, then we are running POLLED */
-	if (mci->edac_check != NULL) {
-		/* This instance is NOW RUNNING */
+	if (mci->edac_check) {
 		mci->op_state = OP_RUNNING_POLL;
 
-		edac_mc_workq_setup(mci, edac_mc_get_poll_msec(), true);
+		INIT_DELAYED_WORK(&mci->work, edac_mc_workq_function);
+		edac_queue_work(&mci->work, msecs_to_jiffies(edac_mc_get_poll_msec()));
+
 	} else {
 		mci->op_state = OP_RUNNING_INTERRUPT;
 	}
@@ -831,15 +784,16 @@ struct mem_ctl_info *edac_mc_del_mc(struct device *dev)
 		return NULL;
 	}
 
+	/* mark MCI offline: */
+	mci->op_state = OP_OFFLINE;
+
 	if (!del_mc_from_global_list(mci))
 		edac_mc_owner = NULL;
+
 	mutex_unlock(&mem_ctls_mutex);
 
-	/* flush workq processes */
-	edac_mc_workq_teardown(mci);
-
-	/* marking MCI offline */
-	mci->op_state = OP_OFFLINE;
+	if (mci->edac_check)
+		edac_stop_work(&mci->work);
 
 	/* remove from sysfs */
 	edac_remove_sysfs_mci_device(mci);
@@ -874,7 +828,7 @@ static void edac_mc_scrub_block(unsigned long page, unsigned long offset,
 	virt_addr = kmap_atomic(pg);
 
 	/* Perform architecture specific atomic scrub operation */
-	atomic_scrub(virt_addr + offset, size);
+	edac_atomic_scrub(virt_addr + offset, size);
 
 	/* Unmap and complete */
 	kunmap_atomic(virt_addr);
@@ -969,7 +923,7 @@ static void edac_inc_ue_error(struct mem_ctl_info *mci,
 	mci->ue_mc += count;
 
 	if (!enable_per_layer_report) {
-		mci->ce_noinfo_count += count;
+		mci->ue_noinfo_count += count;
 		return;
 	}
 
@@ -1297,7 +1251,7 @@ void edac_mc_handle_error(const enum hw_event_mc_err_type type,
 	grain_bits = fls_long(e->grain) + 1;
 	trace_mc_event(type, e->msg, e->label, e->error_count,
 		       mci->mc_idx, e->top_layer, e->mid_layer, e->low_layer,
-		       PAGES_TO_MiB(e->page_frame_number) | e->offset_in_page,
+		       (e->page_frame_number << PAGE_SHIFT) | e->offset_in_page,
 		       grain_bits, e->syndrome, e->other_detail);
 
 	edac_raw_mc_handle_error(type, mci, e);

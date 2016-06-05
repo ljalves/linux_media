@@ -801,9 +801,10 @@ static void das16_ai_munge(struct comedi_device *dev,
 	unsigned short *data = array;
 	unsigned int num_samples = comedi_bytes_to_samples(s, num_bytes);
 	unsigned int i;
+	__le16 *buf = array;
 
 	for (i = 0; i < num_samples; i++) {
-		data[i] = le16_to_cpu(data[i]);
+		data[i] = le16_to_cpu(buf[i]);
 		if (s->maxdata == 0x0fff)
 			data[i] >>= 4;
 		data[i] &= s->maxdata;
@@ -1032,8 +1033,7 @@ static int das16_attach(struct comedi_device *dev, struct comedi_devconfig *it)
 
 	/*  check that clock setting is valid */
 	if (it->options[3]) {
-		if (it->options[3] != 0 &&
-		    it->options[3] != 1 && it->options[3] != 10) {
+		if (it->options[3] != 1 && it->options[3] != 10) {
 			dev_err(dev->class_dev,
 				"Invalid option. Master clock must be set to 1 or 10 (MHz)\n");
 			return -EINVAL;

@@ -50,13 +50,11 @@
  */
 struct ldlm_resource *lock_res_and_lock(struct ldlm_lock *lock)
 {
-	/* on server-side resource of lock doesn't change */
-	if ((lock->l_flags & LDLM_FL_NS_SRV) == 0)
-		spin_lock(&lock->l_lock);
+	spin_lock(&lock->l_lock);
 
 	lock_res(lock->l_resource);
 
-	lock->l_flags |= LDLM_FL_RES_LOCKED;
+	ldlm_set_res_locked(lock);
 	return lock->l_resource;
 }
 EXPORT_SYMBOL(lock_res_and_lock);
@@ -67,10 +65,9 @@ EXPORT_SYMBOL(lock_res_and_lock);
 void unlock_res_and_lock(struct ldlm_lock *lock)
 {
 	/* on server-side resource of lock doesn't change */
-	lock->l_flags &= ~LDLM_FL_RES_LOCKED;
+	ldlm_clear_res_locked(lock);
 
 	unlock_res(lock->l_resource);
-	if ((lock->l_flags & LDLM_FL_NS_SRV) == 0)
-		spin_unlock(&lock->l_lock);
+	spin_unlock(&lock->l_lock);
 }
 EXPORT_SYMBOL(unlock_res_and_lock);

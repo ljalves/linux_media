@@ -162,7 +162,7 @@ struct gs_can {
 	struct can_bittiming_const bt_const;
 	unsigned int channel;	/* channel number */
 
-	/* This lock prevents a race condition between xmit and recieve. */
+	/* This lock prevents a race condition between xmit and receive. */
 	spinlock_t tx_ctx_lock;
 	struct gs_tx_context tx_context[GS_MAX_TX_URBS];
 
@@ -274,7 +274,7 @@ static void gs_update_state(struct gs_can *dev, struct can_frame *cf)
 	}
 }
 
-static void gs_usb_recieve_bulk_callback(struct urb *urb)
+static void gs_usb_receive_bulk_callback(struct urb *urb)
 {
 	struct gs_usb *usbcan = urb->context;
 	struct gs_can *dev;
@@ -376,7 +376,7 @@ static void gs_usb_recieve_bulk_callback(struct urb *urb)
 			  usb_rcvbulkpipe(usbcan->udev, GSUSB_ENDPOINT_IN),
 			  hf,
 			  sizeof(struct gs_host_frame),
-			  gs_usb_recieve_bulk_callback,
+			  gs_usb_receive_bulk_callback,
 			  usbcan
 			  );
 
@@ -605,7 +605,7 @@ static int gs_can_open(struct net_device *netdev)
 							  GSUSB_ENDPOINT_IN),
 					  buf,
 					  sizeof(struct gs_host_frame),
-					  gs_usb_recieve_bulk_callback,
+					  gs_usb_receive_bulk_callback,
 					  parent);
 			urb->transfer_flags |= URB_NO_TRANSFER_DMA_MAP;
 
@@ -826,9 +826,8 @@ static struct gs_can *gs_make_candev(unsigned int channel, struct usb_interface 
 static void gs_destroy_candev(struct gs_can *dev)
 {
 	unregister_candev(dev->netdev);
-	free_candev(dev->netdev);
 	usb_kill_anchored_urbs(&dev->tx_submitted);
-	kfree(dev);
+	free_candev(dev->netdev);
 }
 
 static int gs_usb_probe(struct usb_interface *intf, const struct usb_device_id *id)
@@ -913,12 +912,15 @@ static int gs_usb_probe(struct usb_interface *intf, const struct usb_device_id *
 	for (i = 0; i < icount; i++) {
 		dev->canch[i] = gs_make_candev(i, intf);
 		if (IS_ERR_OR_NULL(dev->canch[i])) {
+			/* save error code to return later */
+			rc = PTR_ERR(dev->canch[i]);
+
 			/* on failure destroy previously created candevs */
 			icount = i;
-			for (i = 0; i < icount; i++) {
+			for (i = 0; i < icount; i++)
 				gs_destroy_candev(dev->canch[i]);
-				dev->canch[i] = NULL;
-			}
+
+			usb_kill_anchored_urbs(&dev->rx_submitted);
 			kfree(dev);
 			return rc;
 		}
@@ -939,20 +941,17 @@ static void gs_usb_disconnect(struct usb_interface *intf)
 		return;
 	}
 
-	for (i = 0; i < GS_MAX_INTF; i++) {
-		struct gs_can *can = dev->canch[i];
-
-		if (!can)
-			continue;
-
-		gs_destroy_candev(can);
-	}
+	for (i = 0; i < GS_MAX_INTF; i++)
+		if (dev->canch[i])
+			gs_destroy_candev(dev->canch[i]);
 
 	usb_kill_anchored_urbs(&dev->rx_submitted);
+	kfree(dev);
 }
 
 static const struct usb_device_id gs_usb_table[] = {
-	{USB_DEVICE(USB_GSUSB_1_VENDOR_ID, USB_GSUSB_1_PRODUCT_ID)},
+	{ USB_DEVICE_INTERFACE_NUMBER(USB_GSUSB_1_VENDOR_ID,
+				      USB_GSUSB_1_PRODUCT_ID, 0) },
 	{} /* Terminating entry */
 };
 

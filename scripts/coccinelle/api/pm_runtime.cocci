@@ -1,5 +1,5 @@
 /// Make sure pm_runtime_* calls does not use unnecessary IS_ERR_VALUE
-//
+///
 // Keywords: pm_runtime
 // Confidence: Medium
 // Copyright (C) 2013 Texas Instruments Incorporated - GPLv2.
@@ -78,7 +78,7 @@ ret = pm_runtime_api(...);
 //  For org and report mode
 //----------------------------------------------------------
 
-@r depends on runtime_bad_err_handle exists@
+@r depends on runtime_bad_err_handle && (org || report) exists@
 position p1, p2;
 identifier pm_runtime_api;
 expression ret;

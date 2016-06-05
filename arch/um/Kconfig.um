@@ -44,23 +44,9 @@ config HOSTFS
           If you'd like to be able to work with files stored on the host,
           say Y or M here; otherwise say N.
 
-config HPPFS
-	tristate "HoneyPot ProcFS"
-	depends on PROC_FS
-	help
-	  hppfs (HoneyPot ProcFS) is a filesystem which allows UML /proc
-	  entries to be overridden, removed, or fabricated from the host.
-	  Its purpose is to allow a UML to appear to be a physical machine
-	  by removing or changing anything in /proc which gives away the
-	  identity of a UML.
-
-	  See <http://user-mode-linux.sf.net/old/hppfs.html> for more information.
-
-	  You only need this if you are setting up a UML honeypot.  Otherwise,
-	  it is safe to say 'N' here.
-
 config MCONSOLE
 	bool "Management console"
+	depends on PROC_FS
 	default y
 	help
           The user mode linux management console is a low-level interface to
@@ -118,3 +104,19 @@ config PGTABLE_LEVELS
 	int
 	default 3 if 3_LEVEL_PGTABLES
 	default 2
+
+config SECCOMP
+	def_bool y
+	prompt "Enable seccomp to safely compute untrusted bytecode"
+	---help---
+	  This kernel feature is useful for number crunching applications
+	  that may need to compute untrusted bytecode during their
+	  execution. By using pipes or other transports made available to
+	  the process as file descriptors supporting the read/write
+	  syscalls, it's possible to isolate those applications in
+	  their own address space using seccomp. Once seccomp is
+	  enabled via prctl(PR_SET_SECCOMP), it cannot be disabled
+	  and the task is only allowed to execute a few safe syscalls
+	  defined by each seccomp mode.
+
+	  If unsure, say Y.

@@ -54,7 +54,7 @@ struct dma_buf_attachment;
  * @release: release this buffer; to be called after the last dma_buf_put.
  * @begin_cpu_access: [optional] called before cpu access to invalidate cpu
  * 		      caches and allocate backing storage (if not yet done)
- * 		      respectively pin the objet into memory.
+ * 		      respectively pin the object into memory.
  * @end_cpu_access: [optional] called after cpu access to flush caches.
  * @kmap_atomic: maps a page from the buffer into kernel address
  * 		 space, users may not block until the subsequent unmap call.
@@ -93,10 +93,8 @@ struct dma_buf_ops {
 	/* after final dma_buf_put() */
 	void (*release)(struct dma_buf *);
 
-	int (*begin_cpu_access)(struct dma_buf *, size_t, size_t,
-				enum dma_data_direction);
-	void (*end_cpu_access)(struct dma_buf *, size_t, size_t,
-			       enum dma_data_direction);
+	int (*begin_cpu_access)(struct dma_buf *, enum dma_data_direction);
+	int (*end_cpu_access)(struct dma_buf *, enum dma_data_direction);
 	void *(*kmap_atomic)(struct dma_buf *, unsigned long);
 	void (*kunmap_atomic)(struct dma_buf *, unsigned long, void *);
 	void *(*kmap)(struct dma_buf *, unsigned long);
@@ -115,6 +113,8 @@ struct dma_buf_ops {
  * @attachments: list of dma_buf_attachment that denotes all devices attached.
  * @ops: dma_buf_ops associated with this buffer object.
  * @exp_name: name of the exporter; useful for debugging.
+ * @owner: pointer to exporter module; used for refcounting when exporter is a
+ *         kernel module.
  * @list_node: node for dma_buf accounting and debugging.
  * @priv: exporter specific private data for this buffer object.
  * @resv: reservation object linked to this dma-buf
@@ -129,6 +129,7 @@ struct dma_buf {
 	unsigned vmapping_counter;
 	void *vmap_ptr;
 	const char *exp_name;
+	struct module *owner;
 	struct list_head list_node;
 	void *priv;
 	struct reservation_object *resv;
@@ -164,7 +165,8 @@ struct dma_buf_attachment {
 
 /**
  * struct dma_buf_export_info - holds information needed to export a dma_buf
- * @exp_name:	name of the exporting module - useful for debugging.
+ * @exp_name:	name of the exporter - useful for debugging.
+ * @owner:	pointer to exporter module - used for refcounting kernel module
  * @ops:	Attach allocator-defined dma buf ops to the new buffer
  * @size:	Size of the buffer
  * @flags:	mode flags for the file
@@ -176,6 +178,7 @@ struct dma_buf_attachment {
  */
 struct dma_buf_export_info {
 	const char *exp_name;
+	struct module *owner;
 	const struct dma_buf_ops *ops;
 	size_t size;
 	int flags;
@@ -187,7 +190,8 @@ struct dma_buf_export_info {
  * helper macro for exporters; zeros and fills in most common values
  */
 #define DEFINE_DMA_BUF_EXPORT_INFO(a)	\
-	struct dma_buf_export_info a = { .exp_name = KBUILD_MODNAME }
+	struct dma_buf_export_info a = { .exp_name = KBUILD_MODNAME, \
+					 .owner = THIS_MODULE }
 
 /**
  * get_dma_buf - convenience wrapper for get_file.
@@ -218,10 +222,10 @@ struct sg_table *dma_buf_map_attachment(struct dma_buf_attachment *,
 					enum dma_data_direction);
 void dma_buf_unmap_attachment(struct dma_buf_attachment *, struct sg_table *,
 				enum dma_data_direction);
-int dma_buf_begin_cpu_access(struct dma_buf *dma_buf, size_t start, size_t len,
+int dma_buf_begin_cpu_access(struct dma_buf *dma_buf,
 			     enum dma_data_direction dir);
-void dma_buf_end_cpu_access(struct dma_buf *dma_buf, size_t start, size_t len,
-			    enum dma_data_direction dir);
+int dma_buf_end_cpu_access(struct dma_buf *dma_buf,
+			   enum dma_data_direction dir);
 void *dma_buf_kmap_atomic(struct dma_buf *, unsigned long);
 void dma_buf_kunmap_atomic(struct dma_buf *, unsigned long, void *);
 void *dma_buf_kmap(struct dma_buf *, unsigned long);

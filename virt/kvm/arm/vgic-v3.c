@@ -20,37 +20,24 @@
 #include <linux/kvm_host.h>
 #include <linux/interrupt.h>
 #include <linux/io.h>
-#include <linux/of.h>
-#include <linux/of_address.h>
-#include <linux/of_irq.h>
 
 #include <linux/irqchip/arm-gic-v3.h>
+#include <linux/irqchip/arm-gic-common.h>
 
 #include <asm/kvm_emulate.h>
 #include <asm/kvm_arm.h>
+#include <asm/kvm_asm.h>
 #include <asm/kvm_mmu.h>
-
-/* These are for GICv2 emulation only */
-#define GICH_LR_VIRTUALID		(0x3ffUL << 0)
-#define GICH_LR_PHYSID_CPUID_SHIFT	(10)
-#define GICH_LR_PHYSID_CPUID		(7UL << GICH_LR_PHYSID_CPUID_SHIFT)
-#define ICH_LR_VIRTUALID_MASK		(BIT_ULL(32) - 1)
-
-/*
- * LRs are stored in reverse order in memory. make sure we index them
- * correctly.
- */
-#define LR_INDEX(lr)			(VGIC_V3_MAX_LRS - 1 - lr)
 
 static u32 ich_vtr_el2;
 
 static struct vgic_lr vgic_v3_get_lr(const struct kvm_vcpu *vcpu, int lr)
 {
 	struct vgic_lr lr_desc;
-	u64 val = vcpu->arch.vgic_cpu.vgic_v3.vgic_lr[LR_INDEX(lr)];
+	u64 val = vcpu->arch.vgic_cpu.vgic_v3.vgic_lr[lr];
 
 	if (vcpu->kvm->arch.vgic.vgic_model == KVM_DEV_TYPE_ARM_VGIC_V3)
-		lr_desc.irq = val & ICH_LR_VIRTUALID_MASK;
+		lr_desc.irq = val & ICH_LR_VIRTUAL_ID_MASK;
 	else
 		lr_desc.irq = val & GICH_LR_VIRTUALID;
 
@@ -67,6 +54,10 @@ static struct vgic_lr vgic_v3_get_lr(const struct kvm_vcpu *vcpu, int lr)
 		lr_desc.state |= LR_STATE_ACTIVE;
 	if (val & ICH_LR_EOI)
 		lr_desc.state |= LR_EOI_INT;
+	if (val & ICH_LR_HW) {
+		lr_desc.state |= LR_HW;
+		lr_desc.hwirq = (val >> ICH_LR_PHYS_ID_SHIFT) & GENMASK(9, 0);
+	}
 
 	return lr_desc;
 }
@@ -84,10 +75,17 @@ static void vgic_v3_set_lr(struct kvm_vcpu *vcpu, int lr,
 	 * Eventually we want to make this configurable, so we may revisit
 	 * this in the future.
 	 */
-	if (vcpu->kvm->arch.vgic.vgic_model == KVM_DEV_TYPE_ARM_VGIC_V3)
+	switch (vcpu->kvm->arch.vgic.vgic_model) {
+	case KVM_DEV_TYPE_ARM_VGIC_V3:
 		lr_val |= ICH_LR_GROUP;
-	else
-		lr_val |= (u32)lr_desc.source << GICH_LR_PHYSID_CPUID_SHIFT;
+		break;
+	case  KVM_DEV_TYPE_ARM_VGIC_V2:
+		if (lr_desc.irq < VGIC_NR_SGIS)
+			lr_val |= (u32)lr_desc.source << GICH_LR_PHYSID_CPUID_SHIFT;
+		break;
+	default:
+		BUG();
+	}
 
 	if (lr_desc.state & LR_STATE_PENDING)
 		lr_val |= ICH_LR_PENDING_BIT;
@@ -95,13 +93,13 @@ static void vgic_v3_set_lr(struct kvm_vcpu *vcpu, int lr,
 		lr_val |= ICH_LR_ACTIVE_BIT;
 	if (lr_desc.state & LR_EOI_INT)
 		lr_val |= ICH_LR_EOI;
+	if (lr_desc.state & LR_HW) {
+		lr_val |= ICH_LR_HW;
+		lr_val |= ((u64)lr_desc.hwirq) << ICH_LR_PHYS_ID_SHIFT;
+	}
 
-	vcpu->arch.vgic_cpu.vgic_v3.vgic_lr[LR_INDEX(lr)] = lr_val;
-}
+	vcpu->arch.vgic_cpu.vgic_v3.vgic_lr[lr] = lr_val;
 
-static void vgic_v3_sync_lr_elrsr(struct kvm_vcpu *vcpu, int lr,
-				  struct vgic_lr lr_desc)
-{
 	if (!(lr_desc.state & LR_STATE_MASK))
 		vcpu->arch.vgic_cpu.vgic_v3.vgic_elrsr |= (1U << lr);
 	else
@@ -178,6 +176,7 @@ static void vgic_v3_enable(struct kvm_vcpu *vcpu)
 	 * anyway.
 	 */
 	vgic_v3->vgic_vmcr = 0;
+	vgic_v3->vgic_elrsr = ~0;
 
 	/*
 	 * If we are emulating a GICv3, we do it in an non-GICv2-compatible
@@ -196,7 +195,6 @@ static void vgic_v3_enable(struct kvm_vcpu *vcpu)
 static const struct vgic_ops vgic_v3_ops = {
 	.get_lr			= vgic_v3_get_lr,
 	.set_lr			= vgic_v3_set_lr,
-	.sync_lr_elrsr		= vgic_v3_sync_lr_elrsr,
 	.get_elrsr		= vgic_v3_get_elrsr,
 	.get_eisr		= vgic_v3_get_eisr,
 	.clear_eisr		= vgic_v3_clear_eisr,
@@ -210,31 +208,30 @@ static const struct vgic_ops vgic_v3_ops = {
 
 static struct vgic_params vgic_v3_params;
 
+static void vgic_cpu_init_lrs(void *params)
+{
+	kvm_call_hyp(__vgic_v3_init_lrs);
+}
+
 /**
- * vgic_v3_probe - probe for a GICv3 compatible interrupt controller in DT
- * @node:	pointer to the DT node
- * @ops: 	address of a pointer to the GICv3 operations
- * @params:	address of a pointer to HW-specific parameters
+ * vgic_v3_probe - probe for a GICv3 compatible interrupt controller
+ * @gic_kvm_info:	pointer to the GIC description
+ * @ops:		address of a pointer to the GICv3 operations
+ * @params:		address of a pointer to HW-specific parameters
  *
  * Returns 0 if a GICv3 has been found, with the low level operations
  * in *ops and the HW parameters in *params. Returns an error code
  * otherwise.
  */
-int vgic_v3_probe(struct device_node *vgic_node,
+int vgic_v3_probe(const struct gic_kvm_info *gic_kvm_info,
 		  const struct vgic_ops **ops,
 		  const struct vgic_params **params)
 {
 	int ret = 0;
-	u32 gicv_idx;
-	struct resource vcpu_res;
 	struct vgic_params *vgic = &vgic_v3_params;
+	const struct resource *vcpu_res = &gic_kvm_info->vcpu;
 
-	vgic->maint_irq = irq_of_parse_and_map(vgic_node, 0);
-	if (!vgic->maint_irq) {
-		kvm_err("error getting vgic maintenance irq from DT\n");
-		ret = -ENXIO;
-		goto out;
-	}
+	vgic->maint_irq = gic_kvm_info->maint_irq;
 
 	ich_vtr_el2 = kvm_call_hyp(__vgic_v3_get_ich_vtr_el2);
 
@@ -245,24 +242,19 @@ int vgic_v3_probe(struct device_node *vgic_node,
 	vgic->nr_lr = (ich_vtr_el2 & 0xf) + 1;
 	vgic->can_emulate_gicv2 = false;
 
-	if (of_property_read_u32(vgic_node, "#redistributor-regions", &gicv_idx))
-		gicv_idx = 1;
-
-	gicv_idx += 3; /* Also skip GICD, GICC, GICH */
-	if (of_address_to_resource(vgic_node, gicv_idx, &vcpu_res)) {
+	if (!vcpu_res->start) {
 		kvm_info("GICv3: no GICV resource entry\n");
 		vgic->vcpu_base = 0;
-	} else if (!PAGE_ALIGNED(vcpu_res.start)) {
+	} else if (!PAGE_ALIGNED(vcpu_res->start)) {
 		pr_warn("GICV physical address 0x%llx not page aligned\n",
-			(unsigned long long)vcpu_res.start);
+			(unsigned long long)vcpu_res->start);
 		vgic->vcpu_base = 0;
-	} else if (!PAGE_ALIGNED(resource_size(&vcpu_res))) {
+	} else if (!PAGE_ALIGNED(resource_size(vcpu_res))) {
 		pr_warn("GICV size 0x%llx not a multiple of page size 0x%lx\n",
-			(unsigned long long)resource_size(&vcpu_res),
+			(unsigned long long)resource_size(vcpu_res),
 			PAGE_SIZE);
-		vgic->vcpu_base = 0;
 	} else {
-		vgic->vcpu_base = vcpu_res.start;
+		vgic->vcpu_base = vcpu_res->start;
 		vgic->can_emulate_gicv2 = true;
 		kvm_register_device_ops(&kvm_arm_vgic_v2_ops,
 					KVM_DEV_TYPE_ARM_VGIC_V2);
@@ -273,15 +265,15 @@ int vgic_v3_probe(struct device_node *vgic_node,
 
 	vgic->vctrl_base = NULL;
 	vgic->type = VGIC_V3;
-	vgic->max_gic_vcpus = KVM_MAX_VCPUS;
+	vgic->max_gic_vcpus = VGIC_V3_MAX_CPUS;
 
-	kvm_info("%s@%llx IRQ%d\n", vgic_node->name,
-		 vcpu_res.start, vgic->maint_irq);
+	kvm_info("GICV base=0x%llx, IRQ=%d\n",
+		 vgic->vcpu_base, vgic->maint_irq);
+
+	on_each_cpu(vgic_cpu_init_lrs, vgic, 1);
 
 	*ops = &vgic_v3_ops;
 	*params = vgic;
 
-out:
-	of_node_put(vgic_node);
 	return ret;
 }

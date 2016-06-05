@@ -188,7 +188,7 @@ static int pt3_set_lna(struct dvb_frontend *fe)
 	return ret;
 }
 
-static int pt3_set_voltage(struct dvb_frontend *fe, fe_sec_voltage_t volt)
+static int pt3_set_voltage(struct dvb_frontend *fe, enum fe_sec_voltage volt)
 {
 	struct pt3_adapter *adap;
 	struct pt3_board *pt3;
@@ -395,7 +395,8 @@ static int pt3_attach_fe(struct pt3_board *pt3, int i)
 	if (!try_module_get(cl->dev.driver->owner))
 		goto err_demod_i2c_unregister_device;
 
-	if (!strncmp(cl->name, TC90522_I2C_DEV_SAT, sizeof(cl->name))) {
+	if (!strncmp(cl->name, TC90522_I2C_DEV_SAT,
+		     strlen(TC90522_I2C_DEV_SAT))) {
 		struct qm1d1c0042_config tcfg;
 
 		tcfg = adap_conf[i].tuner_cfg.qm1d1c0042;

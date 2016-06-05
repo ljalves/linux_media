@@ -46,15 +46,15 @@ lolnd_send(lnet_ni_t *ni, void *private, lnet_msg_t *lntmsg)
 
 static int
 lolnd_recv(lnet_ni_t *ni, void *private, lnet_msg_t *lntmsg,
-	    int delayed, unsigned int niov,
-	    struct kvec *iov, lnet_kiov_t *kiov,
-	    unsigned int offset, unsigned int mlen, unsigned int rlen)
+	   int delayed, unsigned int niov,
+	   struct kvec *iov, lnet_kiov_t *kiov,
+	   unsigned int offset, unsigned int mlen, unsigned int rlen)
 {
 	lnet_msg_t *sendmsg = private;
 
-	if (lntmsg != NULL) {		   /* not discarding */
-		if (sendmsg->msg_iov != NULL) {
-			if (iov != NULL)
+	if (lntmsg) {		   /* not discarding */
+		if (sendmsg->msg_iov) {
+			if (iov)
 				lnet_copy_iov2iov(niov, iov, offset,
 						  sendmsg->msg_niov,
 						  sendmsg->msg_iov,
@@ -65,7 +65,7 @@ lolnd_recv(lnet_ni_t *ni, void *private, lnet_msg_t *lntmsg,
 						   sendmsg->msg_iov,
 						   sendmsg->msg_offset, mlen);
 		} else {
-			if (iov != NULL)
+			if (iov)
 				lnet_copy_kiov2iov(niov, iov, offset,
 						   sendmsg->msg_niov,
 						   sendmsg->msg_kiov,
@@ -111,7 +111,7 @@ lnd_t the_lolnd = {
 	/* .lnd_type       = */ LOLND,
 	/* .lnd_startup    = */ lolnd_startup,
 	/* .lnd_shutdown   = */ lolnd_shutdown,
-	/* .lnt_ctl	= */ NULL,
+	/* .lnt_ctl        = */ NULL,
 	/* .lnd_send       = */ lolnd_send,
 	/* .lnd_recv       = */ lolnd_recv,
 	/* .lnd_eager_recv = */ NULL,

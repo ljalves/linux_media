@@ -182,7 +182,7 @@ struct at91_adc_caps {
 	u8	ts_pen_detect_sensitivity;
 
 	/* startup time calculate function */
-	u32 (*calc_startup_ticks)(u8 startup_time, u32 adc_clk_khz);
+	u32 (*calc_startup_ticks)(u32 startup_time, u32 adc_clk_khz);
 
 	u8	num_channels;
 	struct at91_adc_reg_desc registers;
@@ -201,7 +201,7 @@ struct at91_adc_state {
 	u8			num_channels;
 	void __iomem		*reg_base;
 	struct at91_adc_reg_desc *registers;
-	u8			startup_time;
+	u32			startup_time;
 	u8			sample_hold_time;
 	bool			sleep_mode;
 	struct iio_trigger	**trig;
@@ -742,7 +742,7 @@ static int at91_adc_of_get_resolution(struct at91_adc_state *st,
 		return count;
 	}
 
-	resolutions = kmalloc(count * sizeof(*resolutions), GFP_KERNEL);
+	resolutions = kmalloc_array(count, sizeof(*resolutions), GFP_KERNEL);
 	if (!resolutions)
 		return -ENOMEM;
 
@@ -779,7 +779,7 @@ ret:
 	return ret;
 }
 
-static u32 calc_startup_ticks_9260(u8 startup_time, u32 adc_clk_khz)
+static u32 calc_startup_ticks_9260(u32 startup_time, u32 adc_clk_khz)
 {
 	/*
 	 * Number of ticks needed to cover the startup time of the ADC
@@ -790,15 +790,15 @@ static u32 calc_startup_ticks_9260(u8 startup_time, u32 adc_clk_khz)
 	return round_up((startup_time * adc_clk_khz / 1000) - 1, 8) / 8;
 }
 
-static u32 calc_startup_ticks_9x5(u8 startup_time, u32 adc_clk_khz)
+static u32 calc_startup_ticks_9x5(u32 startup_time, u32 adc_clk_khz)
 {
 	/*
 	 * For sama5d3x and at91sam9x5, the formula changes to:
 	 * Startup Time = <lookup_table_value> / ADC Clock
 	 */
 	const int startup_lookup[] = {
-		0  , 8  , 16 , 24 ,
-		64 , 80 , 96 , 112,
+		0,   8,   16,  24,
+		64,  80,  96,  112,
 		512, 576, 640, 704,
 		768, 832, 896, 960
 		};
@@ -924,14 +924,14 @@ static int at91_adc_probe_dt(struct at91_adc_state *st,
 			ret = -EINVAL;
 			goto error_ret;
 		}
-	        trig->name = name;
+		trig->name = name;
 
 		if (of_property_read_u32(trig_node, "trigger-value", &prop)) {
 			dev_err(&idev->dev, "Missing trigger-value property in the DT.\n");
 			ret = -EINVAL;
 			goto error_ret;
 		}
-	        trig->value = prop;
+		trig->value = prop;
 		trig->is_external = of_property_read_bool(trig_node, "trigger-external");
 		i++;
 	}

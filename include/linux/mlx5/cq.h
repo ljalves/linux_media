@@ -45,7 +45,7 @@ struct mlx5_core_cq {
 	atomic_t		refcount;
 	struct completion	free;
 	unsigned		vector;
-	int			irqn;
+	unsigned int		irqn;
 	void (*comp)		(struct mlx5_core_cq *);
 	void (*event)		(struct mlx5_core_cq *, enum mlx5_event);
 	struct mlx5_uar	       *uar;
@@ -53,6 +53,11 @@ struct mlx5_core_cq {
 	unsigned		arm_sn;
 	struct mlx5_rsc_debug	*dbg;
 	int			pid;
+	struct {
+		struct list_head list;
+		void (*comp)(struct mlx5_core_cq *);
+		void		*priv;
+	} tasklet_ctx;
 };
 
 
@@ -169,6 +174,9 @@ int mlx5_core_query_cq(struct mlx5_core_dev *dev, struct mlx5_core_cq *cq,
 		       struct mlx5_query_cq_mbox_out *out);
 int mlx5_core_modify_cq(struct mlx5_core_dev *dev, struct mlx5_core_cq *cq,
 			struct mlx5_modify_cq_mbox_in *in, int in_sz);
+int mlx5_core_modify_cq_moderation(struct mlx5_core_dev *dev,
+				   struct mlx5_core_cq *cq, u16 cq_period,
+				   u16 cq_max_count);
 int mlx5_debug_cq_add(struct mlx5_core_dev *dev, struct mlx5_core_cq *cq);
 void mlx5_debug_cq_remove(struct mlx5_core_dev *dev, struct mlx5_core_cq *cq);
 

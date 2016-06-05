@@ -85,7 +85,16 @@ enum mlx5_qp_state {
 	MLX5_QP_STATE_ERR			= 6,
 	MLX5_QP_STATE_SQ_DRAINING		= 7,
 	MLX5_QP_STATE_SUSPENDED			= 9,
-	MLX5_QP_NUM_STATE
+	MLX5_QP_NUM_STATE,
+	MLX5_QP_STATE,
+	MLX5_QP_STATE_BAD,
+};
+
+enum {
+	MLX5_SQ_STATE_NA	= MLX5_SQC_STATE_ERR + 1,
+	MLX5_SQ_NUM_STATE	= MLX5_SQ_STATE_NA + 1,
+	MLX5_RQ_STATE_NA	= MLX5_RQC_STATE_ERR + 1,
+	MLX5_RQ_NUM_STATE	= MLX5_RQ_STATE_NA + 1,
 };
 
 enum {
@@ -130,15 +139,26 @@ enum {
 	MLX5_QP_BIT_RWE				= 1 << 14,
 	MLX5_QP_BIT_RAE				= 1 << 13,
 	MLX5_QP_BIT_RIC				= 1 <<	4,
+	MLX5_QP_BIT_CC_SLAVE_RECV		= 1 <<  2,
+	MLX5_QP_BIT_CC_SLAVE_SEND		= 1 <<  1,
+	MLX5_QP_BIT_CC_MASTER			= 1 <<  0
 };
 
 enum {
 	MLX5_WQE_CTRL_CQ_UPDATE		= 2 << 2,
+	MLX5_WQE_CTRL_CQ_UPDATE_AND_EQE	= 3 << 2,
 	MLX5_WQE_CTRL_SOLICITED		= 1 << 1,
 };
 
 enum {
+	MLX5_SEND_WQE_DS	= 16,
 	MLX5_SEND_WQE_BB	= 64,
+};
+
+#define MLX5_SEND_WQEBB_NUM_DS	(MLX5_SEND_WQE_BB / MLX5_SEND_WQE_DS)
+
+enum {
+	MLX5_SEND_WQE_MAX_WQEBBS	= 16,
 };
 
 enum {
@@ -200,6 +220,23 @@ struct mlx5_wqe_ctrl_seg {
 #define MLX5_WQE_CTRL_WQE_INDEX_MASK 0x00ffff00
 #define MLX5_WQE_CTRL_WQE_INDEX_SHIFT 8
 
+enum {
+	MLX5_ETH_WQE_L3_INNER_CSUM      = 1 << 4,
+	MLX5_ETH_WQE_L4_INNER_CSUM      = 1 << 5,
+	MLX5_ETH_WQE_L3_CSUM            = 1 << 6,
+	MLX5_ETH_WQE_L4_CSUM            = 1 << 7,
+};
+
+struct mlx5_wqe_eth_seg {
+	u8              rsvd0[4];
+	u8              cs_flags;
+	u8              rsvd1;
+	__be16          mss;
+	__be32          rsvd2;
+	__be16          inline_hdr_sz;
+	u8              inline_hdr_start[2];
+};
+
 struct mlx5_wqe_xrc_seg {
 	__be32			xrc_srqn;
 	u8			rsvd[12];
@@ -223,8 +260,12 @@ struct mlx5_av {
 	__be32	dqp_dct;
 	u8	stat_rate_sl;
 	u8	fl_mlid;
-	__be16	rlid;
-	u8	reserved0[10];
+	union {
+		__be16	rlid;
+		__be16  udp_sport;
+	};
+	u8	reserved0[4];
+	u8	rmac[6];
 	u8	tclass;
 	u8	hop_limit;
 	__be32	grh_gid_fl;
@@ -431,11 +472,16 @@ struct mlx5_qp_path {
 	u8			static_rate;
 	u8			hop_limit;
 	__be32			tclass_flowlabel;
-	u8			rgid[16];
-	u8			rsvd1[4];
-	u8			sl;
+	union {
+		u8		rgid[16];
+		u8		rip[16];
+	};
+	u8			f_dscp_ecn_prio;
+	u8			ecn_dscp;
+	__be16			udp_sport;
+	u8			dci_cfi_prio_sl;
 	u8			port;
-	u8			rsvd2[6];
+	u8			rmac[6];
 };
 
 struct mlx5_qp_context {
@@ -453,7 +499,8 @@ struct mlx5_qp_context {
 	u8			reserved2[4];
 	__be32			next_send_psn;
 	__be32			cqn_send;
-	u8			reserved3[8];
+	__be32			deth_sqpn;
+	u8			reserved3[4];
 	__be32			last_acked_psn;
 	__be32			ssn;
 	__be32			params2;
@@ -575,9 +622,9 @@ static inline struct mlx5_core_qp *__mlx5_qp_lookup(struct mlx5_core_dev *dev, u
 	return radix_tree_lookup(&dev->priv.qp_table.tree, qpn);
 }
 
-static inline struct mlx5_core_mr *__mlx5_mr_lookup(struct mlx5_core_dev *dev, u32 key)
+static inline struct mlx5_core_mkey *__mlx5_mr_lookup(struct mlx5_core_dev *dev, u32 key)
 {
-	return radix_tree_lookup(&dev->priv.mr_table.tree, key);
+	return radix_tree_lookup(&dev->priv.mkey_table.tree, key);
 }
 
 struct mlx5_page_fault_resume_mbox_in {
@@ -595,8 +642,7 @@ int mlx5_core_create_qp(struct mlx5_core_dev *dev,
 			struct mlx5_core_qp *qp,
 			struct mlx5_create_qp_mbox_in *in,
 			int inlen);
-int mlx5_core_qp_modify(struct mlx5_core_dev *dev, enum mlx5_qp_state cur_state,
-			enum mlx5_qp_state new_state,
+int mlx5_core_qp_modify(struct mlx5_core_dev *dev, u16 operation,
 			struct mlx5_modify_qp_mbox_in *in, int sqd_event,
 			struct mlx5_core_qp *qp);
 int mlx5_core_destroy_qp(struct mlx5_core_dev *dev,
@@ -614,6 +660,20 @@ void mlx5_debug_qp_remove(struct mlx5_core_dev *dev, struct mlx5_core_qp *qp);
 int mlx5_core_page_fault_resume(struct mlx5_core_dev *dev, u32 qpn,
 				u8 context, int error);
 #endif
+int mlx5_core_create_rq_tracked(struct mlx5_core_dev *dev, u32 *in, int inlen,
+				struct mlx5_core_qp *rq);
+void mlx5_core_destroy_rq_tracked(struct mlx5_core_dev *dev,
+				  struct mlx5_core_qp *rq);
+int mlx5_core_create_sq_tracked(struct mlx5_core_dev *dev, u32 *in, int inlen,
+				struct mlx5_core_qp *sq);
+void mlx5_core_destroy_sq_tracked(struct mlx5_core_dev *dev,
+				  struct mlx5_core_qp *sq);
+int mlx5_core_alloc_q_counter(struct mlx5_core_dev *dev, u16 *counter_id);
+int mlx5_core_dealloc_q_counter(struct mlx5_core_dev *dev, u16 counter_id);
+int mlx5_core_query_q_counter(struct mlx5_core_dev *dev, u16 counter_id,
+			      int reset, void *out, int out_size);
+int mlx5_core_query_out_of_buffer(struct mlx5_core_dev *dev, u16 counter_id,
+				  u32 *out_of_buffer);
 
 static inline const char *mlx5_qp_type_str(int type)
 {

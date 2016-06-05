@@ -43,7 +43,7 @@ void inode_claim_rsv_space(struct inode *inode, qsize_t number);
 void inode_sub_rsv_space(struct inode *inode, qsize_t number);
 void inode_reclaim_rsv_space(struct inode *inode, qsize_t number);
 
-void dquot_initialize(struct inode *inode);
+int dquot_initialize(struct inode *inode);
 void dquot_drop(struct inode *inode);
 struct dquot *dqget(struct super_block *sb, struct kqid qid);
 static inline struct dquot *dqgrab(struct dquot *dquot)
@@ -82,6 +82,7 @@ int dquot_commit(struct dquot *dquot);
 int dquot_acquire(struct dquot *dquot);
 int dquot_release(struct dquot *dquot);
 int dquot_commit_info(struct super_block *sb, int type);
+int dquot_get_next_id(struct super_block *sb, struct kqid *qid);
 int dquot_mark_dquot_dirty(struct dquot *dquot);
 
 int dquot_file_open(struct inode *inode, struct file *file);
@@ -98,6 +99,8 @@ int dquot_quota_sync(struct super_block *sb, int type);
 int dquot_get_state(struct super_block *sb, struct qc_state *state);
 int dquot_set_dqinfo(struct super_block *sb, int type, struct qc_info *ii);
 int dquot_get_dqblk(struct super_block *sb, struct kqid id,
+		struct qc_dqblk *di);
+int dquot_get_next_dqblk(struct super_block *sb, struct kqid *id,
 		struct qc_dqblk *di);
 int dquot_set_dqblk(struct super_block *sb, struct kqid id,
 		struct qc_dqblk *di);
@@ -200,8 +203,9 @@ static inline int sb_has_quota_active(struct super_block *sb, int type)
 	return 0;
 }
 
-static inline void dquot_initialize(struct inode *inode)
+static inline int dquot_initialize(struct inode *inode)
 {
+	return 0;
 }
 
 static inline void dquot_drop(struct inode *inode)

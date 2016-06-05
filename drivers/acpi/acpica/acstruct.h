@@ -5,7 +5,7 @@
  *****************************************************************************/
 
 /*
- * Copyright (C) 2000 - 2015, Intel Corp.
+ * Copyright (C) 2000 - 2016, Intel Corp.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -82,9 +82,10 @@ struct acpi_walk_state {
 	u8 return_used;
 	u8 scope_depth;
 	u8 pass_number;		/* Parse pass during table load */
+	u8 namespace_override;	/* Override existing objects */
 	u8 result_size;		/* Total elements for the result stack */
 	u8 result_count;	/* Current number of occupied elements of result stack */
-	u32 aml_offset;
+	u8 *aml;
 	u32 arg_types;
 	u32 method_breakpoint;	/* For single stepping */
 	u32 user_breakpoint;	/* User AML breakpoint */
@@ -183,7 +184,7 @@ struct acpi_evaluate_info {
 	/* The first 3 elements are passed by the caller to acpi_ns_evaluate */
 
 	struct acpi_namespace_node *prefix_node;	/* Input: starting node */
-	char *relative_pathname;	/* Input: path relative to prefix_node */
+	const char *relative_pathname;	/* Input: path relative to prefix_node */
 	union acpi_operand_object **parameters;	/* Input: argument list */
 
 	struct acpi_namespace_node *node;	/* Resolved node (prefix_node:relative_pathname) */

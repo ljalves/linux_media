@@ -3,6 +3,8 @@
 
 #include <linux/types.h>
 
+struct file;
+
 /* Descriptions of the types of units to
  * print in */
 enum string_size_units {
@@ -48,24 +50,28 @@ static inline int string_unescape_any_inplace(char *buf)
 #define ESCAPE_HEX		0x20
 
 int string_escape_mem(const char *src, size_t isz, char *dst, size_t osz,
-		unsigned int flags, const char *esc);
+		unsigned int flags, const char *only);
 
 static inline int string_escape_mem_any_np(const char *src, size_t isz,
-		char *dst, size_t osz, const char *esc)
+		char *dst, size_t osz, const char *only)
 {
-	return string_escape_mem(src, isz, dst, osz, ESCAPE_ANY_NP, esc);
+	return string_escape_mem(src, isz, dst, osz, ESCAPE_ANY_NP, only);
 }
 
 static inline int string_escape_str(const char *src, char *dst, size_t sz,
-		unsigned int flags, const char *esc)
+		unsigned int flags, const char *only)
 {
-	return string_escape_mem(src, strlen(src), dst, sz, flags, esc);
+	return string_escape_mem(src, strlen(src), dst, sz, flags, only);
 }
 
 static inline int string_escape_str_any_np(const char *src, char *dst,
-		size_t sz, const char *esc)
+		size_t sz, const char *only)
 {
-	return string_escape_str(src, dst, sz, ESCAPE_ANY_NP, esc);
+	return string_escape_str(src, dst, sz, ESCAPE_ANY_NP, only);
 }
+
+char *kstrdup_quotable(const char *src, gfp_t gfp);
+char *kstrdup_quotable_cmdline(struct task_struct *task, gfp_t gfp);
+char *kstrdup_quotable_file(struct file *file, gfp_t gfp);
 
 #endif

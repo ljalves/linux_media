@@ -28,8 +28,9 @@
 
 #include <media/v4l2-ctrls.h>
 #include <media/v4l2-event.h>
-#include <media/adv7604.h>
-#include <media/adv7842.h>
+#include <media/v4l2-dv-timings.h>
+#include <media/i2c/adv7604.h>
+#include <media/i2c/adv7842.h>
 
 #include "cobalt-alsa.h"
 #include "cobalt-cpld.h"
@@ -43,7 +44,6 @@ static const struct v4l2_dv_timings cea1080p60 = V4L2_DV_BT_CEA_1920X1080P60;
 /* vb2 DMA streaming ops */
 
 static int cobalt_queue_setup(struct vb2_queue *q,
-			const struct v4l2_format *fmt,
 			unsigned int *num_buffers, unsigned int *num_planes,
 			unsigned int sizes[], void *alloc_ctxs[])
 {
@@ -54,14 +54,11 @@ static int cobalt_queue_setup(struct vb2_queue *q,
 		*num_buffers = 3;
 	if (*num_buffers > NR_BUFS)
 		*num_buffers = NR_BUFS;
-	*num_planes = 1;
-	if (fmt) {
-		if (fmt->fmt.pix.sizeimage < size)
-			return -EINVAL;
-		size = fmt->fmt.pix.sizeimage;
-	}
-	sizes[0] = size;
 	alloc_ctxs[0] = s->cobalt->alloc_ctx;
+	if (*num_planes)
+		return sizes[0] < size ? -EINVAL : 0;
+	*num_planes = 1;
+	sizes[0] = size;
 	return 0;
 }
 
@@ -74,7 +71,7 @@ static int cobalt_buf_init(struct vb2_buffer *vb)
 	const size_t bytes =
 		COBALT_MAX_HEIGHT * max_pages_per_line * 0x20;
 	const size_t audio_bytes = ((1920 * 4) / PAGE_SIZE + 1) * 0x20;
-	struct sg_dma_desc_info *desc = &s->dma_desc_info[vb->v4l2_buf.index];
+	struct sg_dma_desc_info *desc = &s->dma_desc_info[vb->index];
 	struct sg_table *sg_desc = vb2_dma_sg_plane_desc(vb, 0);
 	unsigned size;
 	int ret;
@@ -104,17 +101,18 @@ static int cobalt_buf_init(struct vb2_buffer *vb)
 static void cobalt_buf_cleanup(struct vb2_buffer *vb)
 {
 	struct cobalt_stream *s = vb->vb2_queue->drv_priv;
-	struct sg_dma_desc_info *desc = &s->dma_desc_info[vb->v4l2_buf.index];
+	struct sg_dma_desc_info *desc = &s->dma_desc_info[vb->index];
 
 	descriptor_list_free(desc);
 }
 
 static int cobalt_buf_prepare(struct vb2_buffer *vb)
 {
+	struct vb2_v4l2_buffer *vbuf = to_vb2_v4l2_buffer(vb);
 	struct cobalt_stream *s = vb->vb2_queue->drv_priv;
 
 	vb2_set_plane_payload(vb, 0, s->stride * s->height);
-	vb->v4l2_buf.field = V4L2_FIELD_NONE;
+	vbuf->field = V4L2_FIELD_NONE;
 	return 0;
 }
 
@@ -127,7 +125,7 @@ static void chain_all_buffers(struct cobalt_stream *s)
 
 	list_for_each(p, &s->bufs) {
 		cb = list_entry(p, struct cobalt_buffer, list);
-		desc[i] = &s->dma_desc_info[cb->vb.v4l2_buf.index];
+		desc[i] = &s->dma_desc_info[cb->vb.vb2_buf.index];
 		if (i > 0)
 			descriptor_list_chain(desc[i-1], desc[i]);
 		i++;
@@ -136,10 +134,11 @@ static void chain_all_buffers(struct cobalt_stream *s)
 
 static void cobalt_buf_queue(struct vb2_buffer *vb)
 {
+	struct vb2_v4l2_buffer *vbuf = to_vb2_v4l2_buffer(vb);
 	struct vb2_queue *q = vb->vb2_queue;
 	struct cobalt_stream *s = q->drv_priv;
-	struct cobalt_buffer *cb = to_cobalt_buffer(vb);
-	struct sg_dma_desc_info *desc = &s->dma_desc_info[vb->v4l2_buf.index];
+	struct cobalt_buffer *cb = to_cobalt_buffer(vbuf);
+	struct sg_dma_desc_info *desc = &s->dma_desc_info[vb->index];
 	unsigned long flags;
 
 	/* Prepare new buffer */
@@ -170,6 +169,7 @@ static void cobalt_enable_output(struct cobalt_stream *s)
 	}
 
 	sd_fmt.format.colorspace = s->colorspace;
+	sd_fmt.format.xfer_func = s->xfer_func;
 	sd_fmt.format.ycbcr_enc = s->ycbcr_enc;
 	sd_fmt.format.quantization = s->quantization;
 	sd_fmt.format.width = bt->width;
@@ -282,7 +282,7 @@ static void cobalt_dma_start_streaming(struct cobalt_stream *s)
 			  &vo->control);
 	}
 	cb = list_first_entry(&s->bufs, struct cobalt_buffer, list);
-	omni_sg_dma_start(s, &s->dma_desc_info[cb->vb.v4l2_buf.index]);
+	omni_sg_dma_start(s, &s->dma_desc_info[cb->vb.vb2_buf.index]);
 	spin_unlock_irqrestore(&s->irqlock, flags);
 }
 
@@ -326,7 +326,7 @@ static int cobalt_start_streaming(struct vb2_queue *q, unsigned int count)
 	iowrite32(clk_freq / 1000000, &clkloss->ref_clk_cnt_val);
 	/* The lower bound for the clock frequency is 0.5% lower as is
 	 * allowed by the spec */
-	iowrite32((((u64)bt->pixelclock * 995) / 1000) / 1000000,
+	iowrite32(div_u64(bt->pixelclock * 995, 1000000000),
 		  &clkloss->test_clk_cnt_val);
 	/* will be enabled after the first frame has been received */
 	iowrite32(bt->width * bt->height, &fw->active_length);
@@ -379,7 +379,7 @@ static void cobalt_dma_stop_streaming(struct cobalt_stream *s)
 	spin_lock_irqsave(&s->irqlock, flags);
 	list_for_each(p, &s->bufs) {
 		cb = list_entry(p, struct cobalt_buffer, list);
-		desc = &s->dma_desc_info[cb->vb.v4l2_buf.index];
+		desc = &s->dma_desc_info[cb->vb.vb2_buf.index];
 		/* Stop DMA after this descriptor chain */
 		descriptor_list_end_of_chain(desc);
 	}
@@ -414,7 +414,7 @@ static void cobalt_stop_streaming(struct vb2_queue *q)
 	list_for_each_safe(p, safe, &s->bufs) {
 		cb = list_entry(p, struct cobalt_buffer, list);
 		list_del(&cb->list);
-		vb2_buffer_done(&cb->vb, VB2_BUF_STATE_ERROR);
+		vb2_buffer_done(&cb->vb.vb2_buf, VB2_BUF_STATE_ERROR);
 	}
 	spin_unlock_irqrestore(&s->irqlock, flags);
 
@@ -640,13 +640,17 @@ static int cobalt_s_dv_timings(struct file *file, void *priv_fh,
 	struct cobalt_stream *s = video_drvdata(file);
 	int err;
 
-	if (vb2_is_busy(&s->q))
-		return -EBUSY;
-
 	if (s->input == 1) {
 		*timings = cea1080p60;
 		return 0;
 	}
+
+	if (v4l2_match_dv_timings(timings, &s->timings, 0, false))
+		return 0;
+
+	if (vb2_is_busy(&s->q))
+		return -EBUSY;
+
 	err = v4l2_subdev_call(s->sd,
 			video, s_dv_timings, timings);
 	if (!err) {
@@ -736,9 +740,6 @@ static int cobalt_g_fmt_vid_cap(struct file *file, void *priv_fh,
 		sd_fmt.which = V4L2_SUBDEV_FORMAT_ACTIVE;
 		v4l2_subdev_call(s->sd, pad, get_fmt, NULL, &sd_fmt);
 		v4l2_fill_pix_format(pix, &sd_fmt.format);
-		pix->colorspace = sd_fmt.format.colorspace;
-		pix->ycbcr_enc = sd_fmt.format.ycbcr_enc;
-		pix->quantization = sd_fmt.format.quantization;
 	}
 
 	pix->pixelformat = s->pixfmt;
@@ -781,9 +782,6 @@ static int cobalt_try_fmt_vid_cap(struct file *file, void *priv_fh,
 		sd_fmt.which = V4L2_SUBDEV_FORMAT_ACTIVE;
 		v4l2_subdev_call(s->sd, pad, get_fmt, NULL, &sd_fmt);
 		v4l2_fill_pix_format(pix, &sd_fmt.format);
-		pix->colorspace = sd_fmt.format.colorspace;
-		pix->ycbcr_enc = sd_fmt.format.ycbcr_enc;
-		pix->quantization = sd_fmt.format.quantization;
 	}
 
 	switch (pix->pixelformat) {
@@ -897,6 +895,7 @@ static int cobalt_g_fmt_vid_out(struct file *file, void *priv_fh,
 	pix->field = V4L2_FIELD_NONE;
 	pix->pixelformat = s->pixfmt;
 	pix->colorspace = s->colorspace;
+	pix->xfer_func = s->xfer_func;
 	pix->ycbcr_enc = s->ycbcr_enc;
 	pix->quantization = s->quantization;
 	pix->sizeimage = pix->bytesperline * pix->height;
@@ -929,6 +928,7 @@ static int cobalt_s_fmt_vid_out(struct file *file, void *priv_fh,
 	struct cobalt_stream *s = video_drvdata(file);
 	struct v4l2_pix_format *pix = &f->fmt.pix;
 	struct v4l2_subdev_format sd_fmt = { 0 };
+	u32 code;
 
 	if (cobalt_try_fmt_vid_out(file, priv_fh, f))
 		return -EINVAL;
@@ -941,9 +941,11 @@ static int cobalt_s_fmt_vid_out(struct file *file, void *priv_fh,
 	switch (pix->pixelformat) {
 	case V4L2_PIX_FMT_YUYV:
 		s->bpp = COBALT_BYTES_PER_PIXEL_YUYV;
+		code = MEDIA_BUS_FMT_UYVY8_1X16;
 		break;
 	case V4L2_PIX_FMT_BGR32:
 		s->bpp = COBALT_BYTES_PER_PIXEL_RGB32;
+		code = MEDIA_BUS_FMT_RGB888_1X24;
 		break;
 	default:
 		return -EINVAL;
@@ -953,13 +955,11 @@ static int cobalt_s_fmt_vid_out(struct file *file, void *priv_fh,
 	s->stride = pix->bytesperline;
 	s->pixfmt = pix->pixelformat;
 	s->colorspace = pix->colorspace;
+	s->xfer_func = pix->xfer_func;
 	s->ycbcr_enc = pix->ycbcr_enc;
 	s->quantization = pix->quantization;
 	sd_fmt.which = V4L2_SUBDEV_FORMAT_ACTIVE;
-	v4l2_subdev_call(s->sd, pad, get_fmt, NULL, &sd_fmt);
-	sd_fmt.format.colorspace = pix->colorspace;
-	sd_fmt.format.ycbcr_enc = pix->ycbcr_enc;
-	sd_fmt.format.quantization = pix->quantization;
+	v4l2_fill_mbus_format(&sd_fmt.format, pix, code);
 	v4l2_subdev_call(s->sd, pad, set_fmt, NULL, &sd_fmt);
 	return 0;
 }

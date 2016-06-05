@@ -26,6 +26,8 @@
 /*
  * Copyright (c) 2008, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
+ *
+ * Copyright (c) 2013, 2015, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -56,7 +58,7 @@ static void lovsub_req_completion(const struct lu_env *env,
 	struct lovsub_req *lsr;
 
 	lsr = cl2lovsub_req(slice);
-	OBD_SLAB_FREE_PTR(lsr, lovsub_req_kmem);
+	kmem_cache_free(lovsub_req_kmem, lsr);
 }
 
 /**
@@ -99,7 +101,6 @@ static int lovsub_device_init(const struct lu_env *env, struct lu_device *d,
 
 	next->ld_site = d->ld_site;
 	ldt = next->ld_type;
-	LASSERT(ldt != NULL);
 	rc = ldt->ldt_ops->ldto_device_init(env, next, ldt->ldt_name, NULL);
 	if (rc) {
 		next->ld_site = NULL;
@@ -136,7 +137,7 @@ static struct lu_device *lovsub_device_free(const struct lu_env *env,
 		lu_site_print(env, d->ld_site, &msgdata, lu_cdebug_printer);
 	}
 	cl_device_fini(lu2cl_dev(d));
-	OBD_FREE_PTR(lsd);
+	kfree(lsd);
 	return next;
 }
 
@@ -146,12 +147,13 @@ static int lovsub_req_init(const struct lu_env *env, struct cl_device *dev,
 	struct lovsub_req *lsr;
 	int result;
 
-	OBD_SLAB_ALLOC_PTR_GFP(lsr, lovsub_req_kmem, GFP_NOFS);
-	if (lsr != NULL) {
+	lsr = kmem_cache_zalloc(lovsub_req_kmem, GFP_NOFS);
+	if (lsr) {
 		cl_req_slice_add(req, &lsr->lsrq_cl, dev, &lovsub_req_ops);
 		result = 0;
-	} else
+	} else {
 		result = -ENOMEM;
+	}
 	return result;
 }
 
@@ -172,8 +174,8 @@ static struct lu_device *lovsub_device_alloc(const struct lu_env *env,
 	struct lu_device     *d;
 	struct lovsub_device *lsd;
 
-	OBD_ALLOC_PTR(lsd);
-	if (lsd != NULL) {
+	lsd = kzalloc(sizeof(*lsd), GFP_NOFS);
+	if (lsd) {
 		int result;
 
 		result = cl_device_init(&lsd->acid_cl, t);
@@ -181,10 +183,12 @@ static struct lu_device *lovsub_device_alloc(const struct lu_env *env,
 			d = lovsub2lu_dev(lsd);
 			d->ld_ops	 = &lovsub_lu_ops;
 			lsd->acid_cl.cd_ops = &lovsub_cl_ops;
-		} else
+		} else {
 			d = ERR_PTR(result);
-	} else
+		}
+	} else {
 		d = ERR_PTR(-ENOMEM);
+	}
 	return d;
 }
 
@@ -204,6 +208,5 @@ struct lu_device_type lovsub_device_type = {
 	.ldt_ops      = &lovsub_device_type_ops,
 	.ldt_ctx_tags = LCT_CL_THREAD
 };
-
 
 /** @} lov */

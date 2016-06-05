@@ -406,16 +406,11 @@ static int gpio_fan_get_cur_state(struct thermal_cooling_device *cdev,
 				  unsigned long *state)
 {
 	struct gpio_fan_data *fan_data = cdev->devdata;
-	int r;
 
 	if (!fan_data)
 		return -EINVAL;
 
-	r = get_fan_speed_index(fan_data);
-	if (r < 0)
-		return r;
-
-	*state = r;
+	*state = fan_data->speed_index;
 	return 0;
 }
 
@@ -539,6 +534,7 @@ static const struct of_device_id of_gpio_fan_match[] = {
 	{ .compatible = "gpio-fan", },
 	{},
 };
+MODULE_DEVICE_TABLE(of, of_gpio_fan_match);
 #endif /* CONFIG_OF_GPIO */
 
 static int gpio_fan_probe(struct platform_device *pdev)

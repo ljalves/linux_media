@@ -46,6 +46,7 @@
 #include <linux/usb/cdc.h>
 #include <asm/byteorder.h>
 #include <asm/unaligned.h>
+#include <linux/idr.h>
 #include <linux/list.h>
 
 #include "cdc-acm.h"
@@ -56,27 +57,27 @@
 
 static struct usb_driver acm_driver;
 static struct tty_driver *acm_tty_driver;
-static struct acm *acm_table[ACM_TTY_MINORS];
 
-static DEFINE_MUTEX(acm_table_lock);
+static DEFINE_IDR(acm_minors);
+static DEFINE_MUTEX(acm_minors_lock);
 
 static void acm_tty_set_termios(struct tty_struct *tty,
 				struct ktermios *termios_old);
 
 /*
- * acm_table accessors
+ * acm_minors accessors
  */
 
 /*
- * Look up an ACM structure by index. If found and not disconnected, increment
+ * Look up an ACM structure by minor. If found and not disconnected, increment
  * its refcount and return it with its mutex held.
  */
-static struct acm *acm_get_by_index(unsigned index)
+static struct acm *acm_get_by_minor(unsigned int minor)
 {
 	struct acm *acm;
 
-	mutex_lock(&acm_table_lock);
-	acm = acm_table[index];
+	mutex_lock(&acm_minors_lock);
+	acm = idr_find(&acm_minors, minor);
 	if (acm) {
 		mutex_lock(&acm->mutex);
 		if (acm->disconnected) {
@@ -87,7 +88,7 @@ static struct acm *acm_get_by_index(unsigned index)
 			mutex_unlock(&acm->mutex);
 		}
 	}
-	mutex_unlock(&acm_table_lock);
+	mutex_unlock(&acm_minors_lock);
 	return acm;
 }
 
@@ -98,14 +99,9 @@ static int acm_alloc_minor(struct acm *acm)
 {
 	int minor;
 
-	mutex_lock(&acm_table_lock);
-	for (minor = 0; minor < ACM_TTY_MINORS; minor++) {
-		if (!acm_table[minor]) {
-			acm_table[minor] = acm;
-			break;
-		}
-	}
-	mutex_unlock(&acm_table_lock);
+	mutex_lock(&acm_minors_lock);
+	minor = idr_alloc(&acm_minors, acm, 0, ACM_TTY_MINORS, GFP_KERNEL);
+	mutex_unlock(&acm_minors_lock);
 
 	return minor;
 }
@@ -113,9 +109,9 @@ static int acm_alloc_minor(struct acm *acm)
 /* Release the minor number associated with 'acm'.  */
 static void acm_release_minor(struct acm *acm)
 {
-	mutex_lock(&acm_table_lock);
-	acm_table[acm->minor] = NULL;
-	mutex_unlock(&acm_table_lock);
+	mutex_lock(&acm_minors_lock);
+	idr_remove(&acm_minors, acm->minor);
+	mutex_unlock(&acm_minors_lock);
 }
 
 /*
@@ -432,7 +428,8 @@ static void acm_read_bulk_callback(struct urb *urb)
 		set_bit(rb->index, &acm->read_urbs_free);
 		dev_dbg(&acm->data->dev, "%s - non-zero urb status: %d\n",
 							__func__, status);
-		return;
+		if ((status != -ENOENT) || (urb->actual_length == 0))
+			return;
 	}
 
 	usb_mark_last_busy(acm->dev);
@@ -497,7 +494,7 @@ static int acm_tty_install(struct tty_driver *driver, struct tty_struct *tty)
 
 	dev_dbg(tty->dev, "%s\n", __func__);
 
-	acm = acm_get_by_index(tty->index);
+	acm = acm_get_by_minor(tty->index);
 	if (!acm)
 		return -ENODEV;
 
@@ -716,9 +713,20 @@ static int acm_tty_write(struct tty_struct *tty,
 	}
 
 	if (acm->susp_count) {
+		if (acm->putbuffer) {
+			/* now to preserve order */
+			usb_anchor_urb(acm->putbuffer->urb, &acm->delayed);
+			acm->putbuffer = NULL;
+		}
 		usb_anchor_urb(wb->urb, &acm->delayed);
 		spin_unlock_irqrestore(&acm->write_lock, flags);
 		return count;
+	} else {
+		if (acm->putbuffer) {
+			/* at this point there is no good way to handle errors */
+			acm_start_wb(acm, acm->putbuffer);
+			acm->putbuffer = NULL;
+		}
 	}
 
 	stat = acm_start_wb(acm, wb);
@@ -727,6 +735,64 @@ static int acm_tty_write(struct tty_struct *tty,
 	if (stat < 0)
 		return stat;
 	return count;
+}
+
+static void acm_tty_flush_chars(struct tty_struct *tty)
+{
+	struct acm *acm = tty->driver_data;
+	struct acm_wb *cur = acm->putbuffer;
+	int err;
+	unsigned long flags;
+
+	if (!cur) /* nothing to do */
+		return;
+
+	acm->putbuffer = NULL;
+	err = usb_autopm_get_interface_async(acm->control);
+	spin_lock_irqsave(&acm->write_lock, flags);
+	if (err < 0) {
+		cur->use = 0;
+		acm->putbuffer = cur;
+		goto out;
+	}
+
+	if (acm->susp_count)
+		usb_anchor_urb(cur->urb, &acm->delayed);
+	else
+		acm_start_wb(acm, cur);
+out:
+	spin_unlock_irqrestore(&acm->write_lock, flags);
+	return;
+}
+
+static int acm_tty_put_char(struct tty_struct *tty, unsigned char ch)
+{
+	struct acm *acm = tty->driver_data;
+	struct acm_wb *cur;
+	int wbn;
+	unsigned long flags;
+
+overflow:
+	cur = acm->putbuffer;
+	if (!cur) {
+		spin_lock_irqsave(&acm->write_lock, flags);
+		wbn = acm_wb_alloc(acm);
+		if (wbn >= 0) {
+			cur = &acm->wb[wbn];
+			acm->putbuffer = cur;
+		}
+		spin_unlock_irqrestore(&acm->write_lock, flags);
+		if (!cur)
+			return 0;
+	}
+
+	if (cur->len == acm->writesize) {
+		acm_tty_flush_chars(tty);
+		goto overflow;
+	}
+
+	cur->buf[cur->len++] = ch;
+	return 1;
 }
 
 static int acm_tty_write_room(struct tty_struct *tty)
@@ -1117,6 +1183,9 @@ static int acm_probe(struct usb_interface *intf,
 	if (quirks == NO_UNION_NORMAL) {
 		data_interface = usb_ifnum_to_if(usb_dev, 1);
 		control_interface = usb_ifnum_to_if(usb_dev, 0);
+		/* we would crash */
+		if (!data_interface || !control_interface)
+			return -ENODEV;
 		goto skip_normal_probe;
 	}
 
@@ -1267,12 +1336,9 @@ skip_normal_probe:
 						!= CDC_DATA_INTERFACE_TYPE) {
 		if (control_interface->cur_altsetting->desc.bInterfaceClass
 						== CDC_DATA_INTERFACE_TYPE) {
-			struct usb_interface *t;
 			dev_dbg(&intf->dev,
 				"Your device has switched interfaces.\n");
-			t = control_interface;
-			control_interface = data_interface;
-			data_interface = t;
+			swap(control_interface, data_interface);
 		} else {
 			return -EINVAL;
 		}
@@ -1301,12 +1367,9 @@ skip_normal_probe:
 	/* workaround for switched endpoints */
 	if (!usb_endpoint_dir_in(epread)) {
 		/* descriptors are swapped */
-		struct usb_endpoint_descriptor *t;
 		dev_dbg(&intf->dev,
 			"The data interface has switched endpoints\n");
-		t = epread;
-		epread = epwrite;
-		epwrite = t;
+		swap(epread, epwrite);
 	}
 made_compressed_probe:
 	dev_dbg(&intf->dev, "interfaces are valid\n");
@@ -1316,7 +1379,7 @@ made_compressed_probe:
 		goto alloc_fail;
 
 	minor = acm_alloc_minor(acm);
-	if (minor == ACM_TTY_MINORS) {
+	if (minor < 0) {
 		dev_err(&intf->dev, "no more free acm devices\n");
 		kfree(acm);
 		return -ENODEV;
@@ -1414,6 +1477,8 @@ made_compressed_probe:
 				usb_sndbulkpipe(usb_dev, epwrite->bEndpointAddress),
 				NULL, acm->writesize, acm_write_bulk, snd);
 		snd->urb->transfer_flags |= URB_NO_TRANSFER_DMA_MAP;
+		if (quirks & SEND_ZERO_PACKET)
+			snd->urb->transfer_flags |= URB_ZERO_PACKET;
 		snd->instance = acm;
 	}
 
@@ -1475,6 +1540,11 @@ skip_countries:
 	if (IS_ERR(tty_dev)) {
 		rv = PTR_ERR(tty_dev);
 		goto alloc_fail8;
+	}
+
+	if (quirks & CLEAR_HALT_CONDITIONS) {
+		usb_clear_halt(usb_dev, usb_rcvbulkpipe(usb_dev, epread->bEndpointAddress));
+		usb_clear_halt(usb_dev, usb_sndbulkpipe(usb_dev, epwrite->bEndpointAddress));
 	}
 
 	return 0;
@@ -1610,7 +1680,7 @@ static int acm_resume(struct usb_interface *intf)
 	if (--acm->susp_count)
 		goto out;
 
-	if (test_bit(ASYNCB_INITIALIZED, &acm->port.flags)) {
+	if (tty_port_initialized(&acm->port)) {
 		rv = usb_submit_urb(acm->ctrlurb, GFP_ATOMIC);
 
 		for (;;) {
@@ -1640,7 +1710,7 @@ static int acm_reset_resume(struct usb_interface *intf)
 {
 	struct acm *acm = usb_get_intfdata(intf);
 
-	if (test_bit(ASYNCB_INITIALIZED, &acm->port.flags))
+	if (tty_port_initialized(&acm->port))
 		tty_port_tty_hangup(&acm->port, false);
 
 	return acm_resume(intf);
@@ -1756,6 +1826,10 @@ static const struct usb_device_id acm_ids[] = {
 	.driver_info = NO_UNION_NORMAL, /* reports zero length descriptor */
 	},
 
+	{ USB_DEVICE(0x2912, 0x0001), /* ATOL FPrint */
+	.driver_info = CLEAR_HALT_CONDITIONS,
+	},
+
 	/* Nokia S60 phones expose two ACM channels. The first is
 	 * a modem and is picked up by the standard AT-command
 	 * information below. The second is 'vendor-specific' but
@@ -1839,6 +1913,16 @@ static const struct usb_device_id acm_ids[] = {
 	},
 #endif
 
+	/*Samsung phone in firmware update mode */
+	{ USB_DEVICE(0x04e8, 0x685d),
+	.driver_info = IGNORE_DEVICE,
+	},
+
+	/* Exclude Infineon Flash Loader utility */
+	{ USB_DEVICE(0x058b, 0x0041),
+	.driver_info = IGNORE_DEVICE,
+	},
+
 	/* control interfaces without any protocol set */
 	{ USB_INTERFACE_INFO(USB_CLASS_COMM, USB_CDC_SUBCLASS_ACM,
 		USB_CDC_PROTO_NONE) },
@@ -1856,6 +1940,10 @@ static const struct usb_device_id acm_ids[] = {
 		USB_CDC_ACM_PROTO_AT_3G) },
 	{ USB_INTERFACE_INFO(USB_CLASS_COMM, USB_CDC_SUBCLASS_ACM,
 		USB_CDC_ACM_PROTO_AT_CDMA) },
+
+	{ USB_DEVICE(0x1519, 0x0452), /* Intel 7260 modem */
+	.driver_info = SEND_ZERO_PACKET,
+	},
 
 	{ }
 };
@@ -1889,6 +1977,8 @@ static const struct tty_operations acm_ops = {
 	.cleanup =		acm_tty_cleanup,
 	.hangup =		acm_tty_hangup,
 	.write =		acm_tty_write,
+	.put_char =		acm_tty_put_char,
+	.flush_chars =		acm_tty_flush_chars,
 	.write_room =		acm_tty_write_room,
 	.ioctl =		acm_tty_ioctl,
 	.throttle =		acm_tty_throttle,
@@ -1945,6 +2035,7 @@ static void __exit acm_exit(void)
 	usb_deregister(&acm_driver);
 	tty_unregister_driver(acm_tty_driver);
 	put_tty_driver(acm_tty_driver);
+	idr_destroy(&acm_minors);
 }
 
 module_init(acm_init);

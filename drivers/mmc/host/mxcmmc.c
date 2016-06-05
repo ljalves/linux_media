@@ -307,9 +307,6 @@ static int mxcmci_setup_data(struct mxcmci_host *host, struct mmc_data *data)
 	enum dma_transfer_direction slave_dirn;
 	int i, nents;
 
-	if (data->flags & MMC_DATA_STREAM)
-		nob = 0xffff;
-
 	host->data = data;
 	data->bytes_xfered = 0;
 
@@ -605,11 +602,7 @@ static int mxcmci_push(struct mxcmci_host *host, void *_buf, int bytes)
 		mxcmci_writel(host, cpu_to_le32(tmp), MMC_REG_BUFFER_ACCESS);
 	}
 
-	stat = mxcmci_poll_status(host, STATUS_BUF_WRITE_RDY);
-	if (stat)
-		return stat;
-
-	return 0;
+	return mxcmci_poll_status(host, STATUS_BUF_WRITE_RDY);
 }
 
 static int mxcmci_transfer_data(struct mxcmci_host *host)

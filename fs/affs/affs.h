@@ -64,7 +64,7 @@ struct affs_inode_info {
 /* short cut to get to the affs specific inode data */
 static inline struct affs_inode_info *AFFS_I(struct inode *inode)
 {
-	return list_entry(inode, struct affs_inode_info, vfs_inode);
+	return container_of(inode, struct affs_inode_info, vfs_inode);
 }
 
 /*
@@ -138,7 +138,7 @@ extern int	affs_remove_hash(struct inode *dir, struct buffer_head *rem_bh);
 extern int	affs_remove_header(struct dentry *dentry);
 extern u32	affs_checksum_block(struct super_block *sb, struct buffer_head *bh);
 extern void	affs_fix_checksum(struct super_block *sb, struct buffer_head *bh);
-extern void	secs_to_datestamp(time_t secs, struct affs_date *ds);
+extern void	secs_to_datestamp(time64_t secs, struct affs_date *ds);
 extern umode_t	prot_to_mode(u32 prot);
 extern void	mode_to_prot(struct inode *inode);
 __printf(3, 4)

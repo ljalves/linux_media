@@ -75,15 +75,15 @@ static inline int ti_thermal_hotspot_temperature(int t, int s, int c)
 }
 
 /* thermal zone ops */
-/* Get temperature callback function for thermal zone*/
-static inline int __ti_thermal_get_temp(void *devdata, long *temp)
+/* Get temperature callback function for thermal zone */
+static inline int __ti_thermal_get_temp(void *devdata, int *temp)
 {
 	struct thermal_zone_device *pcb_tz = NULL;
 	struct ti_thermal_data *data = devdata;
 	struct ti_bandgap *bgp;
 	const struct ti_temp_sensor *s;
 	int ret, tmp, slope, constant;
-	unsigned long pcb_temp;
+	int pcb_temp;
 
 	if (!data)
 		return 0;
@@ -119,7 +119,7 @@ static inline int __ti_thermal_get_temp(void *devdata, long *temp)
 }
 
 static inline int ti_thermal_get_temp(struct thermal_zone_device *thermal,
-				      unsigned long *temp)
+				      int *temp)
 {
 	struct ti_thermal_data *data = thermal->devdata;
 
@@ -146,7 +146,8 @@ static int ti_thermal_bind(struct thermal_zone_device *thermal,
 	return thermal_zone_bind_cooling_device(thermal, 0, cdev,
 	/* bind with min and max states defined by cpu_cooling */
 						THERMAL_NO_LIMIT,
-						THERMAL_NO_LIMIT);
+						THERMAL_NO_LIMIT,
+						THERMAL_WEIGHT_DEFAULT);
 }
 
 /* Unbind callback functions for thermal zone */
@@ -228,7 +229,7 @@ static int ti_thermal_get_trip_type(struct thermal_zone_device *thermal,
 
 /* Get trip temperature callback functions for thermal zone */
 static int ti_thermal_get_trip_temp(struct thermal_zone_device *thermal,
-				    int trip, unsigned long *temp)
+				    int trip, int *temp)
 {
 	if (!ti_thermal_is_valid_trip(trip))
 		return -EINVAL;
@@ -279,7 +280,7 @@ static int ti_thermal_get_trend(struct thermal_zone_device *thermal,
 
 /* Get critical temperature callback functions for thermal zone */
 static int ti_thermal_get_crit_temp(struct thermal_zone_device *thermal,
-				    unsigned long *temp)
+				    int *temp)
 {
 	/* shutdown zone */
 	return ti_thermal_get_trip_temp(thermal, OMAP_TRIP_NUMBER - 1, temp);
@@ -336,7 +337,7 @@ int ti_thermal_expose_sensor(struct ti_bandgap *bgp, int id,
 		return -EINVAL;
 
 	/* in case this is specified by DT */
-	data->ti_thermal = thermal_zone_of_sensor_register(bgp->dev, id,
+	data->ti_thermal = devm_thermal_zone_of_sensor_register(bgp->dev, id,
 					data, &ti_of_thermal_ops);
 	if (IS_ERR(data->ti_thermal)) {
 		/* Create thermal zone */
@@ -367,9 +368,6 @@ int ti_thermal_remove_sensor(struct ti_bandgap *bgp, int id)
 	if (data && data->ti_thermal) {
 		if (data->our_zone)
 			thermal_zone_device_unregister(data->ti_thermal);
-		else
-			thermal_zone_of_sensor_unregister(bgp->dev,
-							  data->ti_thermal);
 	}
 
 	return 0;

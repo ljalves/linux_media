@@ -500,8 +500,10 @@ static int hip04_rx_poll(struct napi_struct *napi, int budget)
 	while (cnt && !last) {
 		buf = priv->rx_buf[priv->rx_head];
 		skb = build_skb(buf, priv->rx_buf_size);
-		if (unlikely(!skb))
+		if (unlikely(!skb)) {
 			net_dbg_ratelimited("build_skb failed\n");
+			goto refill;
+		}
 
 		dma_unmap_single(&ndev->dev, priv->rx_phys[priv->rx_head],
 				 RX_BUF_SIZE, DMA_FROM_DEVICE);
@@ -528,6 +530,7 @@ static int hip04_rx_poll(struct napi_struct *napi, int budget)
 			rx++;
 		}
 
+refill:
 		buf = netdev_alloc_frag(priv->rx_buf_size);
 		if (!buf)
 			goto done;
@@ -798,7 +801,7 @@ static void hip04_free_ring(struct net_device *ndev, struct device *d)
 
 	for (i = 0; i < RX_DESC_NUM; i++)
 		if (priv->rx_buf[i])
-			put_page(virt_to_head_page(priv->rx_buf[i]));
+			skb_free_frag(priv->rx_buf[i]);
 
 	for (i = 0; i < TX_DESC_NUM; i++)
 		if (priv->tx_skb[i])
@@ -816,7 +819,7 @@ static int hip04_mac_probe(struct platform_device *pdev)
 	struct net_device *ndev;
 	struct hip04_priv *priv;
 	struct resource *res;
-	unsigned int irq;
+	int irq;
 	int ret;
 
 	ndev = alloc_etherdev(sizeof(struct hip04_priv));
@@ -965,7 +968,6 @@ static struct platform_driver hip04_mac_driver = {
 	.remove	= hip04_remove,
 	.driver	= {
 		.name		= DRV_NAME,
-		.owner		= THIS_MODULE,
 		.of_match_table	= hip04_mac_match,
 	},
 };

@@ -13,10 +13,18 @@
 #define _ASM_ACPI_H
 
 #include <linux/mm.h>
-#include <linux/irqchip/arm-gic-acpi.h>
+#include <linux/psci.h>
 
 #include <asm/cputype.h>
 #include <asm/smp_plat.h>
+
+/* Macros for consistency checks of the GICC subtable of MADT */
+#define ACPI_MADT_GICC_LENGTH	\
+	(acpi_gbl_FADT.header.revision < 6 ? 76 : 80)
+
+#define BAD_MADT_GICC_ENTRY(entry, end)						\
+	(!(entry) || (unsigned long)(entry) + sizeof(*(entry)) > (end) ||	\
+	 (entry)->header.length != ACPI_MADT_GICC_LENGTH)
 
 /* Basic configuration for ACPI */
 #ifdef	CONFIG_ACPI
@@ -38,18 +46,6 @@ typedef u64 phys_cpuid_t;
 extern int acpi_disabled;
 extern int acpi_noirq;
 extern int acpi_pci_disabled;
-
-/* 1 to indicate PSCI 0.2+ is implemented */
-static inline bool acpi_psci_present(void)
-{
-	return acpi_gbl_FADT.arm_boot_flags & ACPI_FADT_PSCI_COMPLIANT;
-}
-
-/* 1 to indicate HVC must be used instead of SMC as the PSCI conduit */
-static inline bool acpi_psci_use_hvc(void)
-{
-	return acpi_gbl_FADT.arm_boot_flags & ACPI_FADT_PSCI_USE_HVC;
-}
 
 static inline void disable_acpi(void)
 {
@@ -88,9 +84,33 @@ static inline void arch_fix_phys_package_id(int num, u32 slot) { }
 void __init acpi_init_cpus(void);
 
 #else
-static inline bool acpi_psci_present(void) { return false; }
-static inline bool acpi_psci_use_hvc(void) { return false; }
 static inline void acpi_init_cpus(void) { }
 #endif /* CONFIG_ACPI */
+
+#ifdef CONFIG_ARM64_ACPI_PARKING_PROTOCOL
+bool acpi_parking_protocol_valid(int cpu);
+void __init
+acpi_set_mailbox_entry(int cpu, struct acpi_madt_generic_interrupt *processor);
+#else
+static inline bool acpi_parking_protocol_valid(int cpu) { return false; }
+static inline void
+acpi_set_mailbox_entry(int cpu, struct acpi_madt_generic_interrupt *processor)
+{}
+#endif
+
+static inline const char *acpi_get_enable_method(int cpu)
+{
+	if (acpi_psci_present())
+		return "psci";
+
+	if (acpi_parking_protocol_valid(cpu))
+		return "parking-protocol";
+
+	return NULL;
+}
+
+#ifdef	CONFIG_ACPI_APEI
+pgprot_t arch_apei_get_mem_attribute(phys_addr_t addr);
+#endif
 
 #endif /*_ASM_ACPI_H*/

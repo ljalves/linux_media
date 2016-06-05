@@ -308,15 +308,9 @@ static void aio_free_ring(struct kioctx *ctx)
 	}
 }
 
-static int aio_ring_mmap(struct file *file, struct vm_area_struct *vma)
+static int aio_ring_mremap(struct vm_area_struct *vma)
 {
-	vma->vm_flags |= VM_DONTEXPAND;
-	vma->vm_ops = &generic_file_vm_ops;
-	return 0;
-}
-
-static int aio_ring_remap(struct file *file, struct vm_area_struct *vma)
-{
+	struct file *file = vma->vm_file;
 	struct mm_struct *mm = vma->vm_mm;
 	struct kioctx_table *table;
 	int i, res = -EINVAL;
@@ -342,9 +336,24 @@ static int aio_ring_remap(struct file *file, struct vm_area_struct *vma)
 	return res;
 }
 
+static const struct vm_operations_struct aio_ring_vm_ops = {
+	.mremap		= aio_ring_mremap,
+#if IS_ENABLED(CONFIG_MMU)
+	.fault		= filemap_fault,
+	.map_pages	= filemap_map_pages,
+	.page_mkwrite	= filemap_page_mkwrite,
+#endif
+};
+
+static int aio_ring_mmap(struct file *file, struct vm_area_struct *vma)
+{
+	vma->vm_flags |= VM_DONTEXPAND;
+	vma->vm_ops = &aio_ring_vm_ops;
+	return 0;
+}
+
 static const struct file_operations aio_ring_fops = {
 	.mmap = aio_ring_mmap,
-	.mremap = aio_ring_remap,
 };
 
 #if IS_ENABLED(CONFIG_MIGRATION)
@@ -487,7 +496,12 @@ static int aio_setup_ring(struct kioctx *ctx)
 	ctx->mmap_size = nr_pages * PAGE_SIZE;
 	pr_debug("attempting mmap of %lu bytes\n", ctx->mmap_size);
 
-	down_write(&mm->mmap_sem);
+	if (down_write_killable(&mm->mmap_sem)) {
+		ctx->mmap_size = 0;
+		aio_free_ring(ctx);
+		return -EINTR;
+	}
+
 	ctx->mmap_base = do_mmap_pgoff(ctx->aio_ring_file, 0, ctx->mmap_size,
 				       PROT_READ | PROT_WRITE,
 				       MAP_SHARED, 0, &unused);
@@ -1437,8 +1451,6 @@ rw_common:
 			kfree(iovec);
 			return ret;
 		}
-
-		len = ret;
 
 		if (rw == WRITE)
 			file_start_write(file);

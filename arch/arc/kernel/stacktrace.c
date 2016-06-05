@@ -122,19 +122,17 @@ arc_unwind_core(struct task_struct *tsk, struct pt_regs *regs,
 	while (1) {
 		address = UNW_PC(&frame_info);
 
-		if (address && __kernel_text_address(address)) {
-			if (consumer_fn(address, arg) == -1)
-				break;
-		}
+		if (!address || !__kernel_text_address(address))
+			break;
+
+		if (consumer_fn(address, arg) == -1)
+			break;
 
 		ret = arc_unwind(&frame_info);
-
-		if (ret == 0) {
-			frame_info.regs.r63 = frame_info.regs.r31;
-			continue;
-		} else {
+		if (ret)
 			break;
-		}
+
+		frame_info.regs.r63 = frame_info.regs.r31;
 	}
 
 	return address;		/* return the last address it saw */
@@ -234,7 +232,7 @@ void show_stack(struct task_struct *tsk, unsigned long *sp)
 }
 
 /* Another API expected by schedular, shows up in "ps" as Wait Channel
- * Ofcourse just returning schedule( ) would be pointless so unwind until
+ * Of course just returning schedule( ) would be pointless so unwind until
  * the function is not in schedular code
  */
 unsigned int get_wchan(struct task_struct *tsk)

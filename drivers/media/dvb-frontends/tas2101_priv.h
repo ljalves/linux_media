@@ -273,9 +273,9 @@ static struct tas2101_dbmtable_pair tas2101_dbmtable[] =  {
 
 /* modfec (modulation and FEC) lookup table */
 struct tas2101_modfec {
-	fe_delivery_system_t delivery_system;
-	fe_modulation_t modulation;
-	fe_code_rate_t fec;
+	enum fe_delivery_system delivery_system;
+	enum fe_modulation modulation;
+	enum fe_code_rate fec;
 };
 
 static struct tas2101_modfec tas2101_modfec_modes[] = {

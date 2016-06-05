@@ -33,9 +33,9 @@ extern struct pci_dev *isa_bridge_pcidev;	/* may be NULL if no ISA bus */
 struct device_node;
 struct pci_dn;
 
-typedef void *(*traverse_func)(struct device_node *me, void *data);
-void *traverse_pci_devices(struct device_node *start, traverse_func pre,
-		void *data);
+void *pci_traverse_device_nodes(struct device_node *start,
+				void *(*fn)(struct device_node *, void *),
+				void *data);
 void *traverse_pci_dn(struct pci_dn *root,
 		      void *(*fn)(struct pci_dn *, void *),
 		      void *data);
@@ -61,6 +61,7 @@ int rtas_write_config(struct pci_dn *, int where, int size, u32 val);
 int rtas_read_config(struct pci_dn *, int where, int size, u32 *val);
 void eeh_pe_state_mark(struct eeh_pe *pe, int state);
 void eeh_pe_state_clear(struct eeh_pe *pe, int state);
+void eeh_pe_state_mark_with_cfg(struct eeh_pe *pe, int state);
 void eeh_pe_dev_mode_mark(struct eeh_pe *pe, int mode);
 
 void eeh_sysfs_add_device(struct pci_dev *pdev);

@@ -408,7 +408,7 @@ static inline struct v4l2_subdev *ctrl_to_sd(struct v4l2_ctrl *ctrl)
 
 static inline bool s5k5baf_is_cis_subdev(struct v4l2_subdev *sd)
 {
-	return sd->entity.type == MEDIA_ENT_T_V4L2_SUBDEV_SENSOR;
+	return sd->entity.function == MEDIA_ENT_F_CAM_SENSOR;
 }
 
 static inline struct s5k5baf *to_s5k5baf(struct v4l2_subdev *sd)
@@ -491,7 +491,7 @@ static void s5k5baf_write_arr_seq(struct s5k5baf *state, u16 addr,
 	v4l2_dbg(3, debug, c, "i2c_write_seq(count=%d): %*ph\n", count,
 		 min(2 * count, 64), seq);
 
-	buf[0] = __constant_cpu_to_be16(REG_CMD_BUF);
+	buf[0] = cpu_to_be16(REG_CMD_BUF);
 
 	while (count > 0) {
 		int n = min_t(int, count, ARRAY_SIZE(buf) - 1);
@@ -1756,7 +1756,7 @@ static int s5k5baf_registered(struct v4l2_subdev *sd)
 		v4l2_err(sd, "failed to register subdev %s\n",
 			 state->cis_sd.name);
 	else
-		ret = media_entity_create_link(&state->cis_sd.entity, PAD_CIS,
+		ret = media_create_pad_link(&state->cis_sd.entity, PAD_CIS,
 					       &state->sd.entity, PAD_CIS,
 					       MEDIA_LNK_FL_IMMUTABLE |
 					       MEDIA_LNK_FL_ENABLED);
@@ -1868,8 +1868,11 @@ static int s5k5baf_parse_device_node(struct s5k5baf *state, struct device *dev)
 		return -EINVAL;
 	}
 
-	v4l2_of_parse_endpoint(node_ep, &ep);
+	ret = v4l2_of_parse_endpoint(node_ep, &ep);
 	of_node_put(node_ep);
+	if (ret)
+		return ret;
+
 	state->bus_type = ep.bus_type;
 
 	switch (state->bus_type) {
@@ -1904,8 +1907,8 @@ static int s5k5baf_configure_subdevs(struct s5k5baf *state,
 	sd->flags |= V4L2_SUBDEV_FL_HAS_DEVNODE;
 
 	state->cis_pad.flags = MEDIA_PAD_FL_SOURCE;
-	sd->entity.type = MEDIA_ENT_T_V4L2_SUBDEV_SENSOR;
-	ret = media_entity_init(&sd->entity, NUM_CIS_PADS, &state->cis_pad, 0);
+	sd->entity.function = MEDIA_ENT_F_CAM_SENSOR;
+	ret = media_entity_pads_init(&sd->entity, NUM_CIS_PADS, &state->cis_pad);
 	if (ret < 0)
 		goto err;
 
@@ -1919,8 +1922,8 @@ static int s5k5baf_configure_subdevs(struct s5k5baf *state,
 
 	state->pads[PAD_CIS].flags = MEDIA_PAD_FL_SINK;
 	state->pads[PAD_OUT].flags = MEDIA_PAD_FL_SOURCE;
-	sd->entity.type = MEDIA_ENT_T_V4L2_SUBDEV;
-	ret = media_entity_init(&sd->entity, NUM_ISP_PADS, state->pads, 0);
+	sd->entity.function = MEDIA_ENT_F_V4L2_SUBDEV_UNKNOWN;
+	ret = media_entity_pads_init(&sd->entity, NUM_ISP_PADS, state->pads);
 
 	if (!ret)
 		return 0;

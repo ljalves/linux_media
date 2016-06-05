@@ -41,8 +41,8 @@
 #include <media/videobuf-dma-sg.h>
 #include <media/tveeprom.h>
 #include <media/rc-core.h>
-#include <media/ir-kbd-i2c.h>
-#include <media/tea575x.h>
+#include <media/i2c/ir-kbd-i2c.h>
+#include <media/drv-intf/tea575x.h>
 
 #include "bt848.h"
 #include "bttv.h"
@@ -140,7 +140,7 @@ struct bttv_ir {
 	bool			rc5_gpio;   /* Is RC5 legacy GPIO enabled? */
 	u32                     last_bit;   /* last raw bit seen */
 	u32                     code;       /* raw code under construction */
-	struct timeval          base_time;  /* time of last seen code */
+	ktime_t          				base_time;  /* time of last seen code */
 	bool                    active;     /* building raw code */
 };
 

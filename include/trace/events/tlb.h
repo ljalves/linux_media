@@ -11,7 +11,8 @@
 	EM(  TLB_FLUSH_ON_TASK_SWITCH,	"flush on task switch" )	\
 	EM(  TLB_REMOTE_SHOOTDOWN,	"remote shootdown" )		\
 	EM(  TLB_LOCAL_SHOOTDOWN,	"local shootdown" )		\
-	EMe( TLB_LOCAL_MM_SHOOTDOWN,	"local mm shootdown" )
+	EM(  TLB_LOCAL_MM_SHOOTDOWN,	"local mm shootdown" )		\
+	EMe( TLB_REMOTE_SEND_IPI,	"remote ipi send" )
 
 /*
  * First define the enums in TLB_FLUSH_REASON to be exported to userspace
@@ -33,12 +34,10 @@ TLB_FLUSH_REASON
 #define EM(a,b)		{ a, b },
 #define EMe(a,b)	{ a, b }
 
-TRACE_EVENT_CONDITION(tlb_flush,
+TRACE_EVENT(tlb_flush,
 
 	TP_PROTO(int reason, unsigned long pages),
 	TP_ARGS(reason, pages),
-
-	TP_CONDITION(cpu_online(smp_processor_id())),
 
 	TP_STRUCT__entry(
 		__field(	  int, reason)

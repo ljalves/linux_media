@@ -269,11 +269,9 @@ static int mipsxx_perfcount_handler(void)
 	return handled;
 }
 
-#define M_CONFIG1_PC	(1 << 4)
-
 static inline int __n_counters(void)
 {
-	if (!(read_c0_config1() & M_CONFIG1_PC))
+	if (!cpu_has_perf)
 		return 0;
 	if (!(read_c0_perfctrl0() & M_PERFCTL_MORE))
 		return 1;
@@ -390,6 +388,10 @@ static int __init mipsxx_init(void)
 
 	case CPU_P5600:
 		op_model_mipsxx_ops.cpu_type = "mips/P5600";
+		break;
+
+	case CPU_I6400:
+		op_model_mipsxx_ops.cpu_type = "mips/I6400";
 		break;
 
 	case CPU_M5150:

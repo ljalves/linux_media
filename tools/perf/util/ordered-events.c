@@ -220,6 +220,9 @@ static int __ordered_events__flush(struct ordered_events *oe)
 	else if (last_ts <= limit)
 		oe->last = list_entry(head->prev, struct ordered_event, list);
 
+	if (show_progress)
+		ui_progress__finish();
+
 	return 0;
 }
 
@@ -304,4 +307,13 @@ void ordered_events__free(struct ordered_events *oe)
 		free_dup_event(oe, event->event);
 		free(event);
 	}
+}
+
+void ordered_events__reinit(struct ordered_events *oe)
+{
+	ordered_events__deliver_t old_deliver = oe->deliver;
+
+	ordered_events__free(oe);
+	memset(oe, '\0', sizeof(*oe));
+	ordered_events__init(oe, old_deliver);
 }

@@ -249,7 +249,7 @@ static void *__eeh_pe_get(void *data, void *flag)
 	} else {
 		if (edev->pe_config_addr &&
 		    (edev->pe_config_addr == pe->addr))
-		return pe;
+			return pe;
 	}
 
 	/* Try BDF address */
@@ -299,7 +299,10 @@ static struct eeh_pe *eeh_pe_get_parent(struct eeh_dev *edev)
 	 * EEH device already having associated PE, but
 	 * the direct parent EEH device doesn't have yet.
 	 */
-	pdn = pdn ? pdn->parent : NULL;
+	if (edev->physfn)
+		pdn = pci_get_pdn(edev->physfn);
+	else
+		pdn = pdn ? pdn->parent : NULL;
 	while (pdn) {
 		/* We're poking out of PCI territory */
 		parent = pdn_to_eeh_dev(pdn);
@@ -382,7 +385,10 @@ int eeh_add_to_parent_pe(struct eeh_dev *edev)
 	}
 
 	/* Create a new EEH PE */
-	pe = eeh_pe_alloc(edev->phb, EEH_PE_DEVICE);
+	if (edev->physfn)
+		pe = eeh_pe_alloc(edev->phb, EEH_PE_VF);
+	else
+		pe = eeh_pe_alloc(edev->phb, EEH_PE_DEVICE);
 	if (!pe) {
 		pr_err("%s: out of memory!\n", __func__);
 		return -ENOMEM;
@@ -657,6 +663,28 @@ void eeh_pe_state_clear(struct eeh_pe *pe, int state)
 	eeh_pe_traverse(pe, __eeh_pe_state_clear, &state);
 }
 
+/**
+ * eeh_pe_state_mark_with_cfg - Mark PE state with unblocked config space
+ * @pe: PE
+ * @state: PE state to be set
+ *
+ * Set specified flag to PE and its child PEs. The PCI config space
+ * of some PEs is blocked automatically when EEH_PE_ISOLATED is set,
+ * which isn't needed in some situations. The function allows to set
+ * the specified flag to indicated PEs without blocking their PCI
+ * config space.
+ */
+void eeh_pe_state_mark_with_cfg(struct eeh_pe *pe, int state)
+{
+	eeh_pe_traverse(pe, __eeh_pe_state_mark, &state);
+	if (!(state & EEH_PE_ISOLATED))
+		return;
+
+	/* Clear EEH_PE_CFG_BLOCKED, which might be set just now */
+	state = EEH_PE_CFG_BLOCKED;
+	eeh_pe_traverse(pe, __eeh_pe_state_clear, &state);
+}
+
 /*
  * Some PCI bridges (e.g. PLX bridges) have primary/secondary
  * buses assigned explicitly by firmware, and we probably have
@@ -861,32 +889,29 @@ void eeh_pe_restore_bars(struct eeh_pe *pe)
 const char *eeh_pe_loc_get(struct eeh_pe *pe)
 {
 	struct pci_bus *bus = eeh_pe_bus_get(pe);
-	struct device_node *dn = pci_bus_to_OF_node(bus);
+	struct device_node *dn;
 	const char *loc = NULL;
 
-	if (!dn)
-		goto out;
+	while (bus) {
+		dn = pci_bus_to_OF_node(bus);
+		if (!dn) {
+			bus = bus->parent;
+			continue;
+		}
 
-	/* PHB PE or root PE ? */
-	if (pci_is_root_bus(bus)) {
-		loc = of_get_property(dn, "ibm,loc-code", NULL);
-		if (!loc)
+		if (pci_is_root_bus(bus))
 			loc = of_get_property(dn, "ibm,io-base-loc-code", NULL);
-		if (loc)
-			goto out;
+		else
+			loc = of_get_property(dn, "ibm,slot-location-code",
+					      NULL);
 
-		/* Check the root port */
-		dn = dn->child;
-		if (!dn)
-			goto out;
+		if (loc)
+			return loc;
+
+		bus = bus->parent;
 	}
 
-	loc = of_get_property(dn, "ibm,loc-code", NULL);
-	if (!loc)
-		loc = of_get_property(dn, "ibm,slot-location-code", NULL);
-
-out:
-	return loc ? loc : "N/A";
+	return "N/A";
 }
 
 /**
@@ -901,25 +926,21 @@ out:
  */
 struct pci_bus *eeh_pe_bus_get(struct eeh_pe *pe)
 {
-	struct pci_bus *bus = NULL;
 	struct eeh_dev *edev;
 	struct pci_dev *pdev;
 
-	if (pe->type & EEH_PE_PHB) {
-		bus = pe->phb->bus;
-	} else if (pe->type & EEH_PE_BUS ||
-		   pe->type & EEH_PE_DEVICE) {
-		if (pe->bus) {
-			bus = pe->bus;
-			goto out;
-		}
+	if (pe->type & EEH_PE_PHB)
+		return pe->phb->bus;
 
-		edev = list_first_entry(&pe->edevs, struct eeh_dev, list);
-		pdev = eeh_dev_to_pci_dev(edev);
-		if (pdev)
-			bus = pdev->bus;
-	}
+	/* The primary bus might be cached during probe time */
+	if (pe->state & EEH_PE_PRI_BUS)
+		return pe->bus;
 
-out:
-	return bus;
+	/* Retrieve the parent PCI bus of first (top) PCI device */
+	edev = list_first_entry_or_null(&pe->edevs, struct eeh_dev, list);
+	pdev = eeh_dev_to_pci_dev(edev);
+	if (pdev)
+		return pdev->bus;
+
+	return NULL;
 }

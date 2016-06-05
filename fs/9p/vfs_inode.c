@@ -244,7 +244,7 @@ struct inode *v9fs_alloc_inode(struct super_block *sb)
 		return NULL;
 #ifdef CONFIG_9P_FSCACHE
 	v9inode->fscache = NULL;
-	spin_lock_init(&v9inode->fscache_lock);
+	mutex_init(&v9inode->fscache_lock);
 #endif
 	v9inode->writeback_fid = NULL;
 	v9inode->cache_validity = 0;
@@ -451,9 +451,9 @@ void v9fs_evict_inode(struct inode *inode)
 {
 	struct v9fs_inode *v9inode = V9FS_I(inode);
 
-	truncate_inode_pages_final(inode->i_mapping);
+	truncate_inode_pages_final(&inode->i_data);
 	clear_inode(inode);
-	filemap_fdatawrite(inode->i_mapping);
+	filemap_fdatawrite(&inode->i_data);
 
 	v9fs_cache_inode_put_cookie(inode);
 	/* clunk the fid stashed in writeback_fid */
@@ -540,8 +540,7 @@ static struct inode *v9fs_qid_iget(struct super_block *sb,
 	unlock_new_inode(inode);
 	return inode;
 error:
-	unlock_new_inode(inode);
-	iput(inode);
+	iget_failed(inode);
 	return ERR_PTR(retval);
 
 }
@@ -1072,7 +1071,7 @@ v9fs_vfs_getattr(struct vfsmount *mnt, struct dentry *dentry,
 	if (IS_ERR(st))
 		return PTR_ERR(st);
 
-	v9fs_stat2inode(st, d_inode(dentry), d_inode(dentry)->i_sb);
+	v9fs_stat2inode(st, d_inode(dentry), dentry->d_sb);
 	generic_fillattr(d_inode(dentry), stat);
 
 	p9stat_free(st);
@@ -1224,100 +1223,52 @@ ino_t v9fs_qid2ino(struct p9_qid *qid)
 }
 
 /**
- * v9fs_readlink - read a symlink's location (internal version)
+ * v9fs_vfs_get_link - follow a symlink path
  * @dentry: dentry for symlink
- * @buffer: buffer to load symlink location into
- * @buflen: length of buffer
- *
+ * @inode: inode for symlink
+ * @done: delayed call for when we are done with the return value
  */
 
-static int v9fs_readlink(struct dentry *dentry, char *buffer, int buflen)
+static const char *v9fs_vfs_get_link(struct dentry *dentry,
+				     struct inode *inode,
+				     struct delayed_call *done)
 {
-	int retval;
-
 	struct v9fs_session_info *v9ses;
 	struct p9_fid *fid;
 	struct p9_wstat *st;
+	char *res;
 
-	p9_debug(P9_DEBUG_VFS, " %pd\n", dentry);
-	retval = -EPERM;
+	if (!dentry)
+		return ERR_PTR(-ECHILD);
+
 	v9ses = v9fs_dentry2v9ses(dentry);
 	fid = v9fs_fid_lookup(dentry);
+	p9_debug(P9_DEBUG_VFS, "%pd\n", dentry);
+
 	if (IS_ERR(fid))
-		return PTR_ERR(fid);
+		return ERR_CAST(fid);
 
 	if (!v9fs_proto_dotu(v9ses))
-		return -EBADF;
+		return ERR_PTR(-EBADF);
 
 	st = p9_client_stat(fid);
 	if (IS_ERR(st))
-		return PTR_ERR(st);
+		return ERR_CAST(st);
 
 	if (!(st->mode & P9_DMSYMLINK)) {
-		retval = -EINVAL;
-		goto done;
+		p9stat_free(st);
+		kfree(st);
+		return ERR_PTR(-EINVAL);
 	}
+	res = st->extension;
+	st->extension = NULL;
+	if (strlen(res) >= PATH_MAX)
+		res[PATH_MAX - 1] = '\0';
 
-	/* copy extension buffer into buffer */
-	retval = min(strlen(st->extension)+1, (size_t)buflen);
-	memcpy(buffer, st->extension, retval);
-
-	p9_debug(P9_DEBUG_VFS, "%pd -> %s (%.*s)\n",
-		 dentry, st->extension, buflen, buffer);
-
-done:
 	p9stat_free(st);
 	kfree(st);
-	return retval;
-}
-
-/**
- * v9fs_vfs_follow_link - follow a symlink path
- * @dentry: dentry for symlink
- * @nd: nameidata
- *
- */
-
-static void *v9fs_vfs_follow_link(struct dentry *dentry, struct nameidata *nd)
-{
-	int len = 0;
-	char *link = __getname();
-
-	p9_debug(P9_DEBUG_VFS, "%pd\n", dentry);
-
-	if (!link)
-		link = ERR_PTR(-ENOMEM);
-	else {
-		len = v9fs_readlink(dentry, link, PATH_MAX);
-
-		if (len < 0) {
-			__putname(link);
-			link = ERR_PTR(len);
-		} else
-			link[min(len, PATH_MAX-1)] = 0;
-	}
-	nd_set_link(nd, link);
-
-	return NULL;
-}
-
-/**
- * v9fs_vfs_put_link - release a symlink path
- * @dentry: dentry for symlink
- * @nd: nameidata
- * @p: unused
- *
- */
-
-void
-v9fs_vfs_put_link(struct dentry *dentry, struct nameidata *nd, void *p)
-{
-	char *s = nd_get_link(nd);
-
-	p9_debug(P9_DEBUG_VFS, " %pd %s\n",
-		 dentry, IS_ERR(s) ? "<error>" : s);
-	if (!IS_ERR(s))
-		__putname(s);
+	set_delayed_call(done, kfree_link, res);
+	return res;
 }
 
 /**
@@ -1370,6 +1321,8 @@ v9fs_vfs_symlink(struct inode *dir, struct dentry *dentry, const char *symname)
 	return v9fs_vfs_mkspecial(dir, dentry, P9_DMSYMLINK, symname);
 }
 
+#define U32_MAX_DIGITS 10
+
 /**
  * v9fs_vfs_link - create a hardlink
  * @old_dentry: dentry for file to link to
@@ -1383,7 +1336,7 @@ v9fs_vfs_link(struct dentry *old_dentry, struct inode *dir,
 	      struct dentry *dentry)
 {
 	int retval;
-	char *name;
+	char name[1 + U32_MAX_DIGITS + 2]; /* sign + number + \n + \0 */
 	struct p9_fid *oldfid;
 
 	p9_debug(P9_DEBUG_VFS, " %lu,%pd,%pd\n",
@@ -1393,20 +1346,12 @@ v9fs_vfs_link(struct dentry *old_dentry, struct inode *dir,
 	if (IS_ERR(oldfid))
 		return PTR_ERR(oldfid);
 
-	name = __getname();
-	if (unlikely(!name)) {
-		retval = -ENOMEM;
-		goto clunk_fid;
-	}
-
 	sprintf(name, "%d\n", oldfid->fid);
 	retval = v9fs_vfs_mkspecial(dir, dentry, P9_DMLINK, name);
-	__putname(name);
 	if (!retval) {
 		v9fs_refresh_inode(oldfid, d_inode(old_dentry));
 		v9fs_invalidate_inode_attr(dir);
 	}
-clunk_fid:
 	p9_client_clunk(oldfid);
 	return retval;
 }
@@ -1425,36 +1370,23 @@ v9fs_vfs_mknod(struct inode *dir, struct dentry *dentry, umode_t mode, dev_t rde
 {
 	struct v9fs_session_info *v9ses = v9fs_inode2v9ses(dir);
 	int retval;
-	char *name;
+	char name[2 + U32_MAX_DIGITS + 1 + U32_MAX_DIGITS + 1];
 	u32 perm;
 
 	p9_debug(P9_DEBUG_VFS, " %lu,%pd mode: %hx MAJOR: %u MINOR: %u\n",
 		 dir->i_ino, dentry, mode,
 		 MAJOR(rdev), MINOR(rdev));
 
-	if (!new_valid_dev(rdev))
-		return -EINVAL;
-
-	name = __getname();
-	if (!name)
-		return -ENOMEM;
 	/* build extension */
 	if (S_ISBLK(mode))
 		sprintf(name, "b %u %u", MAJOR(rdev), MINOR(rdev));
 	else if (S_ISCHR(mode))
 		sprintf(name, "c %u %u", MAJOR(rdev), MINOR(rdev));
-	else if (S_ISFIFO(mode))
+	else
 		*name = 0;
-	else if (S_ISSOCK(mode))
-		*name = 0;
-	else {
-		__putname(name);
-		return -EINVAL;
-	}
 
 	perm = unixmode2p9mode(v9ses, mode);
 	retval = v9fs_vfs_mkspecial(dir, dentry, perm, name);
-	__putname(name);
 
 	return retval;
 }
@@ -1529,8 +1461,7 @@ static const struct inode_operations v9fs_file_inode_operations = {
 
 static const struct inode_operations v9fs_symlink_inode_operations = {
 	.readlink = generic_readlink,
-	.follow_link = v9fs_vfs_follow_link,
-	.put_link = v9fs_vfs_put_link,
+	.get_link = v9fs_vfs_get_link,
 	.getattr = v9fs_vfs_getattr,
 	.setattr = v9fs_vfs_setattr,
 };

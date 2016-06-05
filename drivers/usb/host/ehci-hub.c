@@ -33,6 +33,8 @@
 
 #ifdef	CONFIG_PM
 
+static void unlink_empty_async_suspended(struct ehci_hcd *ehci);
+
 static int persist_enabled_on_companion(struct usb_device *udev, void *unused)
 {
 	return !udev->maxchild && udev->persist_enabled &&
@@ -155,7 +157,7 @@ static int ehci_port_change(struct ehci_hcd *ehci)
 	return 0;
 }
 
-static void ehci_adjust_port_wakeup_flags(struct ehci_hcd *ehci,
+void ehci_adjust_port_wakeup_flags(struct ehci_hcd *ehci,
 		bool suspending, bool do_wakeup)
 {
 	int		port;
@@ -220,6 +222,7 @@ static void ehci_adjust_port_wakeup_flags(struct ehci_hcd *ehci,
 
 	spin_unlock_irq(&ehci->lock);
 }
+EXPORT_SYMBOL_GPL(ehci_adjust_port_wakeup_flags);
 
 static int ehci_bus_suspend (struct usb_hcd *hcd)
 {
@@ -346,8 +349,10 @@ static int ehci_bus_suspend (struct usb_hcd *hcd)
 		goto done;
 	ehci->rh_state = EHCI_RH_SUSPENDED;
 
-	end_unlink_async(ehci);
 	unlink_empty_async_suspended(ehci);
+
+	/* Any IAA cycle that started before the suspend is now invalid */
+	end_iaa_cycle(ehci);
 	ehci_handle_start_intr_unlinks(ehci);
 	ehci_handle_intr_unlinks(ehci);
 	end_free_itds(ehci);
@@ -1220,6 +1225,13 @@ int ehci_hub_control(
 				 */
 				ehci->reset_done [wIndex] = jiffies
 						+ msecs_to_jiffies (50);
+
+				/*
+				 * Force full-speed connect for FSL high-speed
+				 * erratum; disable HS Chirp by setting PFSC bit
+				 */
+				if (ehci_has_fsl_hs_errata(ehci))
+					temp |= (1 << PORTSC_FSL_PFSC);
 			}
 			ehci_writel(ehci, temp, status_reg);
 			break;

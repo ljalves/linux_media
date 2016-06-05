@@ -38,7 +38,7 @@ static struct mdp4_kms *get_kms(struct drm_encoder *encoder)
 	return to_mdp4_kms(to_mdp_kms(priv->kms));
 }
 
-#ifdef CONFIG_MSM_BUS_SCALING
+#ifdef DOWNSTREAM_CONFIG_MSM_BUS_SCALING
 #include <mach/board.h>
 /* not ironically named at all.. no, really.. */
 static void bs_init(struct mdp4_dtv_encoder *mdp4_dtv_encoder)
@@ -93,13 +93,6 @@ static void mdp4_dtv_encoder_destroy(struct drm_encoder *encoder)
 static const struct drm_encoder_funcs mdp4_dtv_encoder_funcs = {
 	.destroy = mdp4_dtv_encoder_destroy,
 };
-
-static bool mdp4_dtv_encoder_mode_fixup(struct drm_encoder *encoder,
-		const struct drm_display_mode *mode,
-		struct drm_display_mode *adjusted_mode)
-{
-	return true;
-}
 
 static void mdp4_dtv_encoder_mode_set(struct drm_encoder *encoder,
 		struct drm_display_mode *mode,
@@ -234,7 +227,6 @@ static void mdp4_dtv_encoder_enable(struct drm_encoder *encoder)
 }
 
 static const struct drm_encoder_helper_funcs mdp4_dtv_encoder_helper_funcs = {
-	.mode_fixup = mdp4_dtv_encoder_mode_fixup,
 	.mode_set = mdp4_dtv_encoder_mode_set,
 	.enable = mdp4_dtv_encoder_enable,
 	.disable = mdp4_dtv_encoder_disable,
@@ -262,7 +254,7 @@ struct drm_encoder *mdp4_dtv_encoder_init(struct drm_device *dev)
 	encoder = &mdp4_dtv_encoder->base;
 
 	drm_encoder_init(dev, encoder, &mdp4_dtv_encoder_funcs,
-			 DRM_MODE_ENCODER_TMDS);
+			 DRM_MODE_ENCODER_TMDS, NULL);
 	drm_encoder_helper_add(encoder, &mdp4_dtv_encoder_helper_funcs);
 
 	mdp4_dtv_encoder->src_clk = devm_clk_get(dev->dev, "src_clk");

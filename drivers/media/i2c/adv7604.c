@@ -29,6 +29,7 @@
 
 #include <linux/delay.h>
 #include <linux/gpio/consumer.h>
+#include <linux/hdmi.h>
 #include <linux/i2c.h>
 #include <linux/kernel.h>
 #include <linux/module.h>
@@ -36,10 +37,12 @@
 #include <linux/v4l2-dv-timings.h>
 #include <linux/videodev2.h>
 #include <linux/workqueue.h>
+#include <linux/regmap.h>
 
-#include <media/adv7604.h>
+#include <media/i2c/adv7604.h>
 #include <media/v4l2-ctrls.h>
 #include <media/v4l2-device.h>
+#include <media/v4l2-event.h>
 #include <media/v4l2-dv-timings.h>
 #include <media/v4l2-of.h>
 
@@ -80,6 +83,7 @@ MODULE_LICENSE("GPL");
 enum adv76xx_type {
 	ADV7604,
 	ADV7611,
+	ADV7612,
 };
 
 struct adv76xx_reg_seq {
@@ -93,6 +97,13 @@ struct adv76xx_format_info {
 	bool rgb_out;
 	bool swap_cb_cr;
 	u8 op_format_sel;
+};
+
+struct adv76xx_cfg_read_infoframe {
+	const char *desc;
+	u8 present_mask;
+	u8 head_addr;
+	u8 payload_addr;
 };
 
 struct adv76xx_chip_info {
@@ -180,6 +191,9 @@ struct adv76xx_state {
 	/* i2c clients */
 	struct i2c_client *i2c_clients[ADV76XX_PAGE_MAX];
 
+	/* Regmaps */
+	struct regmap *regmap[ADV76XX_PAGE_MAX];
+
 	/* controls */
 	struct v4l2_ctrl *detect_tx_5v_ctrl;
 	struct v4l2_ctrl *analog_sampling_phase_ctrl;
@@ -193,70 +207,21 @@ static bool adv76xx_has_afe(struct adv76xx_state *state)
 	return state->info->has_afe;
 }
 
-/* Supported CEA and DMT timings */
-static const struct v4l2_dv_timings adv76xx_timings[] = {
-	V4L2_DV_BT_CEA_720X480P59_94,
-	V4L2_DV_BT_CEA_720X576P50,
-	V4L2_DV_BT_CEA_1280X720P24,
-	V4L2_DV_BT_CEA_1280X720P25,
-	V4L2_DV_BT_CEA_1280X720P50,
-	V4L2_DV_BT_CEA_1280X720P60,
-	V4L2_DV_BT_CEA_1920X1080P24,
-	V4L2_DV_BT_CEA_1920X1080P25,
-	V4L2_DV_BT_CEA_1920X1080P30,
-	V4L2_DV_BT_CEA_1920X1080P50,
-	V4L2_DV_BT_CEA_1920X1080P60,
-
-	/* sorted by DMT ID */
-	V4L2_DV_BT_DMT_640X350P85,
-	V4L2_DV_BT_DMT_640X400P85,
-	V4L2_DV_BT_DMT_720X400P85,
-	V4L2_DV_BT_DMT_640X480P60,
-	V4L2_DV_BT_DMT_640X480P72,
-	V4L2_DV_BT_DMT_640X480P75,
-	V4L2_DV_BT_DMT_640X480P85,
-	V4L2_DV_BT_DMT_800X600P56,
-	V4L2_DV_BT_DMT_800X600P60,
-	V4L2_DV_BT_DMT_800X600P72,
-	V4L2_DV_BT_DMT_800X600P75,
-	V4L2_DV_BT_DMT_800X600P85,
-	V4L2_DV_BT_DMT_848X480P60,
-	V4L2_DV_BT_DMT_1024X768P60,
-	V4L2_DV_BT_DMT_1024X768P70,
-	V4L2_DV_BT_DMT_1024X768P75,
-	V4L2_DV_BT_DMT_1024X768P85,
-	V4L2_DV_BT_DMT_1152X864P75,
-	V4L2_DV_BT_DMT_1280X768P60_RB,
-	V4L2_DV_BT_DMT_1280X768P60,
-	V4L2_DV_BT_DMT_1280X768P75,
-	V4L2_DV_BT_DMT_1280X768P85,
-	V4L2_DV_BT_DMT_1280X800P60_RB,
-	V4L2_DV_BT_DMT_1280X800P60,
-	V4L2_DV_BT_DMT_1280X800P75,
-	V4L2_DV_BT_DMT_1280X800P85,
-	V4L2_DV_BT_DMT_1280X960P60,
-	V4L2_DV_BT_DMT_1280X960P85,
-	V4L2_DV_BT_DMT_1280X1024P60,
-	V4L2_DV_BT_DMT_1280X1024P75,
-	V4L2_DV_BT_DMT_1280X1024P85,
-	V4L2_DV_BT_DMT_1360X768P60,
-	V4L2_DV_BT_DMT_1400X1050P60_RB,
-	V4L2_DV_BT_DMT_1400X1050P60,
-	V4L2_DV_BT_DMT_1400X1050P75,
-	V4L2_DV_BT_DMT_1400X1050P85,
-	V4L2_DV_BT_DMT_1440X900P60_RB,
-	V4L2_DV_BT_DMT_1440X900P60,
-	V4L2_DV_BT_DMT_1600X1200P60,
-	V4L2_DV_BT_DMT_1680X1050P60_RB,
-	V4L2_DV_BT_DMT_1680X1050P60,
-	V4L2_DV_BT_DMT_1792X1344P60,
-	V4L2_DV_BT_DMT_1856X1392P60,
-	V4L2_DV_BT_DMT_1920X1200P60_RB,
-	V4L2_DV_BT_DMT_1366X768P60_RB,
-	V4L2_DV_BT_DMT_1366X768P60,
-	V4L2_DV_BT_DMT_1920X1080P60,
-	{ },
+/* Unsupported timings. This device cannot support 720p30. */
+static const struct v4l2_dv_timings adv76xx_timings_exceptions[] = {
+	V4L2_DV_BT_CEA_1280X720P30,
+	{ }
 };
+
+static bool adv76xx_check_dv_timings(const struct v4l2_dv_timings *t, void *hdl)
+{
+	int i;
+
+	for (i = 0; adv76xx_timings_exceptions[i].bt.width; i++)
+		if (v4l2_match_dv_timings(t, adv76xx_timings_exceptions + i, 0, false))
+			return false;
+	return true;
+}
 
 struct adv76xx_video_standards {
 	struct v4l2_dv_timings timings;
@@ -365,66 +330,39 @@ static inline unsigned vtotal(const struct v4l2_bt_timings *t)
 
 /* ----------------------------------------------------------------------- */
 
-static s32 adv_smbus_read_byte_data_check(struct i2c_client *client,
-		u8 command, bool check)
+static int adv76xx_read_check(struct adv76xx_state *state,
+			     int client_page, u8 reg)
 {
-	union i2c_smbus_data data;
-
-	if (!i2c_smbus_xfer(client->adapter, client->addr, client->flags,
-			I2C_SMBUS_READ, command,
-			I2C_SMBUS_BYTE_DATA, &data))
-		return data.byte;
-	if (check)
-		v4l_err(client, "error reading %02x, %02x\n",
-				client->addr, command);
-	return -EIO;
-}
-
-static s32 adv_smbus_read_byte_data(struct adv76xx_state *state,
-				    enum adv76xx_page page, u8 command)
-{
-	return adv_smbus_read_byte_data_check(state->i2c_clients[page],
-					      command, true);
-}
-
-static s32 adv_smbus_write_byte_data(struct adv76xx_state *state,
-				     enum adv76xx_page page, u8 command,
-				     u8 value)
-{
-	struct i2c_client *client = state->i2c_clients[page];
-	union i2c_smbus_data data;
+	struct i2c_client *client = state->i2c_clients[client_page];
 	int err;
-	int i;
+	unsigned int val;
 
-	data.byte = value;
-	for (i = 0; i < 3; i++) {
-		err = i2c_smbus_xfer(client->adapter, client->addr,
-				client->flags,
-				I2C_SMBUS_WRITE, command,
-				I2C_SMBUS_BYTE_DATA, &data);
-		if (!err)
-			break;
+	err = regmap_read(state->regmap[client_page], reg, &val);
+
+	if (err) {
+		v4l_err(client, "error reading %02x, %02x\n",
+				client->addr, reg);
+		return err;
 	}
-	if (err < 0)
-		v4l_err(client, "error writing %02x, %02x, %02x\n",
-				client->addr, command, value);
-	return err;
+	return val;
 }
 
-static s32 adv_smbus_write_i2c_block_data(struct adv76xx_state *state,
-					  enum adv76xx_page page, u8 command,
-					  unsigned length, const u8 *values)
+/* adv76xx_write_block(): Write raw data with a maximum of I2C_SMBUS_BLOCK_MAX
+ * size to one or more registers.
+ *
+ * A value of zero will be returned on success, a negative errno will
+ * be returned in error cases.
+ */
+static int adv76xx_write_block(struct adv76xx_state *state, int client_page,
+			      unsigned int init_reg, const void *val,
+			      size_t val_len)
 {
-	struct i2c_client *client = state->i2c_clients[page];
-	union i2c_smbus_data data;
+	struct regmap *regmap = state->regmap[client_page];
 
-	if (length > I2C_SMBUS_BLOCK_MAX)
-		length = I2C_SMBUS_BLOCK_MAX;
-	data.block[0] = length;
-	memcpy(data.block + 1, values, length);
-	return i2c_smbus_xfer(client->adapter, client->addr, client->flags,
-			      I2C_SMBUS_WRITE, command,
-			      I2C_SMBUS_I2C_BLOCK_DATA, &data);
+	if (val_len > I2C_SMBUS_BLOCK_MAX)
+		val_len = I2C_SMBUS_BLOCK_MAX;
+
+	return regmap_raw_write(regmap, init_reg, val, val_len);
 }
 
 /* ----------------------------------------------------------------------- */
@@ -433,14 +371,14 @@ static inline int io_read(struct v4l2_subdev *sd, u8 reg)
 {
 	struct adv76xx_state *state = to_state(sd);
 
-	return adv_smbus_read_byte_data(state, ADV76XX_PAGE_IO, reg);
+	return adv76xx_read_check(state, ADV76XX_PAGE_IO, reg);
 }
 
 static inline int io_write(struct v4l2_subdev *sd, u8 reg, u8 val)
 {
 	struct adv76xx_state *state = to_state(sd);
 
-	return adv_smbus_write_byte_data(state, ADV76XX_PAGE_IO, reg, val);
+	return regmap_write(state->regmap[ADV76XX_PAGE_IO], reg, val);
 }
 
 static inline int io_write_clr_set(struct v4l2_subdev *sd, u8 reg, u8 mask, u8 val)
@@ -452,71 +390,70 @@ static inline int avlink_read(struct v4l2_subdev *sd, u8 reg)
 {
 	struct adv76xx_state *state = to_state(sd);
 
-	return adv_smbus_read_byte_data(state, ADV7604_PAGE_AVLINK, reg);
+	return adv76xx_read_check(state, ADV7604_PAGE_AVLINK, reg);
 }
 
 static inline int avlink_write(struct v4l2_subdev *sd, u8 reg, u8 val)
 {
 	struct adv76xx_state *state = to_state(sd);
 
-	return adv_smbus_write_byte_data(state, ADV7604_PAGE_AVLINK, reg, val);
+	return regmap_write(state->regmap[ADV7604_PAGE_AVLINK], reg, val);
 }
 
 static inline int cec_read(struct v4l2_subdev *sd, u8 reg)
 {
 	struct adv76xx_state *state = to_state(sd);
 
-	return adv_smbus_read_byte_data(state, ADV76XX_PAGE_CEC, reg);
+	return adv76xx_read_check(state, ADV76XX_PAGE_CEC, reg);
 }
 
 static inline int cec_write(struct v4l2_subdev *sd, u8 reg, u8 val)
 {
 	struct adv76xx_state *state = to_state(sd);
 
-	return adv_smbus_write_byte_data(state, ADV76XX_PAGE_CEC, reg, val);
+	return regmap_write(state->regmap[ADV76XX_PAGE_CEC], reg, val);
 }
 
 static inline int infoframe_read(struct v4l2_subdev *sd, u8 reg)
 {
 	struct adv76xx_state *state = to_state(sd);
 
-	return adv_smbus_read_byte_data(state, ADV76XX_PAGE_INFOFRAME, reg);
+	return adv76xx_read_check(state, ADV76XX_PAGE_INFOFRAME, reg);
 }
 
 static inline int infoframe_write(struct v4l2_subdev *sd, u8 reg, u8 val)
 {
 	struct adv76xx_state *state = to_state(sd);
 
-	return adv_smbus_write_byte_data(state, ADV76XX_PAGE_INFOFRAME,
-					 reg, val);
+	return regmap_write(state->regmap[ADV76XX_PAGE_INFOFRAME], reg, val);
 }
 
 static inline int afe_read(struct v4l2_subdev *sd, u8 reg)
 {
 	struct adv76xx_state *state = to_state(sd);
 
-	return adv_smbus_read_byte_data(state, ADV76XX_PAGE_AFE, reg);
+	return adv76xx_read_check(state, ADV76XX_PAGE_AFE, reg);
 }
 
 static inline int afe_write(struct v4l2_subdev *sd, u8 reg, u8 val)
 {
 	struct adv76xx_state *state = to_state(sd);
 
-	return adv_smbus_write_byte_data(state, ADV76XX_PAGE_AFE, reg, val);
+	return regmap_write(state->regmap[ADV76XX_PAGE_AFE], reg, val);
 }
 
 static inline int rep_read(struct v4l2_subdev *sd, u8 reg)
 {
 	struct adv76xx_state *state = to_state(sd);
 
-	return adv_smbus_read_byte_data(state, ADV76XX_PAGE_REP, reg);
+	return adv76xx_read_check(state, ADV76XX_PAGE_REP, reg);
 }
 
 static inline int rep_write(struct v4l2_subdev *sd, u8 reg, u8 val)
 {
 	struct adv76xx_state *state = to_state(sd);
 
-	return adv_smbus_write_byte_data(state, ADV76XX_PAGE_REP, reg, val);
+	return regmap_write(state->regmap[ADV76XX_PAGE_REP], reg, val);
 }
 
 static inline int rep_write_clr_set(struct v4l2_subdev *sd, u8 reg, u8 mask, u8 val)
@@ -528,28 +465,37 @@ static inline int edid_read(struct v4l2_subdev *sd, u8 reg)
 {
 	struct adv76xx_state *state = to_state(sd);
 
-	return adv_smbus_read_byte_data(state, ADV76XX_PAGE_EDID, reg);
+	return adv76xx_read_check(state, ADV76XX_PAGE_EDID, reg);
 }
 
 static inline int edid_write(struct v4l2_subdev *sd, u8 reg, u8 val)
 {
 	struct adv76xx_state *state = to_state(sd);
 
-	return adv_smbus_write_byte_data(state, ADV76XX_PAGE_EDID, reg, val);
+	return regmap_write(state->regmap[ADV76XX_PAGE_EDID], reg, val);
 }
 
 static inline int edid_write_block(struct v4l2_subdev *sd,
-					unsigned len, const u8 *val)
+					unsigned int total_len, const u8 *val)
 {
 	struct adv76xx_state *state = to_state(sd);
 	int err = 0;
-	int i;
+	int i = 0;
+	int len = 0;
 
-	v4l2_dbg(2, debug, sd, "%s: write EDID block (%d byte)\n", __func__, len);
+	v4l2_dbg(2, debug, sd, "%s: write EDID block (%d byte)\n",
+				__func__, total_len);
 
-	for (i = 0; !err && i < len; i += I2C_SMBUS_BLOCK_MAX)
-		err = adv_smbus_write_i2c_block_data(state, ADV76XX_PAGE_EDID,
-				i, I2C_SMBUS_BLOCK_MAX, val + i);
+	while (!err && i < total_len) {
+		len = (total_len - i) > I2C_SMBUS_BLOCK_MAX ?
+				I2C_SMBUS_BLOCK_MAX :
+				(total_len - i);
+
+		err = adv76xx_write_block(state, ADV76XX_PAGE_EDID,
+				i, val + i, len);
+		i += len;
+	}
+
 	return err;
 }
 
@@ -579,7 +525,7 @@ static inline int hdmi_read(struct v4l2_subdev *sd, u8 reg)
 {
 	struct adv76xx_state *state = to_state(sd);
 
-	return adv_smbus_read_byte_data(state, ADV76XX_PAGE_HDMI, reg);
+	return adv76xx_read_check(state, ADV76XX_PAGE_HDMI, reg);
 }
 
 static u16 hdmi_read16(struct v4l2_subdev *sd, u8 reg, u16 mask)
@@ -591,7 +537,7 @@ static inline int hdmi_write(struct v4l2_subdev *sd, u8 reg, u8 val)
 {
 	struct adv76xx_state *state = to_state(sd);
 
-	return adv_smbus_write_byte_data(state, ADV76XX_PAGE_HDMI, reg, val);
+	return regmap_write(state->regmap[ADV76XX_PAGE_HDMI], reg, val);
 }
 
 static inline int hdmi_write_clr_set(struct v4l2_subdev *sd, u8 reg, u8 mask, u8 val)
@@ -603,14 +549,14 @@ static inline int test_write(struct v4l2_subdev *sd, u8 reg, u8 val)
 {
 	struct adv76xx_state *state = to_state(sd);
 
-	return adv_smbus_write_byte_data(state, ADV76XX_PAGE_TEST, reg, val);
+	return regmap_write(state->regmap[ADV76XX_PAGE_TEST], reg, val);
 }
 
 static inline int cp_read(struct v4l2_subdev *sd, u8 reg)
 {
 	struct adv76xx_state *state = to_state(sd);
 
-	return adv_smbus_read_byte_data(state, ADV76XX_PAGE_CP, reg);
+	return adv76xx_read_check(state, ADV76XX_PAGE_CP, reg);
 }
 
 static u16 cp_read16(struct v4l2_subdev *sd, u8 reg, u16 mask)
@@ -622,7 +568,7 @@ static inline int cp_write(struct v4l2_subdev *sd, u8 reg, u8 val)
 {
 	struct adv76xx_state *state = to_state(sd);
 
-	return adv_smbus_write_byte_data(state, ADV76XX_PAGE_CP, reg, val);
+	return regmap_write(state->regmap[ADV76XX_PAGE_CP], reg, val);
 }
 
 static inline int cp_write_clr_set(struct v4l2_subdev *sd, u8 reg, u8 mask, u8 val)
@@ -634,14 +580,14 @@ static inline int vdp_read(struct v4l2_subdev *sd, u8 reg)
 {
 	struct adv76xx_state *state = to_state(sd);
 
-	return adv_smbus_read_byte_data(state, ADV7604_PAGE_VDP, reg);
+	return adv76xx_read_check(state, ADV7604_PAGE_VDP, reg);
 }
 
 static inline int vdp_write(struct v4l2_subdev *sd, u8 reg, u8 val)
 {
 	struct adv76xx_state *state = to_state(sd);
 
-	return adv_smbus_write_byte_data(state, ADV7604_PAGE_VDP, reg, val);
+	return regmap_write(state->regmap[ADV7604_PAGE_VDP], reg, val);
 }
 
 #define ADV76XX_REG(page, offset)	(((page) << 8) | (offset))
@@ -652,13 +598,16 @@ static int adv76xx_read_reg(struct v4l2_subdev *sd, unsigned int reg)
 {
 	struct adv76xx_state *state = to_state(sd);
 	unsigned int page = reg >> 8;
+	unsigned int val;
+	int err;
 
 	if (!(BIT(page) & state->info->page_mask))
 		return -EINVAL;
 
 	reg &= 0xff;
+	err = regmap_read(state->regmap[page], reg, &val);
 
-	return adv_smbus_read_byte_data(state, page, reg);
+	return err ? err : val;
 }
 #endif
 
@@ -672,7 +621,7 @@ static int adv76xx_write_reg(struct v4l2_subdev *sd, unsigned int reg, u8 val)
 
 	reg &= 0xff;
 
-	return adv_smbus_write_byte_data(state, page, reg, val);
+	return regmap_write(state->regmap[page], reg, val);
 }
 
 static void adv76xx_write_reg_seq(struct v4l2_subdev *sd,
@@ -758,6 +707,23 @@ static const struct adv76xx_format_info adv7611_formats[] = {
 	  ADV76XX_OP_MODE_SEL_SDR_422_2X | ADV76XX_OP_FORMAT_SEL_12BIT },
 };
 
+static const struct adv76xx_format_info adv7612_formats[] = {
+	{ MEDIA_BUS_FMT_RGB888_1X24, ADV76XX_OP_CH_SEL_RGB, true, false,
+	  ADV76XX_OP_MODE_SEL_SDR_444 | ADV76XX_OP_FORMAT_SEL_8BIT },
+	{ MEDIA_BUS_FMT_YUYV8_2X8, ADV76XX_OP_CH_SEL_RGB, false, false,
+	  ADV76XX_OP_MODE_SEL_SDR_422 | ADV76XX_OP_FORMAT_SEL_8BIT },
+	{ MEDIA_BUS_FMT_YVYU8_2X8, ADV76XX_OP_CH_SEL_RGB, false, true,
+	  ADV76XX_OP_MODE_SEL_SDR_422 | ADV76XX_OP_FORMAT_SEL_8BIT },
+	{ MEDIA_BUS_FMT_UYVY8_1X16, ADV76XX_OP_CH_SEL_RBG, false, false,
+	  ADV76XX_OP_MODE_SEL_SDR_422_2X | ADV76XX_OP_FORMAT_SEL_8BIT },
+	{ MEDIA_BUS_FMT_VYUY8_1X16, ADV76XX_OP_CH_SEL_RBG, false, true,
+	  ADV76XX_OP_MODE_SEL_SDR_422_2X | ADV76XX_OP_FORMAT_SEL_8BIT },
+	{ MEDIA_BUS_FMT_YUYV8_1X16, ADV76XX_OP_CH_SEL_RGB, false, false,
+	  ADV76XX_OP_MODE_SEL_SDR_422_2X | ADV76XX_OP_FORMAT_SEL_8BIT },
+	{ MEDIA_BUS_FMT_YVYU8_1X16, ADV76XX_OP_CH_SEL_RGB, false, true,
+	  ADV76XX_OP_MODE_SEL_SDR_422_2X | ADV76XX_OP_FORMAT_SEL_8BIT },
+};
+
 static const struct adv76xx_format_info *
 adv76xx_format_info(struct adv76xx_state *state, u32 code)
 {
@@ -790,6 +756,36 @@ static inline bool is_digital_input(struct v4l2_subdev *sd)
 	       state->selected_input == ADV7604_PAD_HDMI_PORT_C ||
 	       state->selected_input == ADV7604_PAD_HDMI_PORT_D;
 }
+
+static const struct v4l2_dv_timings_cap adv7604_timings_cap_analog = {
+	.type = V4L2_DV_BT_656_1120,
+	/* keep this initialization for compatibility with GCC < 4.4.6 */
+	.reserved = { 0 },
+	V4L2_INIT_BT_TIMINGS(0, 1920, 0, 1200, 25000000, 170000000,
+		V4L2_DV_BT_STD_CEA861 | V4L2_DV_BT_STD_DMT |
+			V4L2_DV_BT_STD_GTF | V4L2_DV_BT_STD_CVT,
+		V4L2_DV_BT_CAP_PROGRESSIVE | V4L2_DV_BT_CAP_REDUCED_BLANKING |
+			V4L2_DV_BT_CAP_CUSTOM)
+};
+
+static const struct v4l2_dv_timings_cap adv76xx_timings_cap_digital = {
+	.type = V4L2_DV_BT_656_1120,
+	/* keep this initialization for compatibility with GCC < 4.4.6 */
+	.reserved = { 0 },
+	V4L2_INIT_BT_TIMINGS(0, 1920, 0, 1200, 25000000, 225000000,
+		V4L2_DV_BT_STD_CEA861 | V4L2_DV_BT_STD_DMT |
+			V4L2_DV_BT_STD_GTF | V4L2_DV_BT_STD_CVT,
+		V4L2_DV_BT_CAP_PROGRESSIVE | V4L2_DV_BT_CAP_REDUCED_BLANKING |
+			V4L2_DV_BT_CAP_CUSTOM)
+};
+
+static inline const struct v4l2_dv_timings_cap *
+adv76xx_get_dv_timings_cap(struct v4l2_subdev *sd)
+{
+	return is_digital_input(sd) ? &adv76xx_timings_cap_digital :
+				      &adv7604_timings_cap_analog;
+}
+
 
 /* ----------------------------------------------------------------------- */
 
@@ -862,6 +858,16 @@ static unsigned int adv7611_read_cable_det(struct v4l2_subdev *sd)
 	return value & 1;
 }
 
+static unsigned int adv7612_read_cable_det(struct v4l2_subdev *sd)
+{
+	/*  Reads CABLE_DET_A_RAW. For input B support, need to
+	 *  account for bit 7 [MSB] of 0x6a (ie. CABLE_DET_B_RAW)
+	 */
+	u8 value = io_read(sd, 0x6f);
+
+	return value & 1;
+}
+
 static int adv76xx_s_detect_tx_5v_ctrl(struct v4l2_subdev *sd)
 {
 	struct adv76xx_state *state = to_state(sd);
@@ -880,7 +886,7 @@ static int find_and_set_predefined_video_timings(struct v4l2_subdev *sd,
 
 	for (i = 0; predef_vid_timings[i].timings.bt.width; i++) {
 		if (!v4l2_match_dv_timings(timings, &predef_vid_timings[i].timings,
-					is_digital_input(sd) ? 250000 : 1000000))
+				is_digital_input(sd) ? 250000 : 1000000, false))
 			continue;
 		io_write(sd, 0x00, predef_vid_timings[i].vid_std); /* video std */
 		io_write(sd, 0x01, (predef_vid_timings[i].v_freq << 4) +
@@ -968,8 +974,8 @@ static void configure_custom_video_timings(struct v4l2_subdev *sd,
 		/* Should only be set in auto-graphics mode [REF_02, p. 91-92] */
 		/* setup PLL_DIV_MAN_EN and PLL_DIV_RATIO */
 		/* IO-map reg. 0x16 and 0x17 should be written in sequence */
-		if (adv_smbus_write_i2c_block_data(state, ADV76XX_PAGE_IO,
-						   0x16, 2, pll))
+		if (regmap_raw_write(state->regmap[ADV76XX_PAGE_IO],
+					0x16, pll, 2))
 			v4l2_err(sd, "writing to reg 0x16 and 0x17 failed\n");
 
 		/* active video - horizontal timing */
@@ -1020,8 +1026,8 @@ static void adv76xx_set_offset(struct v4l2_subdev *sd, bool auto_offset, u16 off
 	offset_buf[3] = offset_c & 0x0ff;
 
 	/* Registers must be written in this order with no i2c access in between */
-	if (adv_smbus_write_i2c_block_data(state, ADV76XX_PAGE_CP,
-					   0x77, 4, offset_buf))
+	if (regmap_raw_write(state->regmap[ADV76XX_PAGE_CP],
+			0x77, offset_buf, 4))
 		v4l2_err(sd, "%s: i2c error writing to CP reg 0x77, 0x78, 0x79, 0x7a\n", __func__);
 }
 
@@ -1050,8 +1056,8 @@ static void adv76xx_set_gain(struct v4l2_subdev *sd, bool auto_gain, u16 gain_a,
 	gain_buf[3] = ((gain_c & 0x0ff));
 
 	/* Registers must be written in this order with no i2c access in between */
-	if (adv_smbus_write_i2c_block_data(state, ADV76XX_PAGE_CP,
-					   0x73, 4, gain_buf))
+	if (regmap_raw_write(state->regmap[ADV76XX_PAGE_CP],
+			     0x73, gain_buf, 4))
 		v4l2_err(sd, "%s: i2c error writing to CP reg 0x73, 0x74, 0x75, 0x76\n", __func__);
 }
 
@@ -1191,6 +1197,20 @@ static int adv76xx_s_ctrl(struct v4l2_ctrl *ctrl)
 	return -EINVAL;
 }
 
+static int adv76xx_g_volatile_ctrl(struct v4l2_ctrl *ctrl)
+{
+	struct v4l2_subdev *sd =
+		&container_of(ctrl->handler, struct adv76xx_state, hdl)->sd;
+
+	if (ctrl->id == V4L2_CID_DV_RX_IT_CONTENT_TYPE) {
+		ctrl->val = V4L2_DV_IT_CONTENT_TYPE_NO_ITC;
+		if ((io_read(sd, 0x60) & 1) && (infoframe_read(sd, 0x03) & 0x80))
+			ctrl->val = (infoframe_read(sd, 0x05) >> 4) & 3;
+		return 0;
+	}
+	return -EINVAL;
+}
+
 /* ----------------------------------------------------------------------- */
 
 static inline bool no_power(struct v4l2_subdev *sd)
@@ -1305,30 +1325,36 @@ static int stdi2dv_timings(struct v4l2_subdev *sd,
 	u32 pix_clk;
 	int i;
 
-	for (i = 0; adv76xx_timings[i].bt.height; i++) {
-		if (vtotal(&adv76xx_timings[i].bt) != stdi->lcf + 1)
+	for (i = 0; v4l2_dv_timings_presets[i].bt.width; i++) {
+		const struct v4l2_bt_timings *bt = &v4l2_dv_timings_presets[i].bt;
+
+		if (!v4l2_valid_dv_timings(&v4l2_dv_timings_presets[i],
+					   adv76xx_get_dv_timings_cap(sd),
+					   adv76xx_check_dv_timings, NULL))
 			continue;
-		if (adv76xx_timings[i].bt.vsync != stdi->lcvs)
+		if (vtotal(bt) != stdi->lcf + 1)
+			continue;
+		if (bt->vsync != stdi->lcvs)
 			continue;
 
-		pix_clk = hfreq * htotal(&adv76xx_timings[i].bt);
+		pix_clk = hfreq * htotal(bt);
 
-		if ((pix_clk < adv76xx_timings[i].bt.pixelclock + 1000000) &&
-		    (pix_clk > adv76xx_timings[i].bt.pixelclock - 1000000)) {
-			*timings = adv76xx_timings[i];
+		if ((pix_clk < bt->pixelclock + 1000000) &&
+		    (pix_clk > bt->pixelclock - 1000000)) {
+			*timings = v4l2_dv_timings_presets[i];
 			return 0;
 		}
 	}
 
-	if (v4l2_detect_cvt(stdi->lcf + 1, hfreq, stdi->lcvs,
+	if (v4l2_detect_cvt(stdi->lcf + 1, hfreq, stdi->lcvs, 0,
 			(stdi->hs_pol == '+' ? V4L2_DV_HSYNC_POS_POL : 0) |
 			(stdi->vs_pol == '+' ? V4L2_DV_VSYNC_POS_POL : 0),
-			timings))
+			false, timings))
 		return 0;
 	if (v4l2_detect_gtf(stdi->lcf + 1, hfreq, stdi->lcvs,
 			(stdi->hs_pol == '+' ? V4L2_DV_HSYNC_POS_POL : 0) |
 			(stdi->vs_pol == '+' ? V4L2_DV_VSYNC_POS_POL : 0),
-			state->aspect_ratio, timings))
+			false, state->aspect_ratio, timings))
 		return 0;
 
 	v4l2_dbg(2, debug, sd,
@@ -1400,15 +1426,11 @@ static int adv76xx_enum_dv_timings(struct v4l2_subdev *sd,
 {
 	struct adv76xx_state *state = to_state(sd);
 
-	if (timings->index >= ARRAY_SIZE(adv76xx_timings) - 1)
-		return -EINVAL;
-
 	if (timings->pad >= state->source_pad)
 		return -EINVAL;
 
-	memset(timings->reserved, 0, sizeof(timings->reserved));
-	timings->timings = adv76xx_timings[timings->index];
-	return 0;
+	return v4l2_enum_dv_timings_cap(timings,
+		adv76xx_get_dv_timings_cap(sd), adv76xx_check_dv_timings, NULL);
 }
 
 static int adv76xx_dv_timings_cap(struct v4l2_subdev *sd,
@@ -1419,29 +1441,7 @@ static int adv76xx_dv_timings_cap(struct v4l2_subdev *sd,
 	if (cap->pad >= state->source_pad)
 		return -EINVAL;
 
-	cap->type = V4L2_DV_BT_656_1120;
-	cap->bt.max_width = 1920;
-	cap->bt.max_height = 1200;
-	cap->bt.min_pixelclock = 25000000;
-
-	switch (cap->pad) {
-	case ADV76XX_PAD_HDMI_PORT_A:
-	case ADV7604_PAD_HDMI_PORT_B:
-	case ADV7604_PAD_HDMI_PORT_C:
-	case ADV7604_PAD_HDMI_PORT_D:
-		cap->bt.max_pixelclock = 225000000;
-		break;
-	case ADV7604_PAD_VGA_RGB:
-	case ADV7604_PAD_VGA_COMP:
-	default:
-		cap->bt.max_pixelclock = 170000000;
-		break;
-	}
-
-	cap->bt.standards = V4L2_DV_BT_STD_CEA861 | V4L2_DV_BT_STD_DMT |
-			 V4L2_DV_BT_STD_GTF | V4L2_DV_BT_STD_CVT;
-	cap->bt.capabilities = V4L2_DV_BT_CAP_PROGRESSIVE |
-		V4L2_DV_BT_CAP_REDUCED_BLANKING | V4L2_DV_BT_CAP_CUSTOM;
+	*cap = *adv76xx_get_dv_timings_cap(sd);
 	return 0;
 }
 
@@ -1450,15 +1450,9 @@ static int adv76xx_dv_timings_cap(struct v4l2_subdev *sd,
 static void adv76xx_fill_optional_dv_timings_fields(struct v4l2_subdev *sd,
 		struct v4l2_dv_timings *timings)
 {
-	int i;
-
-	for (i = 0; adv76xx_timings[i].bt.width; i++) {
-		if (v4l2_match_dv_timings(timings, &adv76xx_timings[i],
-					is_digital_input(sd) ? 250000 : 1000000)) {
-			*timings = adv76xx_timings[i];
-			break;
-		}
-	}
+	v4l2_find_dv_timings_cap(timings, adv76xx_get_dv_timings_cap(sd),
+			is_digital_input(sd) ? 250000 : 1000000,
+			adv76xx_check_dv_timings, NULL);
 }
 
 static unsigned int adv7604_read_hdmi_pixelclock(struct v4l2_subdev *sd)
@@ -1619,19 +1613,16 @@ static int adv76xx_s_dv_timings(struct v4l2_subdev *sd,
 	if (!timings)
 		return -EINVAL;
 
-	if (v4l2_match_dv_timings(&state->timings, timings, 0)) {
+	if (v4l2_match_dv_timings(&state->timings, timings, 0, false)) {
 		v4l2_dbg(1, debug, sd, "%s: no change\n", __func__);
 		return 0;
 	}
 
 	bt = &timings->bt;
 
-	if ((is_analog_input(sd) && bt->pixelclock > 170000000) ||
-			(is_digital_input(sd) && bt->pixelclock > 225000000)) {
-		v4l2_dbg(1, debug, sd, "%s: pixelclock out of range %d\n",
-				__func__, (u32)bt->pixelclock);
+	if (!v4l2_valid_dv_timings(timings, adv76xx_get_dv_timings_cap(sd),
+				   adv76xx_check_dv_timings, NULL))
 		return -ERANGE;
-	}
 
 	adv76xx_fill_optional_dv_timings_fields(sd, timings);
 
@@ -1752,8 +1743,8 @@ static int adv76xx_s_routing(struct v4l2_subdev *sd,
 	select_input(sd);
 	enable_input(sd);
 
-	v4l2_subdev_notify(sd, V4L2_DEVICE_NOTIFY_EVENT,
-			   (void *)&adv76xx_ev_fmt);
+	v4l2_subdev_notify_event(sd, &adv76xx_ev_fmt);
+
 	return 0;
 }
 
@@ -1859,6 +1850,26 @@ static int adv76xx_get_format(struct v4l2_subdev *sd,
 	return 0;
 }
 
+static int adv76xx_get_selection(struct v4l2_subdev *sd,
+				 struct v4l2_subdev_pad_config *cfg,
+				 struct v4l2_subdev_selection *sel)
+{
+	struct adv76xx_state *state = to_state(sd);
+
+	if (sel->which != V4L2_SUBDEV_FORMAT_ACTIVE)
+		return -EINVAL;
+	/* Only CROP, CROP_DEFAULT and CROP_BOUNDS are supported */
+	if (sel->target > V4L2_SEL_TGT_CROP_BOUNDS)
+		return -EINVAL;
+
+	sel->r.left	= 0;
+	sel->r.top	= 0;
+	sel->r.width	= state->timings.bt.width;
+	sel->r.height	= state->timings.bt.height;
+
+	return 0;
+}
+
 static int adv76xx_set_format(struct v4l2_subdev *sd,
 			      struct v4l2_subdev_pad_config *cfg,
 			      struct v4l2_subdev_format *format)
@@ -1920,8 +1931,7 @@ static int adv76xx_isr(struct v4l2_subdev *sd, u32 status, bool *handled)
 			"%s: fmt_change = 0x%x, fmt_change_digital = 0x%x\n",
 			__func__, fmt_change, fmt_change_digital);
 
-		v4l2_subdev_notify(sd, V4L2_DEVICE_NOTIFY_EVENT,
-				   (void *)&adv76xx_ev_fmt);
+		v4l2_subdev_notify_event(sd, &adv76xx_ev_fmt);
 
 		if (handled)
 			*handled = true;
@@ -1936,10 +1946,9 @@ static int adv76xx_isr(struct v4l2_subdev *sd, u32 status, bool *handled)
 	}
 
 	/* tx 5v detect */
-	tx_5v = io_read(sd, 0x70) & info->cable_det_mask;
+	tx_5v = irq_reg_0x70 & info->cable_det_mask;
 	if (tx_5v) {
 		v4l2_dbg(1, debug, sd, "%s: tx_5v: 0x%x\n", __func__, tx_5v);
-		io_write(sd, 0x71, tx_5v);
 		adv76xx_s_detect_tx_5v_ctrl(sd);
 		if (handled)
 			*handled = true;
@@ -2086,7 +2095,8 @@ static int adv76xx_set_edid(struct v4l2_subdev *sd, struct v4l2_edid *edid)
 		rep_write(sd, 0x76, spa_loc & 0xff);
 		rep_write_clr_set(sd, 0x77, 0x40, (spa_loc & 0x100) >> 2);
 	} else {
-		/* FIXME: Where is the SPA location LSB register ? */
+		/* ADV7612 Software Manual Rev. A, p. 15 */
+		rep_write(sd, 0x70, spa_loc & 0xff);
 		rep_write_clr_set(sd, 0x71, 0x01, (spa_loc & 0x100) >> 8);
 	}
 
@@ -2127,46 +2137,67 @@ static int adv76xx_set_edid(struct v4l2_subdev *sd, struct v4l2_edid *edid)
 
 /*********** avi info frame CEA-861-E **************/
 
-static void print_avi_infoframe(struct v4l2_subdev *sd)
+static const struct adv76xx_cfg_read_infoframe adv76xx_cri[] = {
+	{ "AVI", 0x01, 0xe0, 0x00 },
+	{ "Audio", 0x02, 0xe3, 0x1c },
+	{ "SDP", 0x04, 0xe6, 0x2a },
+	{ "Vendor", 0x10, 0xec, 0x54 }
+};
+
+static int adv76xx_read_infoframe(struct v4l2_subdev *sd, int index,
+				  union hdmi_infoframe *frame)
+{
+	uint8_t buffer[32];
+	u8 len;
+	int i;
+
+	if (!(io_read(sd, 0x60) & adv76xx_cri[index].present_mask)) {
+		v4l2_info(sd, "%s infoframe not received\n",
+			  adv76xx_cri[index].desc);
+		return -ENOENT;
+	}
+
+	for (i = 0; i < 3; i++)
+		buffer[i] = infoframe_read(sd,
+					   adv76xx_cri[index].head_addr + i);
+
+	len = buffer[2] + 1;
+
+	if (len + 3 > sizeof(buffer)) {
+		v4l2_err(sd, "%s: invalid %s infoframe length %d\n", __func__,
+			 adv76xx_cri[index].desc, len);
+		return -ENOENT;
+	}
+
+	for (i = 0; i < len; i++)
+		buffer[i + 3] = infoframe_read(sd,
+				       adv76xx_cri[index].payload_addr + i);
+
+	if (hdmi_infoframe_unpack(frame, buffer) < 0) {
+		v4l2_err(sd, "%s: unpack of %s infoframe failed\n", __func__,
+			 adv76xx_cri[index].desc);
+		return -ENOENT;
+	}
+	return 0;
+}
+
+static void adv76xx_log_infoframes(struct v4l2_subdev *sd)
 {
 	int i;
-	u8 buf[14];
-	u8 avi_len;
-	u8 avi_ver;
 
 	if (!is_hdmi(sd)) {
-		v4l2_info(sd, "receive DVI-D signal (AVI infoframe not supported)\n");
-		return;
-	}
-	if (!(io_read(sd, 0x60) & 0x01)) {
-		v4l2_info(sd, "AVI infoframe not received\n");
+		v4l2_info(sd, "receive DVI-D signal, no infoframes\n");
 		return;
 	}
 
-	if (io_read(sd, 0x83) & 0x01) {
-		v4l2_info(sd, "AVI infoframe checksum error has occurred earlier\n");
-		io_write(sd, 0x85, 0x01); /* clear AVI_INF_CKS_ERR_RAW */
-		if (io_read(sd, 0x83) & 0x01) {
-			v4l2_info(sd, "AVI infoframe checksum error still present\n");
-			io_write(sd, 0x85, 0x01); /* clear AVI_INF_CKS_ERR_RAW */
-		}
+	for (i = 0; i < ARRAY_SIZE(adv76xx_cri); i++) {
+		union hdmi_infoframe frame;
+		struct i2c_client *client = v4l2_get_subdevdata(sd);
+
+		if (adv76xx_read_infoframe(sd, i, &frame))
+			return;
+		hdmi_infoframe_log(KERN_INFO, &client->dev, &frame);
 	}
-
-	avi_len = infoframe_read(sd, 0xe2);
-	avi_ver = infoframe_read(sd, 0xe1);
-	v4l2_info(sd, "AVI infoframe version %d (%d byte)\n",
-			avi_ver, avi_len);
-
-	if (avi_ver != 0x02)
-		return;
-
-	for (i = 0; i < 14; i++)
-		buf[i] = infoframe_read(sd, i);
-
-	v4l2_info(sd,
-		"\t%02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x\n",
-		buf[0], buf[1], buf[2], buf[3], buf[4], buf[5], buf[6], buf[7],
-		buf[8], buf[9], buf[10], buf[11], buf[12], buf[13]);
 }
 
 static int adv76xx_log_status(struct v4l2_subdev *sd)
@@ -2192,6 +2223,14 @@ static int adv76xx_log_status(struct v4l2_subdev *sd)
 		"YCbCr Bt.601 (0-255)", "YCbCr Bt.709 (0-255)",
 		"invalid", "invalid", "invalid", "invalid", "invalid",
 		"invalid", "invalid", "automatic"
+	};
+	static const char * const hdmi_color_space_txt[16] = {
+		"RGB limited range (16-235)", "RGB full range (0-255)",
+		"YCbCr Bt.601 (16-235)", "YCbCr Bt.709 (16-235)",
+		"xvYCC Bt.601", "xvYCC Bt.709",
+		"YCbCr Bt.601 (0-255)", "YCbCr Bt.709 (0-255)",
+		"sYCC", "Adobe YCC 601", "AdobeRGB", "invalid", "invalid",
+		"invalid", "invalid", "invalid"
 	};
 	static const char * const rgb_quantization_range_txt[] = {
 		"Automatic",
@@ -2260,11 +2299,12 @@ static int adv76xx_log_status(struct v4l2_subdev *sd)
 			rgb_quantization_range_txt[state->rgb_quantization_range]);
 	v4l2_info(sd, "Input color space: %s\n",
 			input_color_space_txt[reg_io_0x02 >> 4]);
-	v4l2_info(sd, "Output color space: %s %s, saturator %s\n",
+	v4l2_info(sd, "Output color space: %s %s, saturator %s, alt-gamma %s\n",
 			(reg_io_0x02 & 0x02) ? "RGB" : "YCbCr",
 			(reg_io_0x02 & 0x04) ? "(16-235)" : "(0-255)",
-			((reg_io_0x02 & 0x04) ^ (reg_io_0x02 & 0x01)) ?
-				"enabled" : "disabled");
+			(((reg_io_0x02 >> 2) & 0x01) ^ (reg_io_0x02 & 0x01)) ?
+				"enabled" : "disabled",
+			(reg_io_0x02 & 0x08) ? "enabled" : "disabled");
 	v4l2_info(sd, "Color space conversion: %s\n",
 			csc_coeff_sel_rb[cp_read(sd, info->cp_csc) >> 4]);
 
@@ -2301,22 +2341,40 @@ static int adv76xx_log_status(struct v4l2_subdev *sd)
 		v4l2_info(sd, "AV Mute: %s\n", (hdmi_read(sd, 0x04) & 0x40) ? "on" : "off");
 
 		v4l2_info(sd, "Deep color mode: %s\n", deep_color_mode_txt[(hdmi_read(sd, 0x0b) & 0x60) >> 5]);
+		v4l2_info(sd, "HDMI colorspace: %s\n", hdmi_color_space_txt[hdmi_read(sd, 0x53) & 0xf]);
 
-		print_avi_infoframe(sd);
+		adv76xx_log_infoframes(sd);
 	}
 
 	return 0;
+}
+
+static int adv76xx_subscribe_event(struct v4l2_subdev *sd,
+				   struct v4l2_fh *fh,
+				   struct v4l2_event_subscription *sub)
+{
+	switch (sub->type) {
+	case V4L2_EVENT_SOURCE_CHANGE:
+		return v4l2_src_change_event_subdev_subscribe(sd, fh, sub);
+	case V4L2_EVENT_CTRL:
+		return v4l2_ctrl_subdev_subscribe_event(sd, fh, sub);
+	default:
+		return -EINVAL;
+	}
 }
 
 /* ----------------------------------------------------------------------- */
 
 static const struct v4l2_ctrl_ops adv76xx_ctrl_ops = {
 	.s_ctrl = adv76xx_s_ctrl,
+	.g_volatile_ctrl = adv76xx_g_volatile_ctrl,
 };
 
 static const struct v4l2_subdev_core_ops adv76xx_core_ops = {
 	.log_status = adv76xx_log_status,
 	.interrupt_service_routine = adv76xx_isr,
+	.subscribe_event = adv76xx_subscribe_event,
+	.unsubscribe_event = v4l2_event_subdev_unsubscribe,
 #ifdef CONFIG_VIDEO_ADV_DEBUG
 	.g_register = adv76xx_g_register,
 	.s_register = adv76xx_s_register,
@@ -2333,6 +2391,7 @@ static const struct v4l2_subdev_video_ops adv76xx_video_ops = {
 
 static const struct v4l2_subdev_pad_ops adv76xx_pad_ops = {
 	.enum_mbus_code = adv76xx_enum_mbus_code,
+	.get_selection = adv76xx_get_selection,
 	.get_fmt = adv76xx_get_format,
 	.set_fmt = adv76xx_set_format,
 	.get_edid = adv76xx_get_edid,
@@ -2471,6 +2530,11 @@ static void adv7611_setup_irqs(struct v4l2_subdev *sd)
 	io_write(sd, 0x41, 0xd0); /* STDI irq for any change, disable INT2 */
 }
 
+static void adv7612_setup_irqs(struct v4l2_subdev *sd)
+{
+	io_write(sd, 0x41, 0xd0); /* disable INT2 */
+}
+
 static void adv76xx_unregister_clients(struct adv76xx_state *state)
 {
 	unsigned int i;
@@ -2555,6 +2619,19 @@ static const struct adv76xx_reg_seq adv7611_recommended_settings_hdmi[] = {
 	{ ADV76XX_REG(ADV76XX_PAGE_HDMI, 0x8d), 0x04 },
 	{ ADV76XX_REG(ADV76XX_PAGE_HDMI, 0x8e), 0x1e },
 
+	{ ADV76XX_REG_SEQ_TERM, 0 },
+};
+
+static const struct adv76xx_reg_seq adv7612_recommended_settings_hdmi[] = {
+	{ ADV76XX_REG(ADV76XX_PAGE_CP, 0x6c), 0x00 },
+	{ ADV76XX_REG(ADV76XX_PAGE_HDMI, 0x9b), 0x03 },
+	{ ADV76XX_REG(ADV76XX_PAGE_HDMI, 0x6f), 0x08 },
+	{ ADV76XX_REG(ADV76XX_PAGE_HDMI, 0x85), 0x1f },
+	{ ADV76XX_REG(ADV76XX_PAGE_HDMI, 0x87), 0x70 },
+	{ ADV76XX_REG(ADV76XX_PAGE_HDMI, 0x57), 0xda },
+	{ ADV76XX_REG(ADV76XX_PAGE_HDMI, 0x58), 0x01 },
+	{ ADV76XX_REG(ADV76XX_PAGE_HDMI, 0x03), 0x98 },
+	{ ADV76XX_REG(ADV76XX_PAGE_HDMI, 0x4c), 0x44 },
 	{ ADV76XX_REG_SEQ_TERM, 0 },
 };
 
@@ -2646,17 +2723,60 @@ static const struct adv76xx_chip_info adv76xx_chip_info[] = {
 		.field1_vsync_mask = 0x3fff,
 		.field1_vbackporch_mask = 0x3fff,
 	},
+	[ADV7612] = {
+		.type = ADV7612,
+		.has_afe = false,
+		.max_port = ADV76XX_PAD_HDMI_PORT_A,	/* B not supported */
+		.num_dv_ports = 1,			/* normally 2 */
+		.edid_enable_reg = 0x74,
+		.edid_status_reg = 0x76,
+		.lcf_reg = 0xa3,
+		.tdms_lock_mask = 0x43,
+		.cable_det_mask = 0x01,
+		.fmt_change_digital_mask = 0x03,
+		.cp_csc = 0xf4,
+		.formats = adv7612_formats,
+		.nformats = ARRAY_SIZE(adv7612_formats),
+		.set_termination = adv7611_set_termination,
+		.setup_irqs = adv7612_setup_irqs,
+		.read_hdmi_pixelclock = adv7611_read_hdmi_pixelclock,
+		.read_cable_det = adv7612_read_cable_det,
+		.recommended_settings = {
+		    [1] = adv7612_recommended_settings_hdmi,
+		},
+		.num_recommended_settings = {
+		    [1] = ARRAY_SIZE(adv7612_recommended_settings_hdmi),
+		},
+		.page_mask = BIT(ADV76XX_PAGE_IO) | BIT(ADV76XX_PAGE_CEC) |
+			BIT(ADV76XX_PAGE_INFOFRAME) | BIT(ADV76XX_PAGE_AFE) |
+			BIT(ADV76XX_PAGE_REP) |  BIT(ADV76XX_PAGE_EDID) |
+			BIT(ADV76XX_PAGE_HDMI) | BIT(ADV76XX_PAGE_CP),
+		.linewidth_mask = 0x1fff,
+		.field0_height_mask = 0x1fff,
+		.field1_height_mask = 0x1fff,
+		.hfrontporch_mask = 0x1fff,
+		.hsync_mask = 0x1fff,
+		.hbackporch_mask = 0x1fff,
+		.field0_vfrontporch_mask = 0x3fff,
+		.field0_vsync_mask = 0x3fff,
+		.field0_vbackporch_mask = 0x3fff,
+		.field1_vfrontporch_mask = 0x3fff,
+		.field1_vsync_mask = 0x3fff,
+		.field1_vbackporch_mask = 0x3fff,
+	},
 };
 
 static const struct i2c_device_id adv76xx_i2c_id[] = {
 	{ "adv7604", (kernel_ulong_t)&adv76xx_chip_info[ADV7604] },
 	{ "adv7611", (kernel_ulong_t)&adv76xx_chip_info[ADV7611] },
+	{ "adv7612", (kernel_ulong_t)&adv76xx_chip_info[ADV7612] },
 	{ }
 };
 MODULE_DEVICE_TABLE(i2c, adv76xx_i2c_id);
 
 static const struct of_device_id adv76xx_of_id[] __maybe_unused = {
 	{ .compatible = "adi,adv7611", .data = &adv76xx_chip_info[ADV7611] },
+	{ .compatible = "adi,adv7612", .data = &adv76xx_chip_info[ADV7612] },
 	{ }
 };
 MODULE_DEVICE_TABLE(of, adv76xx_of_id);
@@ -2667,6 +2787,8 @@ static int adv76xx_parse_dt(struct adv76xx_state *state)
 	struct device_node *endpoint;
 	struct device_node *np;
 	unsigned int flags;
+	int ret;
+	u32 v;
 
 	np = state->i2c_clients[ADV76XX_PAGE_IO]->dev.of_node;
 
@@ -2675,7 +2797,17 @@ static int adv76xx_parse_dt(struct adv76xx_state *state)
 	if (!endpoint)
 		return -EINVAL;
 
-	v4l2_of_parse_endpoint(endpoint, &bus_cfg);
+	ret = v4l2_of_parse_endpoint(endpoint, &bus_cfg);
+	if (ret) {
+		of_node_put(endpoint);
+		return ret;
+	}
+
+	if (!of_property_read_u32(endpoint, "default-input", &v))
+		state->pdata.default_input = v;
+	else
+		state->pdata.default_input = -1;
+
 	of_node_put(endpoint);
 
 	flags = bus_cfg.bus.parallel.flags;
@@ -2714,12 +2846,153 @@ static int adv76xx_parse_dt(struct adv76xx_state *state)
 	/* Hardcode the remaining platform data fields. */
 	state->pdata.disable_pwrdnb = 0;
 	state->pdata.disable_cable_det_rst = 0;
-	state->pdata.default_input = -1;
 	state->pdata.blank_data = 1;
 	state->pdata.alt_data_sat = 1;
 	state->pdata.op_format_mode_sel = ADV7604_OP_FORMAT_MODE0;
 	state->pdata.bus_order = ADV7604_BUS_ORDER_RGB;
 
+	return 0;
+}
+
+static const struct regmap_config adv76xx_regmap_cnf[] = {
+	{
+		.name			= "io",
+		.reg_bits		= 8,
+		.val_bits		= 8,
+
+		.max_register		= 0xff,
+		.cache_type		= REGCACHE_NONE,
+	},
+	{
+		.name			= "avlink",
+		.reg_bits		= 8,
+		.val_bits		= 8,
+
+		.max_register		= 0xff,
+		.cache_type		= REGCACHE_NONE,
+	},
+	{
+		.name			= "cec",
+		.reg_bits		= 8,
+		.val_bits		= 8,
+
+		.max_register		= 0xff,
+		.cache_type		= REGCACHE_NONE,
+	},
+	{
+		.name			= "infoframe",
+		.reg_bits		= 8,
+		.val_bits		= 8,
+
+		.max_register		= 0xff,
+		.cache_type		= REGCACHE_NONE,
+	},
+	{
+		.name			= "esdp",
+		.reg_bits		= 8,
+		.val_bits		= 8,
+
+		.max_register		= 0xff,
+		.cache_type		= REGCACHE_NONE,
+	},
+	{
+		.name			= "epp",
+		.reg_bits		= 8,
+		.val_bits		= 8,
+
+		.max_register		= 0xff,
+		.cache_type		= REGCACHE_NONE,
+	},
+	{
+		.name			= "afe",
+		.reg_bits		= 8,
+		.val_bits		= 8,
+
+		.max_register		= 0xff,
+		.cache_type		= REGCACHE_NONE,
+	},
+	{
+		.name			= "rep",
+		.reg_bits		= 8,
+		.val_bits		= 8,
+
+		.max_register		= 0xff,
+		.cache_type		= REGCACHE_NONE,
+	},
+	{
+		.name			= "edid",
+		.reg_bits		= 8,
+		.val_bits		= 8,
+
+		.max_register		= 0xff,
+		.cache_type		= REGCACHE_NONE,
+	},
+
+	{
+		.name			= "hdmi",
+		.reg_bits		= 8,
+		.val_bits		= 8,
+
+		.max_register		= 0xff,
+		.cache_type		= REGCACHE_NONE,
+	},
+	{
+		.name			= "test",
+		.reg_bits		= 8,
+		.val_bits		= 8,
+
+		.max_register		= 0xff,
+		.cache_type		= REGCACHE_NONE,
+	},
+	{
+		.name			= "cp",
+		.reg_bits		= 8,
+		.val_bits		= 8,
+
+		.max_register		= 0xff,
+		.cache_type		= REGCACHE_NONE,
+	},
+	{
+		.name			= "vdp",
+		.reg_bits		= 8,
+		.val_bits		= 8,
+
+		.max_register		= 0xff,
+		.cache_type		= REGCACHE_NONE,
+	},
+};
+
+static int configure_regmap(struct adv76xx_state *state, int region)
+{
+	int err;
+
+	if (!state->i2c_clients[region])
+		return -ENODEV;
+
+	state->regmap[region] =
+		devm_regmap_init_i2c(state->i2c_clients[region],
+				     &adv76xx_regmap_cnf[region]);
+
+	if (IS_ERR(state->regmap[region])) {
+		err = PTR_ERR(state->regmap[region]);
+		v4l_err(state->i2c_clients[region],
+			"Error initializing regmap %d with error %d\n",
+			region, err);
+		return -EINVAL;
+	}
+
+	return 0;
+}
+
+static int configure_regmaps(struct adv76xx_state *state)
+{
+	int i, err;
+
+	for (i = ADV7604_PAGE_AVLINK ; i < ADV76XX_PAGE_MAX; i++) {
+		err = configure_regmap(state, i);
+		if (err && (err != -ENODEV))
+			return err;
+	}
 	return 0;
 }
 
@@ -2730,9 +3003,10 @@ static int adv76xx_probe(struct i2c_client *client,
 		V4L2_DV_BT_CEA_640X480P59_94;
 	struct adv76xx_state *state;
 	struct v4l2_ctrl_handler *hdl;
+	struct v4l2_ctrl *ctrl;
 	struct v4l2_subdev *sd;
 	unsigned int i;
-	u16 val;
+	unsigned int val, val2;
 	int err;
 
 	/* Check if the adapter supports the needed features */
@@ -2794,28 +3068,59 @@ static int adv76xx_probe(struct i2c_client *client,
 	snprintf(sd->name, sizeof(sd->name), "%s %d-%04x",
 		id->name, i2c_adapter_id(client->adapter),
 		client->addr);
-	sd->flags |= V4L2_SUBDEV_FL_HAS_DEVNODE;
+	sd->flags |= V4L2_SUBDEV_FL_HAS_DEVNODE | V4L2_SUBDEV_FL_HAS_EVENTS;
+
+	/* Configure IO Regmap region */
+	err = configure_regmap(state, ADV76XX_PAGE_IO);
+
+	if (err) {
+		v4l2_err(sd, "Error configuring IO regmap region\n");
+		return -ENODEV;
+	}
 
 	/*
 	 * Verify that the chip is present. On ADV7604 the RD_INFO register only
 	 * identifies the revision, while on ADV7611 it identifies the model as
 	 * well. Use the HDMI slave address on ADV7604 and RD_INFO on ADV7611.
 	 */
-	if (state->info->type == ADV7604) {
-		val = adv_smbus_read_byte_data_check(client, 0xfb, false);
+	switch (state->info->type) {
+	case ADV7604:
+		err = regmap_read(state->regmap[ADV76XX_PAGE_IO], 0xfb, &val);
+		if (err) {
+			v4l2_err(sd, "Error %d reading IO Regmap\n", err);
+			return -ENODEV;
+		}
 		if (val != 0x68) {
-			v4l2_info(sd, "not an adv7604 on address 0x%x\n",
+			v4l2_err(sd, "not an adv7604 on address 0x%x\n",
 					client->addr << 1);
 			return -ENODEV;
 		}
-	} else {
-		val = (adv_smbus_read_byte_data_check(client, 0xea, false) << 8)
-		    | (adv_smbus_read_byte_data_check(client, 0xeb, false) << 0);
-		if (val != 0x2051) {
-			v4l2_info(sd, "not an adv7611 on address 0x%x\n",
+		break;
+	case ADV7611:
+	case ADV7612:
+		err = regmap_read(state->regmap[ADV76XX_PAGE_IO],
+				0xea,
+				&val);
+		if (err) {
+			v4l2_err(sd, "Error %d reading IO Regmap\n", err);
+			return -ENODEV;
+		}
+		val2 = val << 8;
+		err = regmap_read(state->regmap[ADV76XX_PAGE_IO],
+			    0xeb,
+			    &val);
+		if (err) {
+			v4l2_err(sd, "Error %d reading IO Regmap\n", err);
+			return -ENODEV;
+		}
+		val |= val2;
+		if ((state->info->type == ADV7611 && val != 0x2051) ||
+			(state->info->type == ADV7612 && val != 0x2041)) {
+			v4l2_err(sd, "not an adv761x on address 0x%x\n",
 					client->addr << 1);
 			return -ENODEV;
 		}
+		break;
 	}
 
 	/* control handlers */
@@ -2830,8 +3135,12 @@ static int adv76xx_probe(struct i2c_client *client,
 			V4L2_CID_SATURATION, 0, 255, 1, 128);
 	v4l2_ctrl_new_std(hdl, &adv76xx_ctrl_ops,
 			V4L2_CID_HUE, 0, 128, 1, 0);
+	ctrl = v4l2_ctrl_new_std_menu(hdl, &adv76xx_ctrl_ops,
+			V4L2_CID_DV_RX_IT_CONTENT_TYPE, V4L2_DV_IT_CONTENT_TYPE_NO_ITC,
+			0, V4L2_DV_IT_CONTENT_TYPE_NO_ITC);
+	if (ctrl)
+		ctrl->flags |= V4L2_CTRL_FLAG_VOLATILE;
 
-	/* private controls */
 	state->detect_tx_5v_ctrl = v4l2_ctrl_new_std(hdl, NULL,
 			V4L2_CID_DV_RX_POWER_PRESENT, 0,
 			(1 << state->info->num_dv_ports) - 1, 0, 0);
@@ -2854,13 +3163,6 @@ static int adv76xx_probe(struct i2c_client *client,
 		err = hdl->error;
 		goto err_hdl;
 	}
-	state->detect_tx_5v_ctrl->is_private = true;
-	state->rgb_quantization_range_ctrl->is_private = true;
-	if (adv76xx_has_afe(state))
-		state->analog_sampling_phase_ctrl->is_private = true;
-	state->free_run_color_manual_ctrl->is_private = true;
-	state->free_run_color_ctrl->is_private = true;
-
 	if (adv76xx_s_detect_tx_5v_ctrl(sd)) {
 		err = -ENODEV;
 		goto err_hdl;
@@ -2897,10 +3199,15 @@ static int adv76xx_probe(struct i2c_client *client,
 		state->pads[i].flags = MEDIA_PAD_FL_SINK;
 	state->pads[state->source_pad].flags = MEDIA_PAD_FL_SOURCE;
 
-	err = media_entity_init(&sd->entity, state->source_pad + 1,
-				state->pads, 0);
+	err = media_entity_pads_init(&sd->entity, state->source_pad + 1,
+				state->pads);
 	if (err)
 		goto err_work_queues;
+
+	/* Configure regmaps */
+	err = configure_regmaps(state);
+	if (err)
+		goto err_entity;
 
 	err = adv76xx_core_init(sd);
 	if (err)
@@ -2946,7 +3253,6 @@ static int adv76xx_remove(struct i2c_client *client)
 
 static struct i2c_driver adv76xx_driver = {
 	.driver = {
-		.owner = THIS_MODULE,
 		.name = "adv7604",
 		.of_match_table = of_match_ptr(adv76xx_of_id),
 	},

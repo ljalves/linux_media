@@ -146,7 +146,7 @@ static __be32 *encode_fsid(__be32 *p, struct svc_fh *fhp)
 	default:
 	case FSIDSOURCE_DEV:
 		p = xdr_encode_hyper(p, (u64)huge_encode_dev
-				     (d_inode(fhp->fh_dentry)->i_sb->s_dev));
+				     (fhp->fh_dentry->d_sb->s_dev));
 		break;
 	case FSIDSOURCE_FSID:
 		p = xdr_encode_hyper(p, (u64) fhp->fh_export->ex_fsid);
@@ -262,11 +262,11 @@ void fill_post_wcc(struct svc_fh *fhp)
 	err = fh_getattr(fhp, &fhp->fh_post_attr);
 	fhp->fh_post_change = d_inode(fhp->fh_dentry)->i_version;
 	if (err) {
-		fhp->fh_post_saved = 0;
+		fhp->fh_post_saved = false;
 		/* Grab the ctime anyway - set_change_info might use it */
 		fhp->fh_post_attr.ctime = d_inode(fhp->fh_dentry)->i_ctime;
 	} else
-		fhp->fh_post_saved = 1;
+		fhp->fh_post_saved = true;
 }
 
 /*
@@ -379,7 +379,7 @@ nfs3svc_decode_writeargs(struct svc_rqst *rqstp, __be32 *p,
 	 */
 	hdr = (void*)p - rqstp->rq_arg.head[0].iov_base;
 	dlen = rqstp->rq_arg.head[0].iov_len + rqstp->rq_arg.page_len
-		- hdr;
+		+ rqstp->rq_arg.tail[0].iov_len - hdr;
 	/*
 	 * Round the length of the data which was specified up to
 	 * the next multiple of XDR units and then compare that
@@ -805,7 +805,7 @@ encode_entry_baggage(struct nfsd3_readdirres *cd, __be32 *p, const char *name,
 
 static __be32
 compose_entry_fh(struct nfsd3_readdirres *cd, struct svc_fh *fhp,
-		const char *name, int namlen)
+		 const char *name, int namlen, u64 ino)
 {
 	struct svc_export	*exp;
 	struct dentry		*dparent, *dchild;
@@ -823,12 +823,14 @@ compose_entry_fh(struct nfsd3_readdirres *cd, struct svc_fh *fhp,
 		} else
 			dchild = dget(dparent);
 	} else
-		dchild = lookup_one_len(name, dparent, namlen);
+		dchild = lookup_one_len_unlocked(name, dparent, namlen);
 	if (IS_ERR(dchild))
 		return rv;
 	if (d_mountpoint(dchild))
 		goto out;
 	if (d_really_is_negative(dchild))
+		goto out;
+	if (dchild->d_inode->i_ino != ino)
 		goto out;
 	rv = fh_compose(fhp, exp, dchild, &cd->fh);
 out:
@@ -836,13 +838,13 @@ out:
 	return rv;
 }
 
-static __be32 *encode_entryplus_baggage(struct nfsd3_readdirres *cd, __be32 *p, const char *name, int namlen)
+static __be32 *encode_entryplus_baggage(struct nfsd3_readdirres *cd, __be32 *p, const char *name, int namlen, u64 ino)
 {
 	struct svc_fh	*fh = &cd->scratch;
 	__be32 err;
 
 	fh_init(fh, NFS3_FHSIZE);
-	err = compose_entry_fh(cd, fh, name, namlen);
+	err = compose_entry_fh(cd, fh, name, namlen, ino);
 	if (err) {
 		*p++ = 0;
 		*p++ = 0;
@@ -927,7 +929,7 @@ encode_entry(struct readdir_cd *ccd, const char *name, int namlen,
 		p = encode_entry_baggage(cd, p, name, namlen, ino);
 
 		if (plus)
-			p = encode_entryplus_baggage(cd, p, name, namlen);
+			p = encode_entryplus_baggage(cd, p, name, namlen, ino);
 		num_entry_words = p - cd->buffer;
 	} else if (*(page+1) != NULL) {
 		/* temporarily encode entry into next page, then move back to
@@ -941,7 +943,7 @@ encode_entry(struct readdir_cd *ccd, const char *name, int namlen,
 		p1 = encode_entry_baggage(cd, p1, name, namlen, ino);
 
 		if (plus)
-			p1 = encode_entryplus_baggage(cd, p1, name, namlen);
+			p1 = encode_entryplus_baggage(cd, p1, name, namlen, ino);
 
 		/* determine entry word length and lengths to go in pages */
 		num_entry_words = p1 - tmp;

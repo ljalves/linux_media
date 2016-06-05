@@ -195,7 +195,7 @@ void send_ipi(const struct cpumask *cpumask, enum ipi_message_type msg)
 	local_irq_save(flags);
 	for_each_cpu(cpu, cpumask) {
 		bfin_ipi_data = &per_cpu(bfin_ipi, cpu);
-		atomic_set_mask((1 << msg), &bfin_ipi_data->bits);
+		atomic_or((1 << msg), &bfin_ipi_data->bits);
 		atomic_inc(&bfin_ipi_data->count);
 	}
 	local_irq_restore(flags);
@@ -333,7 +333,7 @@ void secondary_start_kernel(void)
 
 	/* We are done with local CPU inits, unblock the boot CPU. */
 	set_cpu_online(cpu, true);
-	cpu_startup_entry(CPUHP_ONLINE);
+	cpu_startup_entry(CPUHP_AP_ONLINE_IDLE);
 }
 
 void __init smp_prepare_boot_cpu(void)

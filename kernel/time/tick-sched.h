@@ -57,9 +57,10 @@ struct tick_sched {
 	ktime_t				iowait_sleeptime;
 	ktime_t				sleep_length;
 	unsigned long			last_jiffies;
-	unsigned long			next_jiffies;
+	u64				next_timer;
 	ktime_t				idle_expires;
 	int				do_timer_last;
+	atomic_t			tick_dep_mask;
 };
 
 extern struct tick_sched *tick_get_tick_sched(int cpu);
@@ -69,6 +70,16 @@ extern void tick_setup_sched_timer(void);
 extern void tick_cancel_sched_timer(int cpu);
 #else
 static inline void tick_cancel_sched_timer(int cpu) { }
+#endif
+
+#ifdef CONFIG_GENERIC_CLOCKEVENTS_BROADCAST
+extern int __tick_broadcast_oneshot_control(enum tick_broadcast_state state);
+#else
+static inline int
+__tick_broadcast_oneshot_control(enum tick_broadcast_state state)
+{
+	return -EBUSY;
+}
 #endif
 
 #endif

@@ -490,7 +490,8 @@ pgprot_t ttm_io_prot(uint32_t caching_flags, pgprot_t tmp)
 	else if (boot_cpu_data.x86 > 3)
 		tmp = pgprot_noncached(tmp);
 #endif
-#if defined(__ia64__) || defined(__arm__) || defined(__powerpc__)
+#if defined(__ia64__) || defined(__arm__) || defined(__aarch64__) || \
+    defined(__powerpc__)
 	if (caching_flags & TTM_PL_FLAG_WC)
 		tmp = pgprot_writecombine(tmp);
 	else
@@ -644,7 +645,7 @@ int ttm_bo_move_accel_cleanup(struct ttm_buffer_object *bo,
 
 	reservation_object_add_excl_fence(bo->resv, fence);
 	if (evict) {
-		ret = ttm_bo_wait(bo, false, false, false);
+		ret = ttm_bo_wait(bo, false, false);
 		if (ret)
 			return ret;
 

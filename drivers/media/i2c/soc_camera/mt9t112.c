@@ -25,7 +25,7 @@
 #include <linux/v4l2-mediabus.h>
 #include <linux/videodev2.h>
 
-#include <media/mt9t112.h>
+#include <media/i2c/mt9t112.h>
 #include <media/soc_camera.h>
 #include <media/v4l2-clk.h>
 #include <media/v4l2-common.h>
@@ -104,22 +104,22 @@ struct mt9t112_priv {
 static const struct mt9t112_format mt9t112_cfmts[] = {
 	{
 		.code		= MEDIA_BUS_FMT_UYVY8_2X8,
-		.colorspace	= V4L2_COLORSPACE_JPEG,
+		.colorspace	= V4L2_COLORSPACE_SRGB,
 		.fmt		= 1,
 		.order		= 0,
 	}, {
 		.code		= MEDIA_BUS_FMT_VYUY8_2X8,
-		.colorspace	= V4L2_COLORSPACE_JPEG,
+		.colorspace	= V4L2_COLORSPACE_SRGB,
 		.fmt		= 1,
 		.order		= 1,
 	}, {
 		.code		= MEDIA_BUS_FMT_YUYV8_2X8,
-		.colorspace	= V4L2_COLORSPACE_JPEG,
+		.colorspace	= V4L2_COLORSPACE_SRGB,
 		.fmt		= 1,
 		.order		= 2,
 	}, {
 		.code		= MEDIA_BUS_FMT_YVYU8_2X8,
-		.colorspace	= V4L2_COLORSPACE_JPEG,
+		.colorspace	= V4L2_COLORSPACE_SRGB,
 		.fmt		= 1,
 		.order		= 3,
 	}, {

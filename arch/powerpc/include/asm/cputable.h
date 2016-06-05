@@ -43,6 +43,11 @@ extern int machine_check_e500(struct pt_regs *regs);
 extern int machine_check_e200(struct pt_regs *regs);
 extern int machine_check_47x(struct pt_regs *regs);
 
+extern void cpu_down_flush_e500v2(void);
+extern void cpu_down_flush_e500mc(void);
+extern void cpu_down_flush_e5500(void);
+extern void cpu_down_flush_e6500(void);
+
 /* NOTE WELL: Update identify_cpu() if fields are added or removed! */
 struct cpu_spec {
 	/* CPU is matched via (PVR & pvr_mask) == pvr_value */
@@ -58,6 +63,9 @@ struct cpu_spec {
 	/* cache line sizes */
 	unsigned int	icache_bsize;
 	unsigned int	dcache_bsize;
+
+	/* flush caches inside the current cpu */
+	void (*cpu_down_flush)(void);
 
 	/* number of performance monitor counters */
 	unsigned int	num_pmcs;
@@ -171,7 +179,7 @@ enum {
 #define CPU_FTR_ARCH_201		LONG_ASM_CONST(0x0000000200000000)
 #define CPU_FTR_ARCH_206		LONG_ASM_CONST(0x0000000400000000)
 #define CPU_FTR_ARCH_207S		LONG_ASM_CONST(0x0000000800000000)
-/* Free					LONG_ASM_CONST(0x0000001000000000) */
+#define CPU_FTR_ARCH_300		LONG_ASM_CONST(0x0000001000000000)
 #define CPU_FTR_MMCRA			LONG_ASM_CONST(0x0000002000000000)
 #define CPU_FTR_CTRL			LONG_ASM_CONST(0x0000004000000000)
 #define CPU_FTR_SMT			LONG_ASM_CONST(0x0000008000000000)
@@ -196,6 +204,7 @@ enum {
 #define CPU_FTR_DAWR			LONG_ASM_CONST(0x0400000000000000)
 #define CPU_FTR_DABRX			LONG_ASM_CONST(0x0800000000000000)
 #define CPU_FTR_PMAO_BUG		LONG_ASM_CONST(0x1000000000000000)
+#define CPU_FTR_SUBCORE			LONG_ASM_CONST(0x2000000000000000)
 
 #ifndef __ASSEMBLY__
 
@@ -242,11 +251,13 @@ enum {
 
 /* We only set the TM feature if the kernel was compiled with TM supprt */
 #ifdef CONFIG_PPC_TRANSACTIONAL_MEM
-#define CPU_FTR_TM_COMP		CPU_FTR_TM
-#define PPC_FEATURE2_HTM_COMP	PPC_FEATURE2_HTM
+#define CPU_FTR_TM_COMP			CPU_FTR_TM
+#define PPC_FEATURE2_HTM_COMP		PPC_FEATURE2_HTM
+#define PPC_FEATURE2_HTM_NOSC_COMP	PPC_FEATURE2_HTM_NOSC
 #else
-#define CPU_FTR_TM_COMP		0
-#define PPC_FEATURE2_HTM_COMP	0
+#define CPU_FTR_TM_COMP			0
+#define PPC_FEATURE2_HTM_COMP		0
+#define PPC_FEATURE2_HTM_NOSC_COMP	0
 #endif
 
 /* We need to mark all pages as being coherent if we're SMP or we have a
@@ -366,7 +377,7 @@ enum {
 	    CPU_FTR_USE_TB | CPU_FTR_MAYBE_CAN_NAP | \
 	    CPU_FTR_COMMON | CPU_FTR_FPU_UNAVAILABLE)
 #define CPU_FTRS_CLASSIC32	(CPU_FTR_COMMON | CPU_FTR_USE_TB)
-#define CPU_FTRS_8XX	(CPU_FTR_USE_TB)
+#define CPU_FTRS_8XX	(CPU_FTR_USE_TB | CPU_FTR_NOEXECUTE)
 #define CPU_FTRS_40X	(CPU_FTR_USE_TB | CPU_FTR_NODSISRALIGN | CPU_FTR_NOEXECUTE)
 #define CPU_FTRS_44X	(CPU_FTR_USE_TB | CPU_FTR_NODSISRALIGN | CPU_FTR_NOEXECUTE)
 #define CPU_FTRS_440x6	(CPU_FTR_USE_TB | CPU_FTR_NODSISRALIGN | CPU_FTR_NOEXECUTE | \
@@ -441,9 +452,19 @@ enum {
 	    CPU_FTR_STCX_CHECKS_ADDRESS | CPU_FTR_POPCNTB | CPU_FTR_POPCNTD | \
 	    CPU_FTR_ICSWX | CPU_FTR_CFAR | CPU_FTR_HVMODE | CPU_FTR_VMX_COPY | \
 	    CPU_FTR_DBELL | CPU_FTR_HAS_PPR | CPU_FTR_DAWR | \
-	    CPU_FTR_ARCH_207S | CPU_FTR_TM_COMP)
+	    CPU_FTR_ARCH_207S | CPU_FTR_TM_COMP | CPU_FTR_SUBCORE)
 #define CPU_FTRS_POWER8E (CPU_FTRS_POWER8 | CPU_FTR_PMAO_BUG)
 #define CPU_FTRS_POWER8_DD1 (CPU_FTRS_POWER8 & ~CPU_FTR_DBELL)
+#define CPU_FTRS_POWER9 (CPU_FTR_USE_TB | CPU_FTR_LWSYNC | \
+	    CPU_FTR_PPCAS_ARCH_V2 | CPU_FTR_CTRL | CPU_FTR_ARCH_206 |\
+	    CPU_FTR_MMCRA | CPU_FTR_SMT | \
+	    CPU_FTR_COHERENT_ICACHE | \
+	    CPU_FTR_PURR | CPU_FTR_SPURR | CPU_FTR_REAL_LE | \
+	    CPU_FTR_DSCR | CPU_FTR_SAO  | \
+	    CPU_FTR_STCX_CHECKS_ADDRESS | CPU_FTR_POPCNTB | CPU_FTR_POPCNTD | \
+	    CPU_FTR_ICSWX | CPU_FTR_CFAR | CPU_FTR_HVMODE | CPU_FTR_VMX_COPY | \
+	    CPU_FTR_DBELL | CPU_FTR_HAS_PPR | CPU_FTR_DAWR | \
+	    CPU_FTR_ARCH_207S | CPU_FTR_TM_COMP | CPU_FTR_ARCH_300)
 #define CPU_FTRS_CELL	(CPU_FTR_USE_TB | CPU_FTR_LWSYNC | \
 	    CPU_FTR_PPCAS_ARCH_V2 | CPU_FTR_CTRL | \
 	    CPU_FTR_ALTIVEC_COMP | CPU_FTR_MMCRA | CPU_FTR_SMT | \
@@ -462,7 +483,7 @@ enum {
 	    (CPU_FTRS_POWER4 | CPU_FTRS_PPC970 | CPU_FTRS_POWER5 | \
 	     CPU_FTRS_POWER6 | CPU_FTRS_POWER7 | CPU_FTRS_POWER8E | \
 	     CPU_FTRS_POWER8 | CPU_FTRS_POWER8_DD1 | CPU_FTRS_CELL | \
-	     CPU_FTRS_PA6T | CPU_FTR_VSX)
+	     CPU_FTRS_PA6T | CPU_FTR_VSX | CPU_FTRS_POWER9)
 #endif
 #else
 enum {
@@ -513,7 +534,8 @@ enum {
 	    (CPU_FTRS_POWER4 & CPU_FTRS_PPC970 & CPU_FTRS_POWER5 & \
 	     CPU_FTRS_POWER6 & CPU_FTRS_POWER7 & CPU_FTRS_CELL & \
 	     CPU_FTRS_PA6T & CPU_FTRS_POWER8 & CPU_FTRS_POWER8E & \
-	     CPU_FTRS_POWER8_DD1 & ~CPU_FTR_HVMODE & CPU_FTRS_POSSIBLE)
+	     CPU_FTRS_POWER8_DD1 & ~CPU_FTR_HVMODE & CPU_FTRS_POSSIBLE & \
+	     CPU_FTRS_POWER9)
 #endif
 #else
 enum {

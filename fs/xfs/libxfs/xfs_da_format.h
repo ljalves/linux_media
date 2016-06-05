@@ -641,6 +641,22 @@ xfs_dir2_block_leaf_p(struct xfs_dir2_block_tail *btp)
  */
 #define XFS_ATTR_LEAF_MAPSIZE	3	/* how many freespace slots */
 
+/*
+ * Entries are packed toward the top as tight as possible.
+ */
+typedef struct xfs_attr_shortform {
+	struct xfs_attr_sf_hdr {	/* constant-structure header block */
+		__be16	totsize;	/* total bytes in shortform list */
+		__u8	count;	/* count of active entries */
+	} hdr;
+	struct xfs_attr_sf_entry {
+		__uint8_t namelen;	/* actual length of name (no NULL) */
+		__uint8_t valuelen;	/* actual length of value (no NULL) */
+		__uint8_t flags;	/* flags bits (see xfs_attr_leaf.h) */
+		__uint8_t nameval[1];	/* name & value bytes concatenated */
+	} list[1];			/* variable sized array */
+} xfs_attr_shortform_t;
+
 typedef struct xfs_attr_leaf_map {	/* RLE map of free bytes */
 	__be16	base;			  /* base of free region */
 	__be16	size;			  /* length of free region */
@@ -680,8 +696,15 @@ typedef struct xfs_attr_leaf_name_remote {
 typedef struct xfs_attr_leafblock {
 	xfs_attr_leaf_hdr_t	hdr;	/* constant-structure header block */
 	xfs_attr_leaf_entry_t	entries[1];	/* sorted on key, not name */
-	xfs_attr_leaf_name_local_t namelist;	/* grows from bottom of buf */
-	xfs_attr_leaf_name_remote_t valuelist;	/* grows from bottom of buf */
+	/*
+	 * The rest of the block contains the following structures after the
+	 * leaf entries, growing from the bottom up. The variables are never
+	 * referenced and definining them can actually make gcc optimize away
+	 * accesses to the 'entries' array above index 0 so don't do that.
+	 *
+	 * xfs_attr_leaf_name_local_t namelist;
+	 * xfs_attr_leaf_name_remote_t valuelist;
+	 */
 } xfs_attr_leafblock_t;
 
 /*

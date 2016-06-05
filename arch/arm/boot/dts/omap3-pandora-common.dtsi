@@ -84,112 +84,112 @@
 			label = "up";
 			linux,code = <KEY_UP>;
 			gpios = <&gpio4 14 GPIO_ACTIVE_LOW>;	/* GPIO_110 */
-			gpio-key,wakeup;
+			wakeup-source;
 		};
 
 		down-button {
 			label = "down";
 			linux,code = <KEY_DOWN>;
 			gpios = <&gpio4 7 GPIO_ACTIVE_LOW>;	/* GPIO_103 */
-			gpio-key,wakeup;
+			wakeup-source;
 		};
 
 		left-button {
 			label = "left";
 			linux,code = <KEY_LEFT>;
 			gpios = <&gpio4 0 GPIO_ACTIVE_LOW>;	/* GPIO_96 */
-			gpio-key,wakeup;
+			wakeup-source;
 		};
 
 		right-button {
 			label = "right";
 			linux,code = <KEY_RIGHT>;
 			gpios = <&gpio4 2 GPIO_ACTIVE_LOW>;	/* GPIO_98 */
-			gpio-key,wakeup;
+			wakeup-source;
 		};
 
 		pageup-button {
 			label = "game 1";
 			linux,code = <KEY_PAGEUP>;
 			gpios = <&gpio4 13 GPIO_ACTIVE_LOW>;	/* GPIO_109 */
-			gpio-key,wakeup;
+			wakeup-source;
 		};
 
 		pagedown-button {
 			label = "game 3";
 			linux,code = <KEY_PAGEDOWN>;
 			gpios = <&gpio4 10 GPIO_ACTIVE_LOW>;	/* GPIO_106 */
-			gpio-key,wakeup;
+			wakeup-source;
 		};
 
 		home-button {
 			label = "game 4";
 			linux,code = <KEY_HOME>;
 			gpios = <&gpio4 5 GPIO_ACTIVE_LOW>;	/* GPIO_101 */
-			gpio-key,wakeup;
+			wakeup-source;
 		};
 
 		end-button {
 			label = "game 2";
 			linux,code = <KEY_END>;
 			gpios = <&gpio4 15 GPIO_ACTIVE_LOW>;	/* GPIO_111 */
-			gpio-key,wakeup;
+			wakeup-source;
 		};
 
 		right-shift {
 			label = "l";
 			linux,code = <KEY_RIGHTSHIFT>;
 			gpios = <&gpio4 6 GPIO_ACTIVE_LOW>;	/* GPIO_102 */
-			gpio-key,wakeup;
+			wakeup-source;
 		};
 
 		kp-plus {
 			label = "l2";
 			linux,code = <KEY_KPPLUS>;
 			gpios = <&gpio4 1 GPIO_ACTIVE_LOW>;	/* GPIO_97 */
-			gpio-key,wakeup;
+			wakeup-source;
 		};
 
 		right-ctrl {
 			label = "r";
 			linux,code = <KEY_RIGHTCTRL>;
 			gpios = <&gpio4 9 GPIO_ACTIVE_LOW>;	/* GPIO_105 */
-			gpio-key,wakeup;
+			wakeup-source;
 		};
 
 		kp-minus {
 			label = "r2";
 			linux,code = <KEY_KPMINUS>;
 			gpios = <&gpio4 11 GPIO_ACTIVE_LOW>;	/* GPIO_107 */
-			gpio-key,wakeup;
+			wakeup-source;
 		};
 
 		left-ctrl {
 			label = "ctrl";
 			linux,code = <KEY_LEFTCTRL>;
 			gpios = <&gpio4 8 GPIO_ACTIVE_LOW>;	/* GPIO_104 */
-			gpio-key,wakeup;
+			wakeup-source;
 		};
 
 		menu {
 			label = "menu";
 			linux,code = <KEY_MENU>;
 			gpios = <&gpio4 3 GPIO_ACTIVE_LOW>;	/* GPIO_99 */
-			gpio-key,wakeup;
+			wakeup-source;
 		};
 
 		hold {
 			label = "hold";
 			linux,code = <KEY_COFFEE>;
 			gpios = <&gpio6 16 GPIO_ACTIVE_LOW>;	/* GPIO_176 */
-			gpio-key,wakeup;
+			wakeup-source;
 		};
 
 		left-alt {
 			label = "alt";
 			linux,code = <KEY_LEFTALT>;
 			gpios = <&gpio4 4 GPIO_ACTIVE_HIGH>;	/* GPIO_100 */
-			gpio-key,wakeup;
+			wakeup-source;
 		};
 
 		lid {
@@ -198,6 +198,38 @@
 			linux,input-type = <0x05>;    /* EV_SW */
 			gpios = <&gpio4 12 GPIO_ACTIVE_HIGH>;   /* GPIO_108 */
 		};
+	};
+
+	/* HS USB Host PHY on PORT 2 */
+	hsusb2_phy: hsusb2_phy {
+		compatible = "usb-nop-xceiv";
+		reset-gpios = <&gpio1 16 GPIO_ACTIVE_LOW>; /* GPIO_16 */
+		vcc-supply = <&vaux2>;
+	};
+
+	/* HS USB Host VBUS supply
+	 * disabling this regulator causes current leakage, and LCD flicker
+	 * on earlier (CC) board revisions, so keep it always on */
+	usb_host_5v: fixed-regulator-usb_host_5v {
+		compatible = "regulator-fixed";
+		regulator-name = "usb_host_5v";
+		regulator-min-microvolt = <5000000>;
+		regulator-max-microvolt = <5000000>;
+		regulator-always-on;
+		regulator-boot-on;
+		enable-active-high;
+		gpio = <&gpio6 4 GPIO_ACTIVE_HIGH>;	/* GPIO_164 */
+	};
+
+	/* wg7210 (wifi+bt module) 32k clock buffer */
+	wg7210_32k: fixed-regulator-wg7210_32k {
+		compatible = "regulator-fixed";
+		regulator-name = "wg7210_32k";
+		regulator-min-microvolt = <1800000>;
+		regulator-max-microvolt = <1800000>;
+		regulator-always-on;
+		enable-active-high;
+		gpio = <&twl_gpio 13 GPIO_ACTIVE_HIGH>;
 	};
 };
 
@@ -459,13 +491,18 @@
 	power = <50>;
 };
 
+/*
+ * Many pandora boards have been produced with defective write-protect switches
+ * on either slot, so it was decided not to use this feature. If you know
+ * your board has good switches, feel free to uncomment wp-gpios below.
+ */
 &mmc1 {
 	pinctrl-names = "default";
 	pinctrl-0 = <&mmc1_pins>;
 	vmmc-supply = <&vmmc1>;
 	bus-width = <4>;
 	cd-gpios = <&twl_gpio 0 GPIO_ACTIVE_LOW>;
-	wp-gpios = <&gpio4 30 GPIO_ACTIVE_LOW>;	/* GPIO_126 */
+	/*wp-gpios = <&gpio4 30 GPIO_ACTIVE_HIGH>;*/	/* GPIO_126 */
 };
 
 &mmc2 {
@@ -473,8 +510,13 @@
 	pinctrl-0 = <&mmc2_pins>;
 	vmmc-supply = <&vmmc2>;
 	bus-width = <4>;
-	cd-gpios = <&twl_gpio 1 GPIO_ACTIVE_HIGH>;
-	wp-gpios = <&gpio4 31 GPIO_ACTIVE_LOW>;	/* GPIO_127 */
+	cd-gpios = <&twl_gpio 1 GPIO_ACTIVE_LOW>;
+	/*wp-gpios = <&gpio4 31 GPIO_ACTIVE_HIGH>;*/	/* GPIO_127 */
+};
+
+/* mmc3 is probed using pdata-quirks to pass wl1251 card data */
+&mmc3 {
+	status = "disabled";
 };
 
 /* bluetooth*/
@@ -496,11 +538,19 @@
 	port2-mode = "ehci-phy";
 };
 
+&usbhsehci {
+	phys = <0 &hsusb2_phy>;
+};
+
 &gpmc {
 	ranges = <0 0 0x30000000 0x1000000>; /* CS0: 16MB for NAND */
 
 	nand@0,0 {
+		compatible = "ti,omap2-nand";
 		reg = <0 0 4>; /* CS0, offset 0, IO size 4 */
+		interrupt-parent = <&gpmc>;
+		interrupts = <0 IRQ_TYPE_NONE>, /* fifoevent */
+			     <1 IRQ_TYPE_NONE>;	/* termcount */
 		nand-bus-width = <16>;
 		ti,nand-ecc-opt = "sw";
 
@@ -545,7 +595,7 @@
 			reg = <0x280000 0xa00000>;
 		};
 
-		filesystem@680000 {
+		filesystem@c80000 {
 			label = "rootfs";
 			reg = <0xc80000 0>;	/* 0 = MTDPART_SIZ_FULL */
 		};
@@ -561,7 +611,7 @@
 		pinctrl-0 = <&penirq_pins>;
 		interrupt-parent = <&gpio3>;
 		interrupts = <30 0>;	/* GPIO_94 */
-		pendown-gpio = <&gpio3 30 0>;
+		pendown-gpio = <&gpio3 30 GPIO_ACTIVE_HIGH>;
 		vcc-supply = <&vaux4>;
 
 		ti,x-min = /bits/ 16 <0>;
@@ -571,7 +621,7 @@
 		ti,x-plate-ohms = /bits/ 16 <40>;
 		ti,pressure-max = /bits/ 16 <255>;
 
-		linux,wakeup;
+		wakeup-source;
 	};
 
 	lcd: lcd@1 {

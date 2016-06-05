@@ -86,7 +86,7 @@ static const struct reg_default twl6040_defaults[] = {
 	{ 0x2E, 0x00 }, /* REG_STATUS	(ro) */
 };
 
-static struct reg_default twl6040_patch[] = {
+static struct reg_sequence twl6040_patch[] = {
 	/*
 	 * Select I2C bus access to dual access registers
 	 * Interrupt register is cleared on read
@@ -291,7 +291,11 @@ int twl6040_power(struct twl6040 *twl6040, int on)
 		if (twl6040->power_count++)
 			goto out;
 
-		clk_prepare_enable(twl6040->clk32k);
+		ret = clk_prepare_enable(twl6040->clk32k);
+		if (ret) {
+			twl6040->power_count = 0;
+			goto out;
+		}
 
 		/* Allow writes to the chip */
 		regcache_cache_only(twl6040->regmap, false);
@@ -300,6 +304,7 @@ int twl6040_power(struct twl6040 *twl6040, int on)
 			/* use automatic power-up sequence */
 			ret = twl6040_power_up_automatic(twl6040);
 			if (ret) {
+				clk_disable_unprepare(twl6040->clk32k);
 				twl6040->power_count = 0;
 				goto out;
 			}
@@ -307,6 +312,7 @@ int twl6040_power(struct twl6040 *twl6040, int on)
 			/* use manual power-up sequence */
 			ret = twl6040_power_up_manual(twl6040);
 			if (ret) {
+				clk_disable_unprepare(twl6040->clk32k);
 				twl6040->power_count = 0;
 				goto out;
 			}
@@ -647,6 +653,8 @@ static int twl6040_probe(struct i2c_client *client,
 
 	twl6040->clk32k = devm_clk_get(&client->dev, "clk32k");
 	if (IS_ERR(twl6040->clk32k)) {
+		if (PTR_ERR(twl6040->clk32k) == -EPROBE_DEFER)
+			return -EPROBE_DEFER;
 		dev_info(&client->dev, "clk32k is not handled\n");
 		twl6040->clk32k = NULL;
 	}
@@ -801,7 +809,6 @@ MODULE_DEVICE_TABLE(i2c, twl6040_i2c_id);
 static struct i2c_driver twl6040_driver = {
 	.driver = {
 		.name = "twl6040",
-		.owner = THIS_MODULE,
 	},
 	.probe		= twl6040_probe,
 	.remove		= twl6040_remove,

@@ -332,6 +332,18 @@ static phys_addr_t mips_cdmm_cur_base(void)
 }
 
 /**
+ * mips_cdmm_phys_base() - Choose a physical base address for CDMM region.
+ *
+ * Picking a suitable physical address at which to map the CDMM region is
+ * platform specific, so this weak function can be overridden by platform
+ * code to pick a suitable value if none is configured by the bootloader.
+ */
+phys_addr_t __weak mips_cdmm_phys_base(void)
+{
+	return 0;
+}
+
+/**
  * mips_cdmm_setup() - Ensure the CDMM bus is initialised and usable.
  * @bus:	Pointer to bus information for current CPU.
  *		IS_ERR(bus) is checked, so no need for caller to check.
@@ -368,7 +380,7 @@ static int mips_cdmm_setup(struct mips_cdmm_bus *bus)
 	if (!bus->phys)
 		bus->phys = mips_cdmm_cur_base();
 	/* Otherwise, ask platform code for suggestions */
-	if (!bus->phys && mips_cdmm_phys_base)
+	if (!bus->phys)
 		bus->phys = mips_cdmm_phys_base();
 	/* Otherwise, copy what other CPUs have done */
 	if (!bus->phys)
@@ -453,7 +465,7 @@ void __iomem *mips_cdmm_early_probe(unsigned int dev_type)
 
 	/* Look for a specific device type */
 	for (; drb < bus->drbs; drb += size + 1) {
-		acsr = readl(cdmm + drb * CDMM_DRB_SIZE);
+		acsr = __raw_readl(cdmm + drb * CDMM_DRB_SIZE);
 		type = (acsr & CDMM_ACSR_DEVTYPE) >> CDMM_ACSR_DEVTYPE_SHIFT;
 		if (type == dev_type)
 			return cdmm + drb * CDMM_DRB_SIZE;
@@ -500,7 +512,7 @@ static void mips_cdmm_bus_discover(struct mips_cdmm_bus *bus)
 	bus->discovered = true;
 	pr_info("cdmm%u discovery (%u blocks)\n", cpu, bus->drbs);
 	for (; drb < bus->drbs; drb += size + 1) {
-		acsr = readl(cdmm + drb * CDMM_DRB_SIZE);
+		acsr = __raw_readl(cdmm + drb * CDMM_DRB_SIZE);
 		type = (acsr & CDMM_ACSR_DEVTYPE) >> CDMM_ACSR_DEVTYPE_SHIFT;
 		size = (acsr & CDMM_ACSR_DEVSIZE) >> CDMM_ACSR_DEVSIZE_SHIFT;
 		rev  = (acsr & CDMM_ACSR_DEVREV)  >> CDMM_ACSR_DEVREV_SHIFT;
@@ -587,8 +599,8 @@ BUILD_PERDEV_HELPER(cpu_up)         /* int mips_cdmm_cpu_up_helper(...) */
  * mips_cdmm_bus_down() - Tear down the CDMM bus.
  * @data:	Pointer to unsigned int CPU number.
  *
- * This work_on_cpu callback function is executed on a given CPU to call the
- * CDMM driver cpu_down callback for all devices on that CPU.
+ * This function is executed on the hotplugged CPU and calls the CDMM
+ * driver cpu_down callback for all devices on that CPU.
  */
 static long mips_cdmm_bus_down(void *data)
 {
@@ -618,7 +630,9 @@ static long mips_cdmm_bus_down(void *data)
  * CDMM devices on that CPU, or to call the CDMM driver cpu_up callback for all
  * devices already discovered on that CPU.
  *
- * It is used during initialisation and when CPUs are brought online.
+ * It is used as work_on_cpu callback function during
+ * initialisation. When CPUs are brought online the function is
+ * invoked directly on the hotplugged CPU.
  */
 static long mips_cdmm_bus_up(void *data)
 {
@@ -665,10 +679,10 @@ static int mips_cdmm_cpu_notify(struct notifier_block *nb,
 	switch (action & ~CPU_TASKS_FROZEN) {
 	case CPU_ONLINE:
 	case CPU_DOWN_FAILED:
-		work_on_cpu(cpu, mips_cdmm_bus_up, &cpu);
+		mips_cdmm_bus_up(&cpu);
 		break;
 	case CPU_DOWN_PREPARE:
-		work_on_cpu(cpu, mips_cdmm_bus_down, &cpu);
+		mips_cdmm_bus_down(&cpu);
 		break;
 	default:
 		return NOTIFY_DONE;

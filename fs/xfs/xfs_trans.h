@@ -90,7 +90,6 @@ void	xfs_log_item_init(struct xfs_mount *mp, struct xfs_log_item *item,
  */
 typedef struct xfs_trans {
 	unsigned int		t_magic;	/* magic number */
-	unsigned int		t_type;		/* transaction type */
 	unsigned int		t_log_res;	/* amt of log space resvd */
 	unsigned int		t_log_count;	/* count for perm log res */
 	unsigned int		t_blk_res;	/* # of blocks resvd */
@@ -133,9 +132,6 @@ typedef struct xfs_trans {
  * XFS transaction mechanism exported interfaces that are
  * actually macros.
  */
-#define	xfs_trans_get_log_res(tp)	((tp)->t_log_res)
-#define	xfs_trans_get_log_count(tp)	((tp)->t_log_count)
-#define	xfs_trans_get_block_res(tp)	((tp)->t_blk_res)
 #define	xfs_trans_set_sync(tp)		((tp)->t_flags |= XFS_TRANS_SYNC)
 
 #if defined(DEBUG) || defined(XFS_WARN)
@@ -151,11 +147,9 @@ typedef struct xfs_trans {
 /*
  * XFS transaction mechanism exported interfaces.
  */
-xfs_trans_t	*xfs_trans_alloc(struct xfs_mount *, uint);
-xfs_trans_t	*_xfs_trans_alloc(struct xfs_mount *, uint, xfs_km_flags_t);
-xfs_trans_t	*xfs_trans_dup(xfs_trans_t *);
-int		xfs_trans_reserve(struct xfs_trans *, struct xfs_trans_res *,
-				  uint, uint);
+int		xfs_trans_alloc(struct xfs_mount *mp, struct xfs_trans_res *resp,
+			uint blocks, uint rtextents, uint flags,
+			struct xfs_trans **tpp);
 void		xfs_trans_mod_sb(xfs_trans_t *, uint, int64_t);
 
 struct xfs_buf	*xfs_trans_get_buf_map(struct xfs_trans *tp,
@@ -216,7 +210,6 @@ void		xfs_trans_ijoin(struct xfs_trans *, struct xfs_inode *, uint);
 void		xfs_trans_log_buf(xfs_trans_t *, struct xfs_buf *, uint, uint);
 void		xfs_trans_log_inode(xfs_trans_t *, struct xfs_inode *, uint);
 struct xfs_efi_log_item	*xfs_trans_get_efi(xfs_trans_t *, uint);
-void		xfs_efi_release(struct xfs_efi_log_item *, uint);
 void		xfs_trans_log_efi_extent(xfs_trans_t *,
 					 struct xfs_efi_log_item *,
 					 xfs_fsblock_t,
@@ -224,13 +217,13 @@ void		xfs_trans_log_efi_extent(xfs_trans_t *,
 struct xfs_efd_log_item	*xfs_trans_get_efd(xfs_trans_t *,
 				  struct xfs_efi_log_item *,
 				  uint);
-void		xfs_trans_log_efd_extent(xfs_trans_t *,
-					 struct xfs_efd_log_item *,
-					 xfs_fsblock_t,
-					 xfs_extlen_t);
-int		xfs_trans_commit(xfs_trans_t *, uint flags);
+int		xfs_trans_free_extent(struct xfs_trans *,
+				      struct xfs_efd_log_item *, xfs_fsblock_t,
+				      xfs_extlen_t);
+int		xfs_trans_commit(struct xfs_trans *);
+int		__xfs_trans_roll(struct xfs_trans **, struct xfs_inode *, int *);
 int		xfs_trans_roll(struct xfs_trans **, struct xfs_inode *);
-void		xfs_trans_cancel(xfs_trans_t *, int);
+void		xfs_trans_cancel(xfs_trans_t *);
 int		xfs_trans_ail_init(struct xfs_mount *);
 void		xfs_trans_ail_destroy(struct xfs_mount *);
 

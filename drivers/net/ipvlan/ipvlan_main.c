@@ -9,12 +9,12 @@
 
 #include "ipvlan.h"
 
-void ipvlan_adjust_mtu(struct ipvl_dev *ipvlan, struct net_device *dev)
+static void ipvlan_adjust_mtu(struct ipvl_dev *ipvlan, struct net_device *dev)
 {
 	ipvlan->dev->mtu = dev->mtu - ipvlan->mtu_adj;
 }
 
-void ipvlan_set_port_mode(struct ipvl_port *port, u32 nval)
+static void ipvlan_set_port_mode(struct ipvl_port *port, u16 nval)
 {
 	struct ipvl_dev *ipvlan;
 
@@ -54,6 +54,9 @@ static int ipvlan_port_create(struct net_device *dev)
 	for (idx = 0; idx < IPVLAN_HASH_SIZE; idx++)
 		INIT_HLIST_HEAD(&port->hlhead[idx]);
 
+	skb_queue_head_init(&port->backlog);
+	INIT_WORK(&port->wq, ipvlan_process_multicast);
+
 	err = netdev_rx_handler_register(dev, ipvlan_handle_frame, port);
 	if (err)
 		goto err;
@@ -72,6 +75,8 @@ static void ipvlan_port_destroy(struct net_device *dev)
 
 	dev->priv_flags &= ~IFF_IPVLAN_MASTER;
 	netdev_rx_handler_unregister(dev);
+	cancel_work_sync(&port->wq);
+	__skb_queue_purge(&port->backlog);
 	kfree_rcu(port, rcu);
 }
 
@@ -83,7 +88,7 @@ static struct lock_class_key ipvlan_netdev_xmit_lock_key;
 static struct lock_class_key ipvlan_netdev_addr_lock_key;
 
 #define IPVLAN_FEATURES \
-	(NETIF_F_SG | NETIF_F_ALL_CSUM | NETIF_F_HIGHDMA | NETIF_F_FRAGLIST | \
+	(NETIF_F_SG | NETIF_F_HW_CSUM | NETIF_F_HIGHDMA | NETIF_F_FRAGLIST | \
 	 NETIF_F_GSO | NETIF_F_TSO | NETIF_F_UFO | NETIF_F_GSO_ROBUST | \
 	 NETIF_F_TSO_ECN | NETIF_F_TSO6 | NETIF_F_GRO | NETIF_F_RXCSUM | \
 	 NETIF_F_HW_VLAN_CTAG_FILTER | NETIF_F_HW_VLAN_STAG_FILTER)
@@ -108,12 +113,14 @@ static int ipvlan_init(struct net_device *dev)
 {
 	struct ipvl_dev *ipvlan = netdev_priv(dev);
 	const struct net_device *phy_dev = ipvlan->phy_dev;
+	struct ipvl_port *port = ipvlan->port;
 
 	dev->state = (dev->state & ~IPVLAN_STATE_MASK) |
 		     (phy_dev->state & IPVLAN_STATE_MASK);
 	dev->features = phy_dev->features & IPVLAN_FEATURES;
 	dev->features |= NETIF_F_LLTX;
 	dev->gso_max_size = phy_dev->gso_max_size;
+	dev->gso_max_segs = phy_dev->gso_max_segs;
 	dev->hard_header_len = phy_dev->hard_header_len;
 
 	ipvlan_set_lockdep_class(dev);
@@ -121,6 +128,8 @@ static int ipvlan_init(struct net_device *dev)
 	ipvlan->pcpu_stats = alloc_percpu(struct ipvl_pcpu_stats);
 	if (!ipvlan->pcpu_stats)
 		return -ENOMEM;
+
+	port->count += 1;
 
 	return 0;
 }
@@ -148,10 +157,9 @@ static int ipvlan_open(struct net_device *dev)
 	else
 		dev->flags &= ~IFF_NOARP;
 
-	if (ipvlan->ipv6cnt > 0 || ipvlan->ipv4cnt > 0) {
-		list_for_each_entry(addr, &ipvlan->addrs, anode)
-			ipvlan_ht_addr_add(ipvlan, addr);
-	}
+	list_for_each_entry(addr, &ipvlan->addrs, anode)
+		ipvlan_ht_addr_add(ipvlan, addr);
+
 	return dev_uc_add(phy_dev, phy_dev->dev_addr);
 }
 
@@ -166,10 +174,9 @@ static int ipvlan_stop(struct net_device *dev)
 
 	dev_uc_del(phy_dev, phy_dev->dev_addr);
 
-	if (ipvlan->ipv6cnt > 0 || ipvlan->ipv4cnt > 0) {
-		list_for_each_entry(addr, &ipvlan->addrs, anode)
-			ipvlan_ht_addr_del(addr, !dev->dismantle);
-	}
+	list_for_each_entry(addr, &ipvlan->addrs, anode)
+		ipvlan_ht_addr_del(addr);
+
 	return 0;
 }
 
@@ -213,17 +220,6 @@ static void ipvlan_change_rx_flags(struct net_device *dev, int change)
 		dev_set_allmulti(phy_dev, dev->flags & IFF_ALLMULTI? 1 : -1);
 }
 
-static void ipvlan_set_broadcast_mac_filter(struct ipvl_dev *ipvlan, bool set)
-{
-	struct net_device *dev = ipvlan->dev;
-	unsigned int hashbit = ipvlan_mac_hash(dev->broadcast);
-
-	if (set && !test_bit(hashbit, ipvlan->mac_filters))
-		__set_bit(hashbit, ipvlan->mac_filters);
-	else if (!set && test_bit(hashbit, ipvlan->mac_filters))
-		__clear_bit(hashbit, ipvlan->mac_filters);
-}
-
 static void ipvlan_set_multicast_mac_filter(struct net_device *dev)
 {
 	struct ipvl_dev *ipvlan = netdev_priv(dev);
@@ -237,6 +233,12 @@ static void ipvlan_set_multicast_mac_filter(struct net_device *dev)
 		bitmap_zero(mc_filters, IPVLAN_MAC_FILTER_SIZE);
 		netdev_for_each_mc_addr(ha, dev)
 			__set_bit(ipvlan_mac_hash(ha->addr), mc_filters);
+
+		/* Turn-on broadcast bit irrespective of address family,
+		 * since broadcast is deferred to a work-queue, hence no
+		 * impact on fast-path processing.
+		 */
+		__set_bit(ipvlan_mac_hash(dev->broadcast), mc_filters);
 
 		bitmap_copy(ipvlan->mac_filters, mc_filters,
 			    IPVLAN_MAC_FILTER_SIZE);
@@ -348,12 +350,12 @@ static const struct header_ops ipvlan_header_ops = {
 	.cache_update	= eth_header_cache_update,
 };
 
-static int ipvlan_ethtool_get_settings(struct net_device *dev,
-				       struct ethtool_cmd *cmd)
+static int ipvlan_ethtool_get_link_ksettings(struct net_device *dev,
+					     struct ethtool_link_ksettings *cmd)
 {
 	const struct ipvl_dev *ipvlan = netdev_priv(dev);
 
-	return __ethtool_get_settings(ipvlan->phy_dev, cmd);
+	return __ethtool_get_link_ksettings(ipvlan->phy_dev, cmd);
 }
 
 static void ipvlan_ethtool_get_drvinfo(struct net_device *dev,
@@ -379,7 +381,7 @@ static void ipvlan_ethtool_set_msglevel(struct net_device *dev, u32 value)
 
 static const struct ethtool_ops ipvlan_ethtool_ops = {
 	.get_link	= ethtool_op_get_link,
-	.get_settings	= ipvlan_ethtool_get_settings,
+	.get_link_ksettings	= ipvlan_ethtool_get_link_ksettings,
 	.get_drvinfo	= ipvlan_ethtool_get_drvinfo,
 	.get_msglevel	= ipvlan_ethtool_get_msglevel,
 	.set_msglevel	= ipvlan_ethtool_set_msglevel,
@@ -444,6 +446,7 @@ static int ipvlan_link_new(struct net *src_net, struct net_device *dev,
 	struct ipvl_port *port;
 	struct net_device *phy_dev;
 	int err;
+	u16 mode = IPVLAN_MODE_L3;
 
 	if (!tb[IFLA_LINK])
 		return -EINVAL;
@@ -462,17 +465,16 @@ static int ipvlan_link_new(struct net *src_net, struct net_device *dev,
 			return err;
 	}
 
-	port = ipvlan_port_get_rtnl(phy_dev);
 	if (data && data[IFLA_IPVLAN_MODE])
-		port->mode = nla_get_u16(data[IFLA_IPVLAN_MODE]);
+		mode = nla_get_u16(data[IFLA_IPVLAN_MODE]);
 
+	port = ipvlan_port_get_rtnl(phy_dev);
 	ipvlan->phy_dev = phy_dev;
 	ipvlan->dev = dev;
 	ipvlan->port = port;
 	ipvlan->sfeatures = IPVLAN_FEATURES;
+	ipvlan_adjust_mtu(ipvlan, phy_dev);
 	INIT_LIST_HEAD(&ipvlan->addrs);
-	ipvlan->ipv4cnt = 0;
-	ipvlan->ipv6cnt = 0;
 
 	/* TODO Probably put random address here to be presented to the
 	 * world but keep using the physical-dev address for the outgoing
@@ -482,25 +484,21 @@ static int ipvlan_link_new(struct net *src_net, struct net_device *dev,
 
 	dev->priv_flags |= IFF_IPVLAN_SLAVE;
 
-	port->count += 1;
 	err = register_netdevice(dev);
 	if (err < 0)
-		goto ipvlan_destroy_port;
+		return err;
 
 	err = netdev_upper_dev_link(phy_dev, dev);
-	if (err)
-		goto ipvlan_destroy_port;
+	if (err) {
+		unregister_netdevice(dev);
+		return err;
+	}
 
 	list_add_tail_rcu(&ipvlan->pnode, &port->ipvlans);
+	ipvlan_set_port_mode(port, mode);
+
 	netif_stacked_transfer_operstate(phy_dev, dev);
 	return 0;
-
-ipvlan_destroy_port:
-	port->count -= 1;
-	if (!port->count)
-		ipvlan_port_destroy(phy_dev);
-
-	return err;
 }
 
 static void ipvlan_link_delete(struct net_device *dev, struct list_head *head)
@@ -508,12 +506,12 @@ static void ipvlan_link_delete(struct net_device *dev, struct list_head *head)
 	struct ipvl_dev *ipvlan = netdev_priv(dev);
 	struct ipvl_addr *addr, *next;
 
-	if (ipvlan->ipv6cnt > 0 || ipvlan->ipv4cnt > 0) {
-		list_for_each_entry_safe(addr, next, &ipvlan->addrs, anode) {
-			ipvlan_ht_addr_del(addr, !dev->dismantle);
-			list_del(&addr->anode);
-		}
+	list_for_each_entry_safe(addr, next, &ipvlan->addrs, anode) {
+		ipvlan_ht_addr_del(addr);
+		list_del(&addr->anode);
+		kfree_rcu(addr, rcu);
 	}
+
 	list_del_rcu(&ipvlan->pnode);
 	unregister_netdevice_queue(dev, head);
 	netdev_upper_dev_unlink(ipvlan->phy_dev, dev);
@@ -524,12 +522,11 @@ static void ipvlan_link_setup(struct net_device *dev)
 	ether_setup(dev);
 
 	dev->priv_flags &= ~(IFF_XMIT_DST_RELEASE | IFF_TX_SKB_SHARING);
-	dev->priv_flags |= IFF_UNICAST_FLT;
+	dev->priv_flags |= IFF_UNICAST_FLT | IFF_NO_QUEUE;
 	dev->netdev_ops = &ipvlan_netdev_ops;
 	dev->destructor = free_netdev;
 	dev->header_ops = &ipvlan_header_ops;
 	dev->ethtool_ops = &ipvlan_ethtool_ops;
-	dev->tx_queue_len = 0;
 }
 
 static const struct nla_policy ipvlan_nl_policy[IFLA_IPVLAN_MAX + 1] =
@@ -593,6 +590,7 @@ static int ipvlan_device_event(struct notifier_block *unused,
 		list_for_each_entry(ipvlan, &port->ipvlans, pnode) {
 			ipvlan->dev->features = dev->features & IPVLAN_FEATURES;
 			ipvlan->dev->gso_max_size = dev->gso_max_size;
+			ipvlan->dev->gso_max_segs = dev->gso_max_segs;
 			netdev_features_change(ipvlan->dev);
 		}
 		break;
@@ -627,7 +625,7 @@ static int ipvlan_add_addr6(struct ipvl_dev *ipvlan, struct in6_addr *ip6_addr)
 	memcpy(&addr->ip6addr, ip6_addr, sizeof(struct in6_addr));
 	addr->atype = IPVL_IPV6;
 	list_add_tail(&addr->anode, &ipvlan->addrs);
-	ipvlan->ipv6cnt++;
+
 	/* If the interface is not up, the address will be added to the hash
 	 * list by ipvlan_open.
 	 */
@@ -645,10 +643,8 @@ static void ipvlan_del_addr6(struct ipvl_dev *ipvlan, struct in6_addr *ip6_addr)
 	if (!addr)
 		return;
 
-	ipvlan_ht_addr_del(addr, true);
+	ipvlan_ht_addr_del(addr);
 	list_del(&addr->anode);
-	ipvlan->ipv6cnt--;
-	WARN_ON(ipvlan->ipv6cnt < 0);
 	kfree_rcu(addr, rcu);
 
 	return;
@@ -660,6 +656,10 @@ static int ipvlan_addr6_event(struct notifier_block *unused,
 	struct inet6_ifaddr *if6 = (struct inet6_ifaddr *)ptr;
 	struct net_device *dev = (struct net_device *)if6->idev->dev;
 	struct ipvl_dev *ipvlan = netdev_priv(dev);
+
+	/* FIXME IPv6 autoconf calls us from bh without RTNL */
+	if (in_softirq())
+		return NOTIFY_DONE;
 
 	if (!netif_is_ipvlan(dev))
 		return NOTIFY_DONE;
@@ -699,13 +699,12 @@ static int ipvlan_add_addr4(struct ipvl_dev *ipvlan, struct in_addr *ip4_addr)
 	memcpy(&addr->ip4addr, ip4_addr, sizeof(struct in_addr));
 	addr->atype = IPVL_IPV4;
 	list_add_tail(&addr->anode, &ipvlan->addrs);
-	ipvlan->ipv4cnt++;
+
 	/* If the interface is not up, the address will be added to the hash
 	 * list by ipvlan_open.
 	 */
 	if (netif_running(ipvlan->dev))
 		ipvlan_ht_addr_add(ipvlan, addr);
-	ipvlan_set_broadcast_mac_filter(ipvlan, true);
 
 	return 0;
 }
@@ -718,12 +717,8 @@ static void ipvlan_del_addr4(struct ipvl_dev *ipvlan, struct in_addr *ip4_addr)
 	if (!addr)
 		return;
 
-	ipvlan_ht_addr_del(addr, true);
+	ipvlan_ht_addr_del(addr);
 	list_del(&addr->anode);
-	ipvlan->ipv4cnt--;
-	WARN_ON(ipvlan->ipv4cnt < 0);
-	if (!ipvlan->ipv4cnt)
-	    ipvlan_set_broadcast_mac_filter(ipvlan, false);
 	kfree_rcu(addr, rcu);
 
 	return;

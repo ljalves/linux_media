@@ -81,10 +81,7 @@ static struct page **relay_alloc_page_array(unsigned int n_pages)
  */
 static void relay_free_page_array(struct page **array)
 {
-	if (is_vmalloc_addr(array))
-		vfree(array);
-	else
-		kfree(array);
+	kvfree(array);
 }
 
 /**
@@ -1136,7 +1133,7 @@ static ssize_t relay_file_read_subbufs(struct file *filp, loff_t *ppos,
 	if (!desc->count)
 		return 0;
 
-	mutex_lock(&file_inode(filp)->i_mutex);
+	inode_lock(file_inode(filp));
 	do {
 		if (!relay_file_read_avail(buf, *ppos))
 			break;
@@ -1156,7 +1153,7 @@ static ssize_t relay_file_read_subbufs(struct file *filp, loff_t *ppos,
 			*ppos = relay_file_read_end_pos(buf, read_start, ret);
 		}
 	} while (desc->count && ret);
-	mutex_unlock(&file_inode(filp)->i_mutex);
+	inode_unlock(file_inode(filp));
 
 	return desc->written;
 }

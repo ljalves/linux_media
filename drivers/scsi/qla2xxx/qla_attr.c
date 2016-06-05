@@ -272,8 +272,8 @@ qla2x00_sysfs_write_nvram(struct file *filp, struct kobject *kobj,
 
 		iter = (uint32_t *)buf;
 		chksum = 0;
-		for (cnt = 0; cnt < ((count >> 2) - 1); cnt++)
-			chksum += le32_to_cpu(*iter++);
+		for (cnt = 0; cnt < ((count >> 2) - 1); cnt++, iter++)
+			chksum += le32_to_cpu(*iter);
 		chksum = ~chksum + 1;
 		*iter = cpu_to_le32(chksum);
 	} else {
@@ -562,6 +562,7 @@ qla2x00_sysfs_read_vpd(struct file *filp, struct kobject *kobj,
 	struct scsi_qla_host *vha = shost_priv(dev_to_shost(container_of(kobj,
 	    struct device, kobj)));
 	struct qla_hw_data *ha = vha->hw;
+	uint32_t faddr;
 
 	if (unlikely(pci_channel_offline(ha->pdev)))
 		return -EAGAIN;
@@ -569,9 +570,16 @@ qla2x00_sysfs_read_vpd(struct file *filp, struct kobject *kobj,
 	if (!capable(CAP_SYS_ADMIN))
 		return -EINVAL;
 
-	if (IS_NOCACHE_VPD_TYPE(ha))
-		ha->isp_ops->read_optrom(vha, ha->vpd, ha->flt_region_vpd << 2,
+	if (IS_NOCACHE_VPD_TYPE(ha)) {
+		faddr = ha->flt_region_vpd << 2;
+
+		if (IS_QLA27XX(ha) &&
+		    qla27xx_find_valid_image(vha) == QLA27XX_SECONDARY_IMAGE)
+			faddr = ha->flt_region_vpd_sec << 2;
+
+		ha->isp_ops->read_optrom(vha, ha->vpd, faddr,
 		    ha->vpd_size);
+	}
 	return memory_read_from_buffer(buf, count, &off, ha->vpd, ha->vpd_size);
 }
 
@@ -738,7 +746,7 @@ qla2x00_sysfs_write_reset(struct file *filp, struct kobject *kobj,
 		ql_log(ql_log_info, vha, 0x706f,
 		    "Issuing MPI reset.\n");
 
-		if (IS_QLA83XX(ha)) {
+		if (IS_QLA83XX(ha) || IS_QLA27XX(ha)) {
 			uint32_t idc_control;
 
 			qla83xx_idc_lock(vha, 0);
@@ -824,6 +832,41 @@ static struct bin_attribute sysfs_reset_attr = {
 };
 
 static ssize_t
+qla2x00_issue_logo(struct file *filp, struct kobject *kobj,
+			struct bin_attribute *bin_attr,
+			char *buf, loff_t off, size_t count)
+{
+	struct scsi_qla_host *vha = shost_priv(dev_to_shost(container_of(kobj,
+	    struct device, kobj)));
+	int type;
+	int rval = 0;
+	port_id_t did;
+
+	type = simple_strtol(buf, NULL, 10);
+
+	did.b.domain = (type & 0x00ff0000) >> 16;
+	did.b.area = (type & 0x0000ff00) >> 8;
+	did.b.al_pa = (type & 0x000000ff);
+
+	ql_log(ql_log_info, vha, 0x70e3, "portid=%02x%02x%02x done\n",
+	    did.b.domain, did.b.area, did.b.al_pa);
+
+	ql_log(ql_log_info, vha, 0x70e4, "%s: %d\n", __func__, type);
+
+	rval = qla24xx_els_dcmd_iocb(vha, ELS_DCMD_LOGO, did);
+	return count;
+}
+
+static struct bin_attribute sysfs_issue_logo_attr = {
+	.attr = {
+		.name = "issue_logo",
+		.mode = S_IWUSR,
+	},
+	.size = 0,
+	.write = qla2x00_issue_logo,
+};
+
+static ssize_t
 qla2x00_sysfs_read_xgmac_stats(struct file *filp, struct kobject *kobj,
 		       struct bin_attribute *bin_attr,
 		       char *buf, loff_t off, size_t count)
@@ -884,7 +927,6 @@ qla2x00_sysfs_read_dcbx_tlv(struct file *filp, struct kobject *kobj,
 	    struct device, kobj)));
 	struct qla_hw_data *ha = vha->hw;
 	int rval;
-	uint16_t actual_size;
 
 	if (!capable(CAP_SYS_ADMIN) || off != 0 || count > DCBX_TLV_DATA_SIZE)
 		return 0;
@@ -901,7 +943,6 @@ qla2x00_sysfs_read_dcbx_tlv(struct file *filp, struct kobject *kobj,
 	}
 
 do_read:
-	actual_size = 0;
 	memset(ha->dcbx_tlv, 0, DCBX_TLV_DATA_SIZE);
 
 	rval = qla2x00_get_dcbx_params(vha, ha->dcbx_tlv_dma,
@@ -939,6 +980,7 @@ static struct sysfs_entry {
 	{ "vpd", &sysfs_vpd_attr, 1 },
 	{ "sfp", &sysfs_sfp_attr, 1 },
 	{ "reset", &sysfs_reset_attr, },
+	{ "issue_logo", &sysfs_issue_logo_attr, },
 	{ "xgmac_stats", &sysfs_xgmac_stats_attr, 3 },
 	{ "dcbx_tlv", &sysfs_dcbx_tlv_attr, 3 },
 	{ NULL },
@@ -1079,8 +1121,7 @@ qla2x00_model_desc_show(struct device *dev, struct device_attribute *attr,
 			char *buf)
 {
 	scsi_qla_host_t *vha = shost_priv(class_to_shost(dev));
-	return scnprintf(buf, PAGE_SIZE, "%s\n",
-	    vha->hw->model_desc ? vha->hw->model_desc : "");
+	return scnprintf(buf, PAGE_SIZE, "%s\n", vha->hw->model_desc);
 }
 
 static ssize_t
@@ -1348,7 +1389,8 @@ qla2x00_mpi_version_show(struct device *dev, struct device_attribute *attr,
 	scsi_qla_host_t *vha = shost_priv(class_to_shost(dev));
 	struct qla_hw_data *ha = vha->hw;
 
-	if (!IS_QLA81XX(ha) && !IS_QLA8031(ha) && !IS_QLA8044(ha))
+	if (!IS_QLA81XX(ha) && !IS_QLA8031(ha) && !IS_QLA8044(ha) &&
+	    !IS_QLA27XX(ha))
 		return scnprintf(buf, PAGE_SIZE, "\n");
 
 	return scnprintf(buf, PAGE_SIZE, "%d.%02d.%02d (%x)\n",
@@ -1537,6 +1579,20 @@ qla2x00_allow_cna_fw_dump_store(struct device *dev,
 	return strlen(buf);
 }
 
+static ssize_t
+qla2x00_pep_version_show(struct device *dev, struct device_attribute *attr,
+	char *buf)
+{
+	scsi_qla_host_t *vha = shost_priv(class_to_shost(dev));
+	struct qla_hw_data *ha = vha->hw;
+
+	if (!IS_QLA27XX(ha))
+		return scnprintf(buf, PAGE_SIZE, "\n");
+
+	return scnprintf(buf, PAGE_SIZE, "%d.%02d.%02d\n",
+	    ha->pep_version[0], ha->pep_version[1], ha->pep_version[2]);
+}
+
 static DEVICE_ATTR(driver_version, S_IRUGO, qla2x00_drvr_version_show, NULL);
 static DEVICE_ATTR(fw_version, S_IRUGO, qla2x00_fw_version_show, NULL);
 static DEVICE_ATTR(serial_num, S_IRUGO, qla2x00_serial_num_show, NULL);
@@ -1581,6 +1637,7 @@ static DEVICE_ATTR(fw_dump_size, S_IRUGO, qla2x00_fw_dump_size_show, NULL);
 static DEVICE_ATTR(allow_cna_fw_dump, S_IRUGO | S_IWUSR,
 		   qla2x00_allow_cna_fw_dump_show,
 		   qla2x00_allow_cna_fw_dump_store);
+static DEVICE_ATTR(pep_version, S_IRUGO, qla2x00_pep_version_show, NULL);
 
 struct device_attribute *qla2x00_host_attrs[] = {
 	&dev_attr_driver_version,
@@ -1614,6 +1671,7 @@ struct device_attribute *qla2x00_host_attrs[] = {
 	&dev_attr_diag_megabytes,
 	&dev_attr_fw_dump_size,
 	&dev_attr_allow_cna_fw_dump,
+	&dev_attr_pep_version,
 	NULL,
 };
 
@@ -1859,7 +1917,8 @@ qla2x00_get_fc_host_stats(struct Scsi_Host *shost)
 	if (qla2x00_reset_active(vha))
 		goto done;
 
-	stats = dma_pool_alloc(ha->s_dma_pool, GFP_KERNEL, &stats_dma);
+	stats = dma_alloc_coherent(&ha->pdev->dev,
+	    sizeof(struct link_statistics), &stats_dma, GFP_KERNEL);
 	if (stats == NULL) {
 		ql_log(ql_log_warn, vha, 0x707d,
 		    "Failed to allocate memory for stats.\n");
@@ -1907,7 +1966,8 @@ qla2x00_get_fc_host_stats(struct Scsi_Host *shost)
 	do_div(pfc_host_stat->seconds_since_last_reset, HZ);
 
 done_free:
-        dma_pool_free(ha->s_dma_pool, stats, stats_dma);
+	dma_free_coherent(&ha->pdev->dev, sizeof(struct link_statistics),
+	    stats, stats_dma);
 done:
 	return pfc_host_stat;
 }

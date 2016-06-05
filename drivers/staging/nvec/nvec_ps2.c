@@ -78,7 +78,7 @@ static int nvec_ps2_notifier(struct notifier_block *nb,
 			     unsigned long event_type, void *data)
 {
 	int i;
-	unsigned char *msg = (unsigned char *)data;
+	unsigned char *msg = data;
 
 	switch (event_type) {
 	case NVEC_PS2_EVT:
@@ -169,8 +169,8 @@ static int nvec_mouse_resume(struct device *dev)
 }
 #endif
 
-static const SIMPLE_DEV_PM_OPS(nvec_mouse_pm_ops, nvec_mouse_suspend,
-				nvec_mouse_resume);
+static SIMPLE_DEV_PM_OPS(nvec_mouse_pm_ops, nvec_mouse_suspend,
+			 nvec_mouse_resume);
 
 static struct platform_driver nvec_mouse_driver = {
 	.probe  = nvec_mouse_probe,

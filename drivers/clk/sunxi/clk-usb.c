@@ -14,11 +14,12 @@
  * GNU General Public License for more details.
  */
 
+#include <linux/clk.h>
 #include <linux/clk-provider.h>
-#include <linux/clkdev.h>
 #include <linux/of.h>
 #include <linux/of_address.h>
 #include <linux/reset-controller.h>
+#include <linux/slab.h>
 #include <linux/spinlock.h>
 
 
@@ -75,7 +76,7 @@ static int sunxi_usb_reset_deassert(struct reset_controller_dev *rcdev,
 	return 0;
 }
 
-static struct reset_control_ops sunxi_usb_reset_ops = {
+static const struct reset_control_ops sunxi_usb_reset_ops = {
 	.assert		= sunxi_usb_reset_assert,
 	.deassert	= sunxi_usb_reset_deassert,
 };
@@ -203,6 +204,29 @@ static void __init sun6i_a31_usb_setup(struct device_node *node)
 	sunxi_usb_clk_setup(node, &sun6i_a31_usb_clk_data, &sun4i_a10_usb_lock);
 }
 CLK_OF_DECLARE(sun6i_a31_usb, "allwinner,sun6i-a31-usb-clk", sun6i_a31_usb_setup);
+
+static const struct usb_clk_data sun8i_a23_usb_clk_data __initconst = {
+	.clk_mask = BIT(16) | BIT(11) | BIT(10) | BIT(9) | BIT(8),
+	.reset_mask = BIT(2) | BIT(1) | BIT(0),
+};
+
+static void __init sun8i_a23_usb_setup(struct device_node *node)
+{
+	sunxi_usb_clk_setup(node, &sun8i_a23_usb_clk_data, &sun4i_a10_usb_lock);
+}
+CLK_OF_DECLARE(sun8i_a23_usb, "allwinner,sun8i-a23-usb-clk", sun8i_a23_usb_setup);
+
+static const struct usb_clk_data sun8i_h3_usb_clk_data __initconst = {
+	.clk_mask =  BIT(19) | BIT(18) | BIT(17) | BIT(16) |
+		     BIT(11) | BIT(10) | BIT(9) | BIT(8),
+	.reset_mask = BIT(3) | BIT(2) | BIT(1) | BIT(0),
+};
+
+static void __init sun8i_h3_usb_setup(struct device_node *node)
+{
+	sunxi_usb_clk_setup(node, &sun8i_h3_usb_clk_data, &sun4i_a10_usb_lock);
+}
+CLK_OF_DECLARE(sun8i_h3_usb, "allwinner,sun8i-h3-usb-clk", sun8i_h3_usb_setup);
 
 static const struct usb_clk_data sun9i_a80_usb_mod_data __initconst = {
 	.clk_mask = BIT(6) | BIT(5) | BIT(4) | BIT(3) | BIT(2) | BIT(1),

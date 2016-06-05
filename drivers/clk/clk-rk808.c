@@ -15,7 +15,6 @@
  * more details.
  */
 
-#include <linux/clk.h>
 #include <linux/clk-provider.h>
 #include <linux/module.h>
 #include <linux/slab.h>
@@ -107,7 +106,6 @@ static int rk808_clkout_probe(struct platform_device *pdev)
 	if (!clk_table)
 		return -ENOMEM;
 
-	init.flags = CLK_IS_ROOT;
 	init.parent_names = NULL;
 	init.num_parents = 0;
 	init.name = "rk808-clkout1";

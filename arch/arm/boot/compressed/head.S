@@ -12,6 +12,8 @@
 #include <asm/assembler.h>
 #include <asm/v7m.h>
 
+#include "efi-header.S"
+
  AR_CLASS(	.arch	armv7-a	)
  M_CLASS(	.arch	armv7-m	)
 
@@ -126,11 +128,11 @@
 start:
 		.type	start,#function
 		.rept	7
-		mov	r0, r0
+		__nop
 		.endr
    ARM(		mov	r0, r0		)
    ARM(		b	1f		)
- THUMB(		adr	r12, BSYM(1f)	)
+ THUMB(		badr	r12, 1f		)
  THUMB(		bx	r12		)
 
 		.word	_magic_sig	@ Magic numbers to help the loader
@@ -139,7 +141,8 @@ start:
 		.word	0x04030201	@ endianness flag
 
  THUMB(		.thumb			)
-1:
+1:		__EFI_HEADER
+
  ARM_BE8(	setend	be		)	@ go BE8 if compiled for BE8
  AR_CLASS(	mrs	r9, cpsr	)
 #ifdef CONFIG_ARM_VIRT_EXT
@@ -447,7 +450,7 @@ dtb_check_done:
 
 		bl	cache_clean_flush
 
-		adr	r0, BSYM(restart)
+		badr	r0, restart
 		add	r0, r0, r6
 		mov	pc, r0
 
@@ -1352,6 +1355,53 @@ __enter_kernel:
  THUMB(		bx	r4		)	@ entry point is always ARM for A/R classes
 
 reloc_code_end:
+
+#ifdef CONFIG_EFI_STUB
+		.align	2
+_start:		.long	start - .
+
+ENTRY(efi_stub_entry)
+		@ allocate space on stack for passing current zImage address
+		@ and for the EFI stub to return of new entry point of
+		@ zImage, as EFI stub may copy the kernel. Pointer address
+		@ is passed in r2. r0 and r1 are passed through from the
+		@ EFI firmware to efi_entry
+		adr	ip, _start
+		ldr	r3, [ip]
+		add	r3, r3, ip
+		stmfd	sp!, {r3, lr}
+		mov	r2, sp			@ pass zImage address in r2
+		bl	efi_entry
+
+		@ Check for error return from EFI stub. r0 has FDT address
+		@ or error code.
+		cmn	r0, #1
+		beq	efi_load_fail
+
+		@ Preserve return value of efi_entry() in r4
+		mov	r4, r0
+		bl	cache_clean_flush
+		bl	cache_off
+
+		@ Set parameters for booting zImage according to boot protocol
+		@ put FDT address in r2, it was returned by efi_entry()
+		@ r1 is the machine type, and r0 needs to be 0
+		mov	r0, #0
+		mov	r1, #0xFFFFFFFF
+		mov	r2, r4
+
+		@ Branch to (possibly) relocated zImage that is in [sp]
+		ldr	lr, [sp]
+		ldr	ip, =start_offset
+		add	lr, lr, ip
+		mov	pc, lr				@ no mode switch
+
+efi_load_fail:
+		@ Return EFI_LOAD_ERROR to EFI firmware on error.
+		ldr	r0, =0x80000001
+		ldmfd	sp!, {ip, pc}
+ENDPROC(efi_stub_entry)
+#endif
 
 		.align
 		.section ".stack", "aw", %nobits

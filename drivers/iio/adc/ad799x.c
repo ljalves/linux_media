@@ -477,7 +477,7 @@ static int ad799x_read_event_value(struct iio_dev *indio_dev,
 	if (ret < 0)
 		return ret;
 	*val = (ret >> chan->scan_type.shift) &
-		GENMASK(chan->scan_type.realbits - 1 , 0);
+		GENMASK(chan->scan_type.realbits - 1, 0);
 
 	return IIO_VAL_INT;
 }
@@ -528,7 +528,6 @@ static struct attribute *ad799x_event_attributes[] = {
 
 static struct attribute_group ad799x_event_attrs_group = {
 	.attrs = ad799x_event_attributes,
-	.name = "events",
 };
 
 static const struct iio_info ad7991_info = {

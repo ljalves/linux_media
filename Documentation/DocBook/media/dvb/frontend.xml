@@ -14,9 +14,9 @@
     <listitem><para>Satellite Equipment Control (SEC) hardware (only for Satellite).</para></listitem>
 </itemizedlist>
 <para>The frontend can be accessed through
-    <emphasis role="bold">/dev/dvb/adapter?/frontend?</emphasis>. Data types and
+    <constant>/dev/dvb/adapter?/frontend?</constant>. Data types and
     ioctl definitions can be accessed by including
-    <emphasis role="bold">linux/dvb/frontend.h</emphasis> in your application.
+    <constant>linux/dvb/frontend.h</constant> in your application.
 </para>
 
 <para>NOTE: Transmission via the internet (DVB-IP)
@@ -48,7 +48,7 @@ specification is available at
 <para>The information about the frontend tuner locking status can be queried
     using <link linkend="FE_READ_STATUS">FE_READ_STATUS</link>.</para>
 <para>Signal statistics are provided via <link linkend="FE_GET_PROPERTY"><constant>FE_GET_PROPERTY</constant></link>.
-    Please notice that several statistics require the demodulator to be fully
+    Please note that several statistics require the demodulator to be fully
     locked (e. g. with FE_HAS_LOCK bit set). See
     <link linkend="frontend-stat-properties">Frontend statistics indicators</link>
     for more details.</para>

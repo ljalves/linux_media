@@ -7,9 +7,8 @@
  * whole.
  *
  *  a) This file is free software; you can redistribute it and/or
- *     modify it under the terms of the GNU General Public License as
- *     published by the Free Software Foundation; either version 2 of the
- *     License.
+ *     modify it under the terms of the GNU General Public License
+ *     version 2 as published by the Free Software Foundation.
  *
  *     This file is distributed in the hope that it will be useful
  *     but WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -49,7 +48,7 @@
 
 	ir_recv: ir-receiver {
 		compatible = "gpio-ir-receiver";
-		gpios = <&gpio3 5 1>;
+		gpios = <&gpio3 5 GPIO_ACTIVE_LOW>;
 		pinctrl-names = "default";
 		pinctrl-0 = <&pinctrl_hummingboard_gpio3_5>;
 	};
@@ -68,7 +67,7 @@
 		reg_usbh1_vbus: usb-h1-vbus {
 			compatible = "regulator-fixed";
 			enable-active-high;
-			gpio = <&gpio1 0 0>;
+			gpio = <&gpio1 0 GPIO_ACTIVE_HIGH>;
 			pinctrl-names = "default";
 			pinctrl-0 = <&pinctrl_hummingboard_usbh1_vbus>;
 			regulator-name = "usb_h1_vbus";
@@ -79,7 +78,7 @@
 		reg_usbotg_vbus: usb-otg-vbus {
 			compatible = "regulator-fixed";
 			enable-active-high;
-			gpio = <&gpio3 22 0>;
+			gpio = <&gpio3 22 GPIO_ACTIVE_HIGH>;
 			pinctrl-names = "default";
 			pinctrl-0 = <&pinctrl_hummingboard_usbotg_vbus>;
 			regulator-name = "usb_otg_vbus";
@@ -192,6 +191,12 @@
 			>;
 		};
 
+		pinctrl_hummingboard_pcie_reset: hummingboard-pcie-reset {
+			fsl,pins = <
+				MX6QDL_PAD_EIM_DA4__GPIO3_IO04 0x1b0b1
+			>;
+		};
+
 		pinctrl_hummingboard_pwm1: pwm1grp {
 			fsl,pins = <MX6QDL_PAD_DISP0_DAT8__PWM1_OUT 0x1b0b1>;
 		};
@@ -245,6 +250,13 @@
 	};
 };
 
+&pcie {
+	pinctrl-names = "default";
+	pinctrl-0 = <&pinctrl_hummingboard_pcie_reset>;
+	reset-gpio = <&gpio3 4 GPIO_ACTIVE_LOW>;
+	status = "okay";
+};
+
 &pwm1 {
 	 pinctrl-names = "default";
 	 pinctrl-0 = <&pinctrl_hummingboard_pwm1>;
@@ -263,7 +275,6 @@
 };
 
 &ssi1 {
-	fsl,mode = "i2s-slave";
 	status = "okay";
 };
 
@@ -288,6 +299,6 @@
 		&pinctrl_hummingboard_usdhc2
 	>;
 	vmmc-supply = <&reg_3p3v>;
-	cd-gpios = <&gpio1 4 0>;
+	cd-gpios = <&gpio1 4 GPIO_ACTIVE_LOW>;
 	status = "okay";
 };

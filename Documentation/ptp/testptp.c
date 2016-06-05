@@ -18,6 +18,7 @@
  *  Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  */
 #define _GNU_SOURCE
+#define __SANE_USERSPACE_TYPES__        /* For PPC64, to get LL64 types */
 #include <errno.h>
 #include <fcntl.h>
 #include <inttypes.h>
@@ -159,7 +160,8 @@ int main(int argc, char *argv[])
 
 
 	char *progname;
-	int i, c, cnt, fd;
+	unsigned int i;
+	int c, cnt, fd;
 
 	char *device = DEVICE;
 	clockid_t clkid;
@@ -276,13 +278,15 @@ int main(int argc, char *argv[])
 			       "  %d external time stamp channels\n"
 			       "  %d programmable periodic signals\n"
 			       "  %d pulse per second\n"
-			       "  %d programmable pins\n",
+			       "  %d programmable pins\n"
+			       "  %d cross timestamping\n",
 			       caps.max_adj,
 			       caps.n_alarm,
 			       caps.n_ext_ts,
 			       caps.n_per_out,
 			       caps.pps,
-			       caps.n_pins);
+			       caps.n_pins,
+			       caps.cross_timestamping);
 		}
 	}
 

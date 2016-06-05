@@ -6,7 +6,6 @@
  * the terms of the GNU General Public License version 2 as published by the
  * Free Software Foundation.
  */
-#include <linux/clk.h>
 #include <linux/io.h>
 #include <linux/clk-provider.h>
 #include <linux/of.h>
@@ -37,7 +36,7 @@ static void __init efm32gg_cmu_init(struct device_node *np)
 	}
 
 	clk[clk_HFXO] = clk_register_fixed_rate(NULL, "HFXO", NULL,
-			CLK_IS_ROOT, 48000000);
+			0, 48000000);
 
 	clk[clk_HFPERCLKUSART0] = clk_register_gate(NULL, "HFPERCLK.USART0",
 			"HFXO", 0, base + CMU_HFPERCLKEN0, 0, 0, NULL);

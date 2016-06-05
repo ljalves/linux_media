@@ -11,28 +11,34 @@ ifneq ($(obj-perf),)
 obj-perf := $(abspath $(obj-perf))/
 endif
 
-$(shell echo -n > .config-detected)
-detected     = $(shell echo "$(1)=y"       >> .config-detected)
-detected_var = $(shell echo "$(1)=$($(1))" >> .config-detected)
+$(shell printf "" > $(OUTPUT).config-detected)
+detected     = $(shell echo "$(1)=y"       >> $(OUTPUT).config-detected)
+detected_var = $(shell echo "$(1)=$($(1))" >> $(OUTPUT).config-detected)
 
 CFLAGS := $(EXTRA_CFLAGS) $(EXTRA_WARNINGS)
 
-include $(src-perf)/config/Makefile.arch
+include $(srctree)/tools/scripts/Makefile.arch
 
 $(call detected_var,ARCH)
 
 NO_PERF_REGS := 1
 
+# Additional ARCH settings for ppc
+ifeq ($(ARCH),powerpc)
+  NO_PERF_REGS := 0
+  LIBUNWIND_LIBS := -lunwind -lunwind-ppc64
+endif
+
 # Additional ARCH settings for x86
 ifeq ($(ARCH),x86)
   $(call detected,CONFIG_X86)
   ifeq (${IS_64_BIT}, 1)
-    CFLAGS += -DHAVE_ARCH_X86_64_SUPPORT
+    CFLAGS += -DHAVE_ARCH_X86_64_SUPPORT -DHAVE_SYSCALL_TABLE -I$(OUTPUT)arch/x86/include/generated
     ARCH_INCLUDE = ../../arch/x86/lib/memcpy_64.S ../../arch/x86/lib/memset_64.S
     LIBUNWIND_LIBS = -lunwind -lunwind-x86_64
     $(call detected,CONFIG_X86_64)
   else
-    LIBUNWIND_LIBS = -lunwind -lunwind-x86
+    LIBUNWIND_LIBS = -lunwind-x86 -llzma -lunwind
   endif
   NO_PERF_REGS := 0
 endif
@@ -61,55 +67,55 @@ endif
 
 ifeq ($(LIBUNWIND_LIBS),)
   NO_LIBUNWIND := 1
-else
-  #
-  # For linking with debug library, run like:
-  #
-  #   make DEBUG=1 LIBUNWIND_DIR=/opt/libunwind/
-  #
-  ifdef LIBUNWIND_DIR
-    LIBUNWIND_CFLAGS  = -I$(LIBUNWIND_DIR)/include
-    LIBUNWIND_LDFLAGS = -L$(LIBUNWIND_DIR)/lib
-  endif
-  LIBUNWIND_LDFLAGS += $(LIBUNWIND_LIBS)
-
-  # Set per-feature check compilation flags
-  FEATURE_CHECK_CFLAGS-libunwind = $(LIBUNWIND_CFLAGS)
-  FEATURE_CHECK_LDFLAGS-libunwind = $(LIBUNWIND_LDFLAGS)
-  FEATURE_CHECK_CFLAGS-libunwind-debug-frame = $(LIBUNWIND_CFLAGS)
-  FEATURE_CHECK_LDFLAGS-libunwind-debug-frame = $(LIBUNWIND_LDFLAGS)
 endif
+#
+# For linking with debug library, run like:
+#
+#   make DEBUG=1 LIBUNWIND_DIR=/opt/libunwind/
+#
+ifdef LIBUNWIND_DIR
+  LIBUNWIND_CFLAGS  = -I$(LIBUNWIND_DIR)/include
+  LIBUNWIND_LDFLAGS = -L$(LIBUNWIND_DIR)/lib
+endif
+LIBUNWIND_LDFLAGS += $(LIBUNWIND_LIBS)
+
+# Set per-feature check compilation flags
+FEATURE_CHECK_CFLAGS-libunwind = $(LIBUNWIND_CFLAGS)
+FEATURE_CHECK_LDFLAGS-libunwind = $(LIBUNWIND_LDFLAGS)
+FEATURE_CHECK_CFLAGS-libunwind-debug-frame = $(LIBUNWIND_CFLAGS)
+FEATURE_CHECK_LDFLAGS-libunwind-debug-frame = $(LIBUNWIND_LDFLAGS)
 
 ifeq ($(NO_PERF_REGS),0)
   CFLAGS += -DHAVE_PERF_REGS_SUPPORT
 endif
 
-ifndef NO_LIBELF
-  # for linking with debug library, run like:
-  # make DEBUG=1 LIBDW_DIR=/opt/libdw/
-  ifdef LIBDW_DIR
-    LIBDW_CFLAGS  := -I$(LIBDW_DIR)/include
-    LIBDW_LDFLAGS := -L$(LIBDW_DIR)/lib
-  endif
-  FEATURE_CHECK_CFLAGS-libdw-dwarf-unwind := $(LIBDW_CFLAGS)
-  FEATURE_CHECK_LDFLAGS-libdw-dwarf-unwind := $(LIBDW_LDFLAGS) -ldw
+# for linking with debug library, run like:
+# make DEBUG=1 LIBDW_DIR=/opt/libdw/
+ifdef LIBDW_DIR
+  LIBDW_CFLAGS  := -I$(LIBDW_DIR)/include
+  LIBDW_LDFLAGS := -L$(LIBDW_DIR)/lib
 endif
+FEATURE_CHECK_CFLAGS-libdw-dwarf-unwind := $(LIBDW_CFLAGS)
+FEATURE_CHECK_LDFLAGS-libdw-dwarf-unwind := $(LIBDW_LDFLAGS) -ldw
 
-ifdef LIBBABELTRACE
-  # for linking with debug library, run like:
-  # make DEBUG=1 LIBBABELTRACE_DIR=/opt/libbabeltrace/
-  ifdef LIBBABELTRACE_DIR
-    LIBBABELTRACE_CFLAGS  := -I$(LIBBABELTRACE_DIR)/include
-    LIBBABELTRACE_LDFLAGS := -L$(LIBBABELTRACE_DIR)/lib
-  endif
-  FEATURE_CHECK_CFLAGS-libbabeltrace := $(LIBBABELTRACE_CFLAGS)
-  FEATURE_CHECK_LDFLAGS-libbabeltrace := $(LIBBABELTRACE_LDFLAGS) -lbabeltrace-ctf
+# for linking with debug library, run like:
+# make DEBUG=1 LIBBABELTRACE_DIR=/opt/libbabeltrace/
+ifdef LIBBABELTRACE_DIR
+  LIBBABELTRACE_CFLAGS  := -I$(LIBBABELTRACE_DIR)/include
+  LIBBABELTRACE_LDFLAGS := -L$(LIBBABELTRACE_DIR)/lib
 endif
+FEATURE_CHECK_CFLAGS-libbabeltrace := $(LIBBABELTRACE_CFLAGS)
+FEATURE_CHECK_LDFLAGS-libbabeltrace := $(LIBBABELTRACE_LDFLAGS) -lbabeltrace-ctf
 
+FEATURE_CHECK_CFLAGS-bpf = -I. -I$(srctree)/tools/include -I$(srctree)/arch/$(ARCH)/include/uapi -I$(srctree)/include/uapi
 # include ARCH specific config
 -include $(src-perf)/arch/$(ARCH)/Makefile
 
-include $(src-perf)/config/utilities.mak
+ifdef PERF_HAVE_ARCH_REGS_QUERY_REGISTER_OFFSET
+  CFLAGS += -DHAVE_ARCH_REGS_QUERY_REGISTER_OFFSET
+endif
+
+include $(srctree)/tools/scripts/utilities.mak
 
 ifeq ($(call get-executable,$(FLEX)),)
   dummy := $(error Error: $(FLEX) is missing on this system, please install it)
@@ -140,28 +146,26 @@ ifdef PARSER_DEBUG
   $(call detected_var,PARSER_DEBUG_FLEX)
 endif
 
-ifndef NO_LIBPYTHON
-  # Try different combinations to accommodate systems that only have
-  # python[2][-config] in weird combinations but always preferring
-  # python2 and python2-config as per pep-0394. If we catch a
-  # python[-config] in version 3, the version check will kill it.
-  PYTHON2 := $(if $(call get-executable,python2),python2,python)
-  override PYTHON := $(call get-executable-or-default,PYTHON,$(PYTHON2))
-  PYTHON2_CONFIG := \
-    $(if $(call get-executable,$(PYTHON)-config),$(PYTHON)-config,python-config)
-  override PYTHON_CONFIG := \
-    $(call get-executable-or-default,PYTHON_CONFIG,$(PYTHON2_CONFIG))
+# Try different combinations to accommodate systems that only have
+# python[2][-config] in weird combinations but always preferring
+# python2 and python2-config as per pep-0394. If we catch a
+# python[-config] in version 3, the version check will kill it.
+PYTHON2 := $(if $(call get-executable,python2),python2,python)
+override PYTHON := $(call get-executable-or-default,PYTHON,$(PYTHON2))
+PYTHON2_CONFIG := \
+  $(if $(call get-executable,$(PYTHON)-config),$(PYTHON)-config,python-config)
+override PYTHON_CONFIG := \
+  $(call get-executable-or-default,PYTHON_CONFIG,$(PYTHON2_CONFIG))
 
-  PYTHON_CONFIG_SQ := $(call shell-sq,$(PYTHON_CONFIG))
+PYTHON_CONFIG_SQ := $(call shell-sq,$(PYTHON_CONFIG))
 
-  PYTHON_EMBED_LDOPTS := $(shell $(PYTHON_CONFIG_SQ) --ldflags 2>/dev/null)
-  PYTHON_EMBED_CCOPTS := $(shell $(PYTHON_CONFIG_SQ) --cflags 2>/dev/null)
+PYTHON_EMBED_LDOPTS := $(shell $(PYTHON_CONFIG_SQ) --ldflags 2>/dev/null)
+PYTHON_EMBED_CCOPTS := $(shell $(PYTHON_CONFIG_SQ) --cflags 2>/dev/null)
 
-  FEATURE_CHECK_CFLAGS-libpython := $(PYTHON_EMBED_CCOPTS)
-  FEATURE_CHECK_LDFLAGS-libpython := $(PYTHON_EMBED_LDOPTS)
-  FEATURE_CHECK_CFLAGS-libpython-version := $(PYTHON_EMBED_CCOPTS)
-  FEATURE_CHECK_LDFLAGS-libpython-version := $(PYTHON_EMBED_LDOPTS)
-endif
+FEATURE_CHECK_CFLAGS-libpython := $(PYTHON_EMBED_CCOPTS)
+FEATURE_CHECK_LDFLAGS-libpython := $(PYTHON_EMBED_LDOPTS)
+FEATURE_CHECK_CFLAGS-libpython-version := $(PYTHON_EMBED_CCOPTS)
+FEATURE_CHECK_LDFLAGS-libpython-version := $(PYTHON_EMBED_LDOPTS)
 
 CFLAGS += -fno-omit-frame-pointer
 CFLAGS += -ggdb3
@@ -176,7 +180,11 @@ LDFLAGS += -Wl,-z,noexecstack
 
 EXTLIBS = -lpthread -lrt -lm -ldl
 
+ifeq ($(FEATURES_DUMP),)
 include $(srctree)/tools/build/Makefile.feature
+else
+include $(FEATURES_DUMP)
+endif
 
 ifeq ($(feature-stackprotector-all), 1)
   CFLAGS += -fstack-protector-all
@@ -231,6 +239,7 @@ ifdef NO_LIBELF
   NO_DEMANGLE := 1
   NO_LIBUNWIND := 1
   NO_LIBDW_DWARF_UNWIND := 1
+  NO_LIBBPF := 1
 else
   ifeq ($(feature-libelf), 0)
     ifeq ($(feature-glibc), 1)
@@ -240,13 +249,14 @@ else
       LIBC_SUPPORT := 1
     endif
     ifeq ($(LIBC_SUPPORT),1)
-      msg := $(warning No libelf found, disables 'probe' tool, please install elfutils-libelf-devel/libelf-dev);
+      msg := $(warning No libelf found, disables 'probe' tool and BPF support in 'perf record', please install elfutils-libelf-devel/libelf-dev);
 
       NO_LIBELF := 1
       NO_DWARF := 1
       NO_DEMANGLE := 1
       NO_LIBUNWIND := 1
       NO_LIBDW_DWARF_UNWIND := 1
+      NO_LIBBPF := 1
     else
       ifneq ($(filter s% -static%,$(LDFLAGS),),)
         msg := $(error No static glibc found, please install glibc-static);
@@ -264,9 +274,19 @@ else
     ifneq ($(feature-dwarf), 1)
       msg := $(warning No libdw.h found or old libdw.h found or elfutils is older than 0.138, disables dwarf support. Please install new elfutils-devel/libdw-dev);
       NO_DWARF := 1
+    else
+      ifneq ($(feature-dwarf_getlocations), 1)
+        msg := $(warning Old libdw.h, finding variables at given 'perf probe' point will not work, install elfutils-devel/libdw-dev >= 0.157);
+      else
+        CFLAGS += -DHAVE_DWARF_GETLOCATIONS
+      endif # dwarf_getlocations
     endif # Dwarf support
   endif # libelf support
 endif # NO_LIBELF
+
+ifdef NO_DWARF
+  NO_LIBDW_DWARF_UNWIND := 1
+endif
 
 ifndef NO_LIBELF
   CFLAGS += -DHAVE_LIBELF_SUPPORT
@@ -281,9 +301,6 @@ ifndef NO_LIBELF
     CFLAGS += -DHAVE_ELF_GETPHDRNUM_SUPPORT
   endif
 
-  # include ARCH specific config
-  -include $(src-perf)/arch/$(ARCH)/Makefile
-
   ifndef NO_DWARF
     ifeq ($(origin PERF_HAVE_DWARF_REGS), undefined)
       msg := $(warning DWARF register mappings have not been defined for architecture $(ARCH), DWARF support disabled);
@@ -291,11 +308,41 @@ ifndef NO_LIBELF
     else
       CFLAGS += -DHAVE_DWARF_SUPPORT $(LIBDW_CFLAGS)
       LDFLAGS += $(LIBDW_LDFLAGS)
-      EXTLIBS += -ldw
+      DWARFLIBS := -ldw
+      ifeq ($(findstring -static,${LDFLAGS}),-static)
+	DWARFLIBS += -lelf -lebl -lz -llzma -lbz2
+      endif
+      EXTLIBS += ${DWARFLIBS}
       $(call detected,CONFIG_DWARF)
     endif # PERF_HAVE_DWARF_REGS
   endif # NO_DWARF
+
+  ifndef NO_LIBBPF
+    ifeq ($(feature-bpf), 1)
+      CFLAGS += -DHAVE_LIBBPF_SUPPORT
+      $(call detected,CONFIG_LIBBPF)
+    endif
+
+    ifndef NO_DWARF
+      ifdef PERF_HAVE_ARCH_REGS_QUERY_REGISTER_OFFSET
+        CFLAGS += -DHAVE_BPF_PROLOGUE
+        $(call detected,CONFIG_BPF_PROLOGUE)
+      else
+        msg := $(warning BPF prologue is not supported by architecture $(ARCH), missing regs_query_register_offset());
+      endif
+    else
+      msg := $(warning DWARF support is off, BPF prologue is disabled);
+    endif
+
+  endif # NO_LIBBPF
 endif # NO_LIBELF
+
+ifdef PERF_HAVE_JITDUMP
+  ifndef NO_DWARF
+    $(call detected,CONFIG_JITDUMP)
+    CFLAGS += -DHAVE_JITDUMP
+  endif
+endif
 
 ifeq ($(ARCH),powerpc)
   ifndef NO_DWARF
@@ -307,6 +354,13 @@ ifndef NO_LIBUNWIND
   ifneq ($(feature-libunwind), 1)
     msg := $(warning No libunwind found. Please install libunwind-dev[el] >= 1.1 and/or set LIBUNWIND_DIR);
     NO_LIBUNWIND := 1
+  endif
+endif
+
+ifndef NO_LIBBPF
+  ifneq ($(feature-bpf), 1)
+    msg := $(warning BPF API too old. Please install recent kernel headers. BPF support in 'perf record' is disabled.)
+    NO_LIBBPF := 1
   endif
 endif
 
@@ -363,6 +417,17 @@ ifndef NO_LIBAUDIT
     CFLAGS += -DHAVE_LIBAUDIT_SUPPORT
     EXTLIBS += -laudit
     $(call detected,CONFIG_AUDIT)
+  endif
+endif
+
+ifndef NO_LIBCRYPTO
+  ifneq ($(feature-libcrypto), 1)
+    msg := $(warning No libcrypto.h found, disables jitted code injection, please install libssl-devel or libssl-dev);
+    NO_LIBCRYPTO := 1
+  else
+    CFLAGS += -DHAVE_LIBCRYPTO_SUPPORT
+    EXTLIBS += -lcrypto
+    $(call detected,CONFIG_CRYPTO)
   endif
 endif
 
@@ -452,7 +517,7 @@ else
 
       PYTHON_EMBED_LDOPTS := $(shell $(PYTHON_CONFIG_SQ) --ldflags 2>/dev/null)
       PYTHON_EMBED_LDFLAGS := $(call strip-libs,$(PYTHON_EMBED_LDOPTS))
-      PYTHON_EMBED_LIBADD := $(call grep-libs,$(PYTHON_EMBED_LDOPTS))
+      PYTHON_EMBED_LIBADD := $(call grep-libs,$(PYTHON_EMBED_LDOPTS)) -lutil
       PYTHON_EMBED_CCOPTS := $(shell $(PYTHON_CONFIG_SQ) --cflags 2>/dev/null)
       FLAGS_PYTHON_EMBED := $(PYTHON_EMBED_CCOPTS) $(PYTHON_EMBED_LDOPTS)
 
@@ -563,9 +628,14 @@ ifndef NO_LIBNUMA
     msg := $(warning No numa.h found, disables 'perf bench numa mem' benchmark, please install numactl-devel/libnuma-devel/libnuma-dev);
     NO_LIBNUMA := 1
   else
-    CFLAGS += -DHAVE_LIBNUMA_SUPPORT
-    EXTLIBS += -lnuma
-    $(call detected,CONFIG_NUMA)
+    ifeq ($(feature-numa_num_possible_cpus), 0)
+      msg := $(warning Old numa library found, disables 'perf bench numa mem' benchmark, please install numactl-devel/libnuma-devel/libnuma-dev >= 2.0.8);
+      NO_LIBNUMA := 1
+    else
+      CFLAGS += -DHAVE_LIBNUMA_SUPPORT
+      EXTLIBS += -lnuma
+      $(call detected,CONFIG_NUMA)
+    endif
   endif
 endif
 
@@ -610,6 +680,16 @@ ifdef LIBBABELTRACE
   endif
 endif
 
+ifndef NO_AUXTRACE
+  ifeq ($(feature-get_cpuid), 0)
+    msg := $(warning Your gcc lacks the __get_cpuid() builtin, disables support for auxtrace/Intel PT, please install a newer gcc);
+    NO_AUXTRACE := 1
+  else
+    $(call detected,CONFIG_AUXTRACE)
+    CFLAGS += -DHAVE_AUXTRACE_SUPPORT
+  endif
+endif
+
 # Among the variables below, these:
 #   perfexecdir
 #   template_dir
@@ -627,13 +707,16 @@ ifndef DESTDIR
 prefix ?= $(HOME)
 endif
 bindir_relative = bin
-bindir = $(prefix)/$(bindir_relative)
+bindir = $(abspath $(prefix)/$(bindir_relative))
 mandir = share/man
 infodir = share/info
 perfexecdir = libexec/perf-core
 sharedir = $(prefix)/share
 template_dir = share/perf-core/templates
+STRACE_GROUPS_DIR = share/perf-core/strace/groups
 htmldir = share/doc/perf-doc
+tipdir = share/doc/perf-tip
+srcdir = $(srctree)/tools/perf
 ifeq ($(prefix),/usr)
 sysconfdir = /etc
 ETC_PERFCONFIG = $(sysconfdir)/perfconfig
@@ -652,6 +735,7 @@ libdir = $(prefix)/$(lib)
 
 # Shell quote (do not use $(call) to accommodate ancient setups);
 ETC_PERFCONFIG_SQ = $(subst ','\'',$(ETC_PERFCONFIG))
+STRACE_GROUPS_DIR_SQ = $(subst ','\'',$(STRACE_GROUPS_DIR))
 DESTDIR_SQ = $(subst ','\'',$(DESTDIR))
 bindir_SQ = $(subst ','\'',$(bindir))
 mandir_SQ = $(subst ','\'',$(mandir))
@@ -659,16 +743,24 @@ infodir_SQ = $(subst ','\'',$(infodir))
 perfexecdir_SQ = $(subst ','\'',$(perfexecdir))
 template_dir_SQ = $(subst ','\'',$(template_dir))
 htmldir_SQ = $(subst ','\'',$(htmldir))
+tipdir_SQ = $(subst ','\'',$(tipdir))
 prefix_SQ = $(subst ','\'',$(prefix))
 sysconfdir_SQ = $(subst ','\'',$(sysconfdir))
 libdir_SQ = $(subst ','\'',$(libdir))
+srcdir_SQ = $(subst ','\'',$(srcdir))
 
 ifneq ($(filter /%,$(firstword $(perfexecdir))),)
 perfexec_instdir = $(perfexecdir)
+STRACE_GROUPS_INSTDIR = $(STRACE_GROUPS_DIR)
+tip_instdir = $(tipdir)
 else
 perfexec_instdir = $(prefix)/$(perfexecdir)
+STRACE_GROUPS_INSTDIR = $(prefix)/$(STRACE_GROUPS_DIR)
+tip_instdir = $(prefix)/$(tipdir)
 endif
 perfexec_instdir_SQ = $(subst ','\'',$(perfexec_instdir))
+STRACE_GROUPS_INSTDIR_SQ = $(subst ','\'',$(STRACE_GROUPS_INSTDIR))
+tip_instdir_SQ = $(subst ','\'',$(tip_instdir))
 
 # If we install to $(HOME) we keep the traceevent default:
 # $(HOME)/.traceevent/plugins
@@ -690,6 +782,10 @@ ifeq ($(VF),1)
   $(call print_var,sysconfdir)
   $(call print_var,LIBUNWIND_DIR)
   $(call print_var,LIBDW_DIR)
+
+  ifeq ($(dwarf-post-unwind),1)
+    $(call feature_print_text,"DWARF post unwind library", $(dwarf-post-unwind-text))
+  endif
   $(info )
 endif
 
@@ -702,8 +798,11 @@ $(call detected_var,htmldir_SQ)
 $(call detected_var,infodir_SQ)
 $(call detected_var,mandir_SQ)
 $(call detected_var,ETC_PERFCONFIG_SQ)
+$(call detected_var,STRACE_GROUPS_DIR_SQ)
 $(call detected_var,prefix_SQ)
 $(call detected_var,perfexecdir_SQ)
+$(call detected_var,tipdir_SQ)
+$(call detected_var,srcdir_SQ)
 $(call detected_var,LIBDIR)
 $(call detected_var,GTK_CFLAGS)
 $(call detected_var,PERL_EMBED_CCOPTS)

@@ -38,28 +38,64 @@
 #include "rds.h"
 #include "tcp.h"
 
-/*
- * cheesy, but simple..
- */
-static void rds_tcp_accept_worker(struct work_struct *work);
-static DECLARE_WORK(rds_tcp_listen_work, rds_tcp_accept_worker);
-static struct socket *rds_tcp_listen_sock;
+int rds_tcp_keepalive(struct socket *sock)
+{
+	/* values below based on xs_udp_default_timeout */
+	int keepidle = 5; /* send a probe 'keepidle' secs after last data */
+	int keepcnt = 5; /* number of unack'ed probes before declaring dead */
+	int keepalive = 1;
+	int ret = 0;
 
-static int rds_tcp_accept_one(struct socket *sock)
+	ret = kernel_setsockopt(sock, SOL_SOCKET, SO_KEEPALIVE,
+				(char *)&keepalive, sizeof(keepalive));
+	if (ret < 0)
+		goto bail;
+
+	ret = kernel_setsockopt(sock, IPPROTO_TCP, TCP_KEEPCNT,
+				(char *)&keepcnt, sizeof(keepcnt));
+	if (ret < 0)
+		goto bail;
+
+	ret = kernel_setsockopt(sock, IPPROTO_TCP, TCP_KEEPIDLE,
+				(char *)&keepidle, sizeof(keepidle));
+	if (ret < 0)
+		goto bail;
+
+	/* KEEPINTVL is the interval between successive probes. We follow
+	 * the model in xs_tcp_finish_connecting() and re-use keepidle.
+	 */
+	ret = kernel_setsockopt(sock, IPPROTO_TCP, TCP_KEEPINTVL,
+				(char *)&keepidle, sizeof(keepidle));
+bail:
+	return ret;
+}
+
+int rds_tcp_accept_one(struct socket *sock)
 {
 	struct socket *new_sock = NULL;
 	struct rds_connection *conn;
 	int ret;
 	struct inet_sock *inet;
+	struct rds_tcp_connection *rs_tcp = NULL;
+	int conn_state;
+	struct sock *nsk;
 
-	ret = sock_create_lite(sock->sk->sk_family, sock->sk->sk_type,
-			       sock->sk->sk_protocol, &new_sock);
+	if (!sock) /* module unload or netns delete in progress */
+		return -ENETUNREACH;
+
+	ret = sock_create_kern(sock_net(sock->sk), sock->sk->sk_family,
+			       sock->sk->sk_type, sock->sk->sk_protocol,
+			       &new_sock);
 	if (ret)
 		goto out;
 
 	new_sock->type = sock->type;
 	new_sock->ops = sock->ops;
 	ret = sock->ops->accept(sock, new_sock, O_NONBLOCK);
+	if (ret < 0)
+		goto out;
+
+	ret = rds_tcp_keepalive(new_sock);
 	if (ret < 0)
 		goto out;
 
@@ -71,41 +107,62 @@ static int rds_tcp_accept_one(struct socket *sock)
 		 &inet->inet_saddr, ntohs(inet->inet_sport),
 		 &inet->inet_daddr, ntohs(inet->inet_dport));
 
-	conn = rds_conn_create(inet->inet_saddr, inet->inet_daddr,
+	conn = rds_conn_create(sock_net(sock->sk),
+			       inet->inet_saddr, inet->inet_daddr,
 			       &rds_tcp_transport, GFP_KERNEL);
 	if (IS_ERR(conn)) {
 		ret = PTR_ERR(conn);
 		goto out;
 	}
-
-	/*
-	 * see the comment above rds_queue_delayed_reconnect()
+	/* An incoming SYN request came in, and TCP just accepted it.
+	 *
+	 * If the client reboots, this conn will need to be cleaned up.
+	 * rds_tcp_state_change() will do that cleanup
 	 */
-	if (!rds_conn_transition(conn, RDS_CONN_DOWN, RDS_CONN_CONNECTING)) {
-		if (rds_conn_state(conn) == RDS_CONN_UP)
-			rds_tcp_stats_inc(s_tcp_listen_closed_stale);
-		else
-			rds_tcp_stats_inc(s_tcp_connect_raced);
-		rds_conn_drop(conn);
-		ret = 0;
-		goto out;
+	rs_tcp = (struct rds_tcp_connection *)conn->c_transport_data;
+	rds_conn_transition(conn, RDS_CONN_DOWN, RDS_CONN_CONNECTING);
+	mutex_lock(&rs_tcp->t_conn_lock);
+	conn_state = rds_conn_state(conn);
+	if (conn_state != RDS_CONN_CONNECTING && conn_state != RDS_CONN_UP)
+		goto rst_nsk;
+	if (rs_tcp->t_sock) {
+		/* Need to resolve a duelling SYN between peers.
+		 * We have an outstanding SYN to this peer, which may
+		 * potentially have transitioned to the RDS_CONN_UP state,
+		 * so we must quiesce any send threads before resetting
+		 * c_transport_data.
+		 */
+		if (ntohl(inet->inet_saddr) < ntohl(inet->inet_daddr) ||
+		    !conn->c_outgoing) {
+			goto rst_nsk;
+		} else {
+			atomic_set(&conn->c_state, RDS_CONN_CONNECTING);
+			wait_event(conn->c_waitq,
+				   !test_bit(RDS_IN_XMIT, &conn->c_flags));
+			rds_tcp_restore_callbacks(rs_tcp->t_sock, rs_tcp);
+			conn->c_outgoing = 0;
+		}
 	}
-
 	rds_tcp_set_callbacks(new_sock, conn);
-	rds_connect_complete(conn);
+	rds_connect_complete(conn); /* marks RDS_CONN_UP */
 	new_sock = NULL;
 	ret = 0;
-
+	goto out;
+rst_nsk:
+	/* reset the newly returned accept sock and bail */
+	nsk = new_sock->sk;
+	rds_tcp_stats_inc(s_tcp_listen_closed_stale);
+	nsk->sk_user_data = NULL;
+	nsk->sk_prot->disconnect(nsk, 0);
+	tcp_done(nsk);
+	new_sock = NULL;
+	ret = 0;
 out:
+	if (rs_tcp)
+		mutex_unlock(&rs_tcp->t_conn_lock);
 	if (new_sock)
 		sock_release(new_sock);
 	return ret;
-}
-
-static void rds_tcp_accept_worker(struct work_struct *work)
-{
-	while (rds_tcp_accept_one(rds_tcp_listen_sock) == 0)
-		cond_resched();
 }
 
 void rds_tcp_listen_data_ready(struct sock *sk)
@@ -114,7 +171,7 @@ void rds_tcp_listen_data_ready(struct sock *sk)
 
 	rdsdebug("listen data ready sk %p\n", sk);
 
-	read_lock(&sk->sk_callback_lock);
+	read_lock_bh(&sk->sk_callback_lock);
 	ready = sk->sk_user_data;
 	if (!ready) { /* check for teardown race */
 		ready = sk->sk_data_ready;
@@ -128,20 +185,20 @@ void rds_tcp_listen_data_ready(struct sock *sk)
 	 * socket
 	 */
 	if (sk->sk_state == TCP_LISTEN)
-		queue_work(rds_wq, &rds_tcp_listen_work);
+		rds_tcp_accept_work(sk);
 
 out:
-	read_unlock(&sk->sk_callback_lock);
+	read_unlock_bh(&sk->sk_callback_lock);
 	ready(sk);
 }
 
-int rds_tcp_listen_init(void)
+struct socket *rds_tcp_listen_init(struct net *net)
 {
 	struct sockaddr_in sin;
 	struct socket *sock = NULL;
 	int ret;
 
-	ret = sock_create(PF_INET, SOCK_STREAM, IPPROTO_TCP, &sock);
+	ret = sock_create_kern(net, PF_INET, SOCK_STREAM, IPPROTO_TCP, &sock);
 	if (ret < 0)
 		goto out;
 
@@ -165,17 +222,15 @@ int rds_tcp_listen_init(void)
 	if (ret < 0)
 		goto out;
 
-	rds_tcp_listen_sock = sock;
-	sock = NULL;
+	return sock;
 out:
 	if (sock)
 		sock_release(sock);
-	return ret;
+	return NULL;
 }
 
-void rds_tcp_listen_stop(void)
+void rds_tcp_listen_stop(struct socket *sock)
 {
-	struct socket *sock = rds_tcp_listen_sock;
 	struct sock *sk;
 
 	if (!sock)
@@ -196,5 +251,4 @@ void rds_tcp_listen_stop(void)
 	/* wait for accepts to stop and close the socket */
 	flush_workqueue(rds_wq);
 	sock_release(sock);
-	rds_tcp_listen_sock = NULL;
 }

@@ -15,11 +15,18 @@
 struct ip_callchain;
 struct thread;
 
+struct auxtrace;
+struct itrace_synth_opts;
+
 struct perf_session {
 	struct perf_header	header;
 	struct machines		machines;
 	struct perf_evlist	*evlist;
+	struct auxtrace		*auxtrace;
+	struct itrace_synth_opts *itrace_synth_opts;
+	struct list_head	auxtrace_index;
 	struct trace_event	tevent;
+	struct time_conv_event	time_conv;
 	bool			repipe;
 	bool			one_mmap;
 	void			*one_mmap_addr;
@@ -28,13 +35,6 @@ struct perf_session {
 	struct perf_data_file	*file;
 	struct perf_tool	*tool;
 };
-
-#define PRINT_IP_OPT_IP		(1<<0)
-#define PRINT_IP_OPT_SYM		(1<<1)
-#define PRINT_IP_OPT_DSO		(1<<2)
-#define PRINT_IP_OPT_SYMOFFSET	(1<<3)
-#define PRINT_IP_OPT_ONELINE	(1<<4)
-#define PRINT_IP_OPT_SRCLINE	(1<<5)
 
 struct perf_tool;
 
@@ -83,6 +83,8 @@ struct machine *perf_session__findnew_machine(struct perf_session *session, pid_
 }
 
 struct thread *perf_session__findnew(struct perf_session *session, pid_t pid);
+int perf_session__register_idle_thread(struct perf_session *session);
+
 size_t perf_session__fprintf(struct perf_session *session, FILE *fp);
 
 size_t perf_session__fprintf_dsos(struct perf_session *session, FILE *fp);
@@ -94,10 +96,6 @@ size_t perf_session__fprintf_nr_events(struct perf_session *session, FILE *fp);
 
 struct perf_evsel *perf_session__find_first_evtype(struct perf_session *session,
 					    unsigned int type);
-
-void perf_evsel__print_ip(struct perf_evsel *evsel, struct perf_sample *sample,
-			  struct addr_location *al,
-			  unsigned int print_opts, unsigned int stack_depth);
 
 int perf_session__cpu_bitmap(struct perf_session *session,
 			     const char *cpu_list, unsigned long *cpu_bitmap);

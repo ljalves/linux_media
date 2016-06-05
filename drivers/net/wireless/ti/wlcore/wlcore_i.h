@@ -392,7 +392,7 @@ struct wl12xx_vif {
 	u8 ssid_len;
 
 	/* The current band */
-	enum ieee80211_band band;
+	enum nl80211_band band;
 	int channel;
 	enum nl80211_channel_type channel_type;
 
@@ -501,6 +501,11 @@ static inline
 struct ieee80211_vif *wl12xx_wlvif_to_vif(struct wl12xx_vif *wlvif)
 {
 	return container_of((void *)wlvif, struct ieee80211_vif, drv_priv);
+}
+
+static inline bool wlcore_is_p2p_mgmt(struct wl12xx_vif *wlvif)
+{
+	return wl12xx_wlvif_to_vif(wlvif)->type == NL80211_IFTYPE_P2P_DEVICE;
 }
 
 #define wl12xx_for_each_wlvif(wl, wlvif) \

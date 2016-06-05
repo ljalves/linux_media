@@ -5,7 +5,7 @@
  *****************************************************************************/
 
 /*
- * Copyright (C) 2000 - 2015, Intel Corp.
+ * Copyright (C) 2000 - 2016, Intel Corp.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -150,7 +150,7 @@ acpi_status acpi_ut_initialize_interfaces(void)
 	     i < (ACPI_ARRAY_LENGTH(acpi_default_supported_interfaces) - 1);
 	     i++) {
 		acpi_default_supported_interfaces[i].next =
-		    &acpi_default_supported_interfaces[(acpi_size) i + 1];
+		    &acpi_default_supported_interfaces[(acpi_size)i + 1];
 	}
 
 	acpi_os_release_mutex(acpi_gbl_osi_mutex);
@@ -232,8 +232,7 @@ acpi_status acpi_ut_install_interface(acpi_string interface_name)
 		return (AE_NO_MEMORY);
 	}
 
-	interface_info->name =
-	    ACPI_ALLOCATE_ZEROED(ACPI_STRLEN(interface_name) + 1);
+	interface_info->name = ACPI_ALLOCATE_ZEROED(strlen(interface_name) + 1);
 	if (!interface_info->name) {
 		ACPI_FREE(interface_info);
 		return (AE_NO_MEMORY);
@@ -241,7 +240,7 @@ acpi_status acpi_ut_install_interface(acpi_string interface_name)
 
 	/* Initialize new info and insert at the head of the global list */
 
-	ACPI_STRCPY(interface_info->name, interface_name);
+	strcpy(interface_info->name, interface_name);
 	interface_info->flags = ACPI_OSI_DYNAMIC;
 	interface_info->next = acpi_gbl_supported_interfaces;
 
@@ -269,10 +268,11 @@ acpi_status acpi_ut_remove_interface(acpi_string interface_name)
 
 	previous_interface = next_interface = acpi_gbl_supported_interfaces;
 	while (next_interface) {
-		if (!ACPI_STRCMP(interface_name, next_interface->name)) {
-
-			/* Found: name is in either the static list or was added at runtime */
-
+		if (!strcmp(interface_name, next_interface->name)) {
+			/*
+			 * Found: name is in either the static list
+			 * or was added at runtime
+			 */
 			if (next_interface->flags & ACPI_OSI_DYNAMIC) {
 
 				/* Interface was added dynamically, remove and free it */
@@ -289,8 +289,8 @@ acpi_status acpi_ut_remove_interface(acpi_string interface_name)
 				ACPI_FREE(next_interface);
 			} else {
 				/*
-				 * Interface is in static list. If marked invalid, then it
-				 * does not actually exist. Else, mark it invalid.
+				 * Interface is in static list. If marked invalid, then
+				 * it does not actually exist. Else, mark it invalid.
 				 */
 				if (next_interface->flags & ACPI_OSI_INVALID) {
 					return (AE_NOT_EXIST);
@@ -373,7 +373,7 @@ struct acpi_interface_info *acpi_ut_get_interface(acpi_string interface_name)
 
 	next_interface = acpi_gbl_supported_interfaces;
 	while (next_interface) {
-		if (!ACPI_STRCMP(interface_name, next_interface->name)) {
+		if (!strcmp(interface_name, next_interface->name)) {
 			return (next_interface);
 		}
 
@@ -397,7 +397,7 @@ struct acpi_interface_info *acpi_ut_get_interface(acpi_string interface_name)
  *
  ******************************************************************************/
 
-acpi_status acpi_ut_osi_implementation(struct acpi_walk_state * walk_state)
+acpi_status acpi_ut_osi_implementation(struct acpi_walk_state *walk_state)
 {
 	union acpi_operand_object *string_desc;
 	union acpi_operand_object *return_desc;

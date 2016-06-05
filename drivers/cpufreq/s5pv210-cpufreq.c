@@ -9,6 +9,8 @@
  * published by the Free Software Foundation.
 */
 
+#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
+
 #include <linux/types.h>
 #include <linux/kernel.h>
 #include <linux/init.h>
@@ -205,18 +207,18 @@ static void s5pv210_set_refresh(enum s5pv210_dmc_port ch, unsigned long freq)
 	} else if (ch == DMC1) {
 		reg = (dmc_base[1] + 0x30);
 	} else {
-		printk(KERN_ERR "Cannot find DMC port\n");
+		pr_err("Cannot find DMC port\n");
 		return;
 	}
 
 	/* Find current DRAM frequency */
 	tmp = s5pv210_dram_conf[ch].freq;
 
-	do_div(tmp, freq);
+	tmp /= freq;
 
 	tmp1 = s5pv210_dram_conf[ch].refresh;
 
-	do_div(tmp1, tmp);
+	tmp1 /= tmp;
 
 	__raw_writel(tmp1, reg);
 }
@@ -534,7 +536,7 @@ static int s5pv210_cpu_init(struct cpufreq_policy *policy)
 	mem_type = check_mem_type(dmc_base[0]);
 
 	if ((mem_type != LPDDR) && (mem_type != LPDDR2)) {
-		printk(KERN_ERR "CPUFreq doesn't support this memory type\n");
+		pr_err("CPUFreq doesn't support this memory type\n");
 		ret = -EINVAL;
 		goto out_dmc1;
 	}
@@ -576,10 +578,8 @@ static struct cpufreq_driver s5pv210_driver = {
 	.get		= cpufreq_generic_get,
 	.init		= s5pv210_cpu_init,
 	.name		= "s5pv210",
-#ifdef CONFIG_PM
 	.suspend	= cpufreq_generic_suspend,
 	.resume		= cpufreq_generic_suspend, /* We need to set SLEEP FREQ again */
-#endif
 };
 
 static struct notifier_block s5pv210_cpufreq_reboot_notifier = {
@@ -637,13 +637,13 @@ static int s5pv210_cpufreq_probe(struct platform_device *pdev)
 
 	arm_regulator = regulator_get(NULL, "vddarm");
 	if (IS_ERR(arm_regulator)) {
-		pr_err("failed to get regulator vddarm");
+		pr_err("failed to get regulator vddarm\n");
 		return PTR_ERR(arm_regulator);
 	}
 
 	int_regulator = regulator_get(NULL, "vddint");
 	if (IS_ERR(int_regulator)) {
-		pr_err("failed to get regulator vddint");
+		pr_err("failed to get regulator vddint\n");
 		regulator_put(arm_regulator);
 		return PTR_ERR(int_regulator);
 	}
@@ -659,4 +659,4 @@ static struct platform_driver s5pv210_cpufreq_platdrv = {
 	},
 	.probe = s5pv210_cpufreq_probe,
 };
-module_platform_driver(s5pv210_cpufreq_platdrv);
+builtin_platform_driver(s5pv210_cpufreq_platdrv);

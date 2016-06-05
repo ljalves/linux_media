@@ -26,14 +26,6 @@ static struct sk_buff *mpls_gso_segment(struct sk_buff *skb,
 	netdev_features_t mpls_features;
 	__be16 mpls_protocol;
 
-	if (unlikely(skb_shinfo(skb)->gso_type &
-				~(SKB_GSO_TCPV4 |
-				  SKB_GSO_TCPV6 |
-				  SKB_GSO_UDP |
-				  SKB_GSO_DODGY |
-				  SKB_GSO_TCP_ECN)))
-		goto out;
-
 	/* Setup inner SKB. */
 	mpls_protocol = skb->protocol;
 	skb->protocol = skb->inner_protocol;
@@ -56,12 +48,13 @@ static struct sk_buff *mpls_gso_segment(struct sk_buff *skb,
 	 * skb_mac_gso_segment(), an indirect caller of this function.
 	 */
 	__skb_pull(skb, skb->data - skb_mac_header(skb));
-out:
+
 	return segs;
 }
 
 static struct packet_offload mpls_mc_offload __read_mostly = {
 	.type = cpu_to_be16(ETH_P_MPLS_MC),
+	.priority = 15,
 	.callbacks = {
 		.gso_segment    =	mpls_gso_segment,
 	},
@@ -69,6 +62,7 @@ static struct packet_offload mpls_mc_offload __read_mostly = {
 
 static struct packet_offload mpls_uc_offload __read_mostly = {
 	.type = cpu_to_be16(ETH_P_MPLS_UC),
+	.priority = 15,
 	.callbacks = {
 		.gso_segment    =	mpls_gso_segment,
 	},

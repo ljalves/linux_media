@@ -1505,18 +1505,31 @@ static const char *ata_err_string(unsigned int err_mask)
 unsigned int ata_read_log_page(struct ata_device *dev, u8 log,
 			       u8 page, void *buf, unsigned int sectors)
 {
+	unsigned long ap_flags = dev->link->ap->flags;
 	struct ata_taskfile tf;
 	unsigned int err_mask;
+	bool dma = false;
 
 	DPRINTK("read log page - log 0x%x, page 0x%x\n", log, page);
 
+	/*
+	 * Return error without actually issuing the command on controllers
+	 * which e.g. lockup on a read log page.
+	 */
+	if (ap_flags & ATA_FLAG_NO_LOG_PAGE)
+		return AC_ERR_DEV;
+
+retry:
 	ata_tf_init(dev, &tf);
-	if (dev->dma_mode && ata_id_has_read_log_dma_ext(dev->id)) {
+	if (dev->dma_mode && ata_id_has_read_log_dma_ext(dev->id) &&
+	    !(dev->horkage & ATA_HORKAGE_NO_NCQ_LOG)) {
 		tf.command = ATA_CMD_READ_LOG_DMA_EXT;
 		tf.protocol = ATA_PROT_DMA;
+		dma = true;
 	} else {
 		tf.command = ATA_CMD_READ_LOG_EXT;
 		tf.protocol = ATA_PROT_PIO;
+		dma = false;
 	}
 	tf.lbal = log;
 	tf.lbam = page;
@@ -1526,6 +1539,12 @@ unsigned int ata_read_log_page(struct ata_device *dev, u8 log,
 
 	err_mask = ata_exec_internal(dev, &tf, NULL, DMA_FROM_DEVICE,
 				     buf, sectors * ATA_SECT_SIZE, 0);
+
+	if (err_mask && dma) {
+		dev->horkage |= ATA_HORKAGE_NO_NCQ_LOG;
+		ata_dev_warn(dev, "READ LOG DMA EXT failed, trying unqueued\n");
+		goto retry;
+	}
 
 	DPRINTK("EXIT, err_mask=%x\n", err_mask);
 	return err_mask;
@@ -1621,65 +1640,51 @@ unsigned int atapi_eh_tur(struct ata_device *dev, u8 *r_sense_key)
 /**
  *	ata_eh_request_sense - perform REQUEST_SENSE_DATA_EXT
  *	@dev: device to perform REQUEST_SENSE_SENSE_DATA_EXT to
- *	@sense_buf: result sense data buffer (SCSI_SENSE_BUFFERSIZE bytes long)
- *	@dfl_sense_key: default sense key to use
+ *	@cmd: scsi command for which the sense code should be set
  *
  *	Perform REQUEST_SENSE_DATA_EXT after the device reported CHECK
- *	SENSE.  This function is EH helper.
+ *	SENSE.  This function is an EH helper.
  *
  *	LOCKING:
  *	Kernel thread context (may sleep).
- *
- *	RETURNS:
- *	encoded sense data on success, 0 on failure or if sense data
- *	is not available.
  */
-static u32 ata_eh_request_sense(struct ata_queued_cmd *qc,
-				struct scsi_cmnd *cmd)
+static void ata_eh_request_sense(struct ata_queued_cmd *qc,
+				 struct scsi_cmnd *cmd)
 {
 	struct ata_device *dev = qc->dev;
 	struct ata_taskfile tf;
 	unsigned int err_mask;
 
-	if (!cmd)
-		return 0;
+	if (qc->ap->pflags & ATA_PFLAG_FROZEN) {
+		ata_dev_warn(dev, "sense data available but port frozen\n");
+		return;
+	}
 
-	DPRINTK("ATA request sense\n");
-	ata_dev_warn(dev, "request sense\n");
+	if (!cmd || qc->flags & ATA_QCFLAG_SENSE_VALID)
+		return;
+
 	if (!ata_id_sense_reporting_enabled(dev->id)) {
 		ata_dev_warn(qc->dev, "sense data reporting disabled\n");
-		return 0;
+		return;
 	}
-	ata_tf_init(dev, &tf);
 
+	DPRINTK("ATA request sense\n");
+
+	ata_tf_init(dev, &tf);
 	tf.flags |= ATA_TFLAG_ISADDR | ATA_TFLAG_DEVICE;
 	tf.flags |= ATA_TFLAG_LBA | ATA_TFLAG_LBA48;
 	tf.command = ATA_CMD_REQ_SENSE_DATA;
 	tf.protocol = ATA_PROT_NODATA;
 
 	err_mask = ata_exec_internal(dev, &tf, NULL, DMA_NONE, NULL, 0, 0);
-	/*
-	 * ACS-4 states:
-	 * The device may set the SENSE DATA AVAILABLE bit to one in the
-	 * STATUS field and clear the ERROR bit to zero in the STATUS field
-	 * to indicate that the command returned completion without an error
-	 * and the sense data described in table 306 is available.
-	 *
-	 * IOW the 'ATA_SENSE' bit might not be set even though valid
-	 * sense data is available.
-	 * So check for both.
-	 */
-	if ((tf.command & ATA_SENSE) ||
-		tf.lbah != 0 || tf.lbam != 0 || tf.lbal != 0) {
-		ata_scsi_set_sense(cmd, tf.lbah, tf.lbam, tf.lbal);
+	/* Ignore err_mask; ATA_ERR might be set */
+	if (tf.command & ATA_SENSE) {
+		ata_scsi_set_sense(dev, cmd, tf.lbah, tf.lbam, tf.lbal);
 		qc->flags |= ATA_QCFLAG_SENSE_VALID;
-		ata_dev_warn(dev, "sense data %02x/%02x/%02x\n",
-			     tf.lbah, tf.lbam, tf.lbal);
 	} else {
 		ata_dev_warn(dev, "request sense failed stat %02x emask %x\n",
 			     tf.command, err_mask);
 	}
-	return err_mask;
 }
 
 /**
@@ -1844,16 +1849,15 @@ void ata_eh_analyze_ncq_error(struct ata_link *link)
 	memcpy(&qc->result_tf, &tf, sizeof(tf));
 	qc->result_tf.flags = ATA_TFLAG_ISADDR | ATA_TFLAG_LBA | ATA_TFLAG_LBA48;
 	qc->err_mask |= AC_ERR_DEV | AC_ERR_NCQ;
-	if (qc->result_tf.auxiliary) {
+	if ((qc->result_tf.command & ATA_SENSE) || qc->result_tf.auxiliary) {
 		char sense_key, asc, ascq;
 
 		sense_key = (qc->result_tf.auxiliary >> 16) & 0xff;
 		asc = (qc->result_tf.auxiliary >> 8) & 0xff;
 		ascq = qc->result_tf.auxiliary & 0xff;
-		ata_dev_dbg(dev, "NCQ Autosense %02x/%02x/%02x\n",
-			    sense_key, asc, ascq);
-		ata_scsi_set_sense(qc->scsicmd, sense_key, asc, ascq);
-		ata_scsi_set_sense_information(qc->scsicmd, &qc->result_tf);
+		ata_scsi_set_sense(dev, qc->scsicmd, sense_key, asc, ascq);
+		ata_scsi_set_sense_information(dev, qc->scsicmd,
+					       &qc->result_tf);
 		qc->flags |= ATA_QCFLAG_SENSE_VALID;
 	}
 
@@ -1886,35 +1890,23 @@ static unsigned int ata_eh_analyze_tf(struct ata_queued_cmd *qc,
 		return ATA_EH_RESET;
 	}
 
-	/*
-	 * Sense data reporting does not work if the
-	 * device fault bit is set.
-	 */
-	if ((stat & ATA_SENSE) && !(stat & ATA_DF) &&
-	    !(qc->flags & ATA_QCFLAG_SENSE_VALID)) {
-		if (!(qc->ap->pflags & ATA_PFLAG_FROZEN)) {
-			tmp = ata_eh_request_sense(qc, qc->scsicmd);
-			if (tmp)
-				qc->err_mask |= tmp;
-			else
-				ata_scsi_set_sense_information(qc->scsicmd, tf);
-		} else {
-			ata_dev_warn(qc->dev, "sense data available but port frozen\n");
-		}
-	}
-
-	/* Set by NCQ autosense or request sense above */
-	if (qc->flags & ATA_QCFLAG_SENSE_VALID)
-		return 0;
-
-	if (stat & (ATA_ERR | ATA_DF))
+	if (stat & (ATA_ERR | ATA_DF)) {
 		qc->err_mask |= AC_ERR_DEV;
-	else
+		/*
+		 * Sense data reporting does not work if the
+		 * device fault bit is set.
+		 */
+		if (stat & ATA_DF)
+			stat &= ~ATA_SENSE;
+	} else {
 		return 0;
+	}
 
 	switch (qc->dev->class) {
 	case ATA_DEV_ATA:
 	case ATA_DEV_ZAC:
+		if (stat & ATA_SENSE)
+			ata_eh_request_sense(qc, qc->scsicmd);
 		if (err & ATA_ICRC)
 			qc->err_mask |= AC_ERR_ATA_BUS;
 		if (err & (ATA_UNC | ATA_AMNF))
@@ -1928,20 +1920,31 @@ static unsigned int ata_eh_analyze_tf(struct ata_queued_cmd *qc,
 			tmp = atapi_eh_request_sense(qc->dev,
 						qc->scsicmd->sense_buffer,
 						qc->result_tf.feature >> 4);
-			if (!tmp) {
-				/* ATA_QCFLAG_SENSE_VALID is used to
-				 * tell atapi_qc_complete() that sense
-				 * data is already valid.
-				 *
-				 * TODO: interpret sense data and set
-				 * appropriate err_mask.
-				 */
+			if (!tmp)
 				qc->flags |= ATA_QCFLAG_SENSE_VALID;
-			} else
+			else
 				qc->err_mask |= tmp;
 		}
 	}
 
+	if (qc->flags & ATA_QCFLAG_SENSE_VALID) {
+		int ret = scsi_check_sense(qc->scsicmd);
+		/*
+		 * SUCCESS here means that the sense code could
+		 * evaluated and should be passed to the upper layers
+		 * for correct evaluation.
+		 * FAILED means the sense code could not interpreted
+		 * and the device would need to be reset.
+		 * NEEDS_RETRY and ADD_TO_MLQUEUE means that the
+		 * command would need to be retried.
+		 */
+		if (ret == NEEDS_RETRY || ret == ADD_TO_MLQUEUE) {
+			qc->flags |= ATA_QCFLAG_RETRY;
+			qc->err_mask |= AC_ERR_OTHER;
+		} else if (ret != SUCCESS) {
+			qc->err_mask |= AC_ERR_HSM;
+		}
+	}
 	if (qc->err_mask & (AC_ERR_HSM | AC_ERR_TIMEOUT | AC_ERR_ATA_BUS))
 		action |= ATA_EH_RESET;
 
@@ -2479,6 +2482,8 @@ const char *ata_get_cmd_descript(u8 command)
 		{ ATA_CMD_CFA_WRITE_MULT_NE,	"CFA WRITE MULTIPLE WITHOUT ERASE" },
 		{ ATA_CMD_REQ_SENSE_DATA,	"REQUEST SENSE DATA EXT" },
 		{ ATA_CMD_SANITIZE_DEVICE,	"SANITIZE DEVICE" },
+		{ ATA_CMD_ZAC_MGMT_IN,		"ZAC MANAGEMENT IN" },
+		{ ATA_CMD_ZAC_MGMT_OUT,		"ZAC MANAGEMENT OUT" },
 		{ ATA_CMD_READ_LONG,		"READ LONG (with retries)" },
 		{ ATA_CMD_READ_LONG_ONCE,	"READ LONG (without retries)" },
 		{ ATA_CMD_WRITE_LONG,		"WRITE LONG (with retries)" },
@@ -3596,6 +3601,9 @@ static int ata_eh_set_lpm(struct ata_link *link, enum ata_lpm_policy policy,
 			}
 		}
 	}
+
+	link->last_lpm_change = jiffies;
+	link->flags |= ATA_LFLAG_CHANGED;
 
 	return 0;
 

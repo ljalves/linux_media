@@ -1141,6 +1141,14 @@ static int snd_emu10k1_emu1010_init(struct snd_emu10k1 *emu)
 		emu->emu1010.firmware_thread =
 			kthread_create(emu1010_firmware_thread, emu,
 				       "emu1010_firmware");
+		if (IS_ERR(emu->emu1010.firmware_thread)) {
+			err = PTR_ERR(emu->emu1010.firmware_thread);
+			emu->emu1010.firmware_thread = NULL;
+			dev_info(emu->card->dev,
+					"emu1010: Creating thread failed\n");
+			return err;
+		}
+
 		wake_up_process(emu->emu1010.firmware_thread);
 	}
 
@@ -1911,8 +1919,8 @@ int snd_emu10k1_create(struct snd_card *card,
 	emu->address_mode = is_audigy ? 0 : 1;
 	/* set the DMA transfer mask */
 	emu->dma_mask = emu->address_mode ? EMU10K1_DMA_MASK : AUDIGY_DMA_MASK;
-	if (pci_set_dma_mask(pci, emu->dma_mask) < 0 ||
-	    pci_set_consistent_dma_mask(pci, emu->dma_mask) < 0) {
+	if (dma_set_mask(&pci->dev, emu->dma_mask) < 0 ||
+	    dma_set_coherent_mask(&pci->dev, emu->dma_mask) < 0) {
 		dev_err(card->dev,
 			"architecture does not support PCI busmaster DMA with mask 0x%lx\n",
 			emu->dma_mask);
@@ -2063,7 +2071,7 @@ int snd_emu10k1_create(struct snd_card *card,
 	if (err < 0)
 		goto error;
 
-#ifdef CONFIG_PROC_FS
+#ifdef CONFIG_SND_PROC_FS
 	snd_emu10k1_proc_init(emu);
 #endif
 

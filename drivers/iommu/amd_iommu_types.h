@@ -295,8 +295,9 @@
 #define IOMMU_PTE_IR (1ULL << 61)
 #define IOMMU_PTE_IW (1ULL << 62)
 
-#define DTE_FLAG_IOTLB	(0x01UL << 32)
-#define DTE_FLAG_GV	(0x01ULL << 55)
+#define DTE_FLAG_IOTLB	(1ULL << 32)
+#define DTE_FLAG_GV	(1ULL << 55)
+#define DTE_FLAG_MASK	(0x3ffULL << 32)
 #define DTE_GLX_SHIFT	(56)
 #define DTE_GLX_MASK	(3)
 
@@ -398,6 +399,7 @@ struct amd_iommu_fault {
 
 
 struct iommu_domain;
+struct irq_domain;
 
 /*
  * This structure contains generic data for  IOMMU protection domains
@@ -420,54 +422,6 @@ struct protection_domain {
 	unsigned dev_cnt;	/* devices assigned to this domain */
 	unsigned dev_iommu[MAX_IOMMUS]; /* per-IOMMU reference count */
 	void *priv;             /* private data */
-};
-
-/*
- * For dynamic growth the aperture size is split into ranges of 128MB of
- * DMA address space each. This struct represents one such range.
- */
-struct aperture_range {
-
-	/* address allocation bitmap */
-	unsigned long *bitmap;
-
-	/*
-	 * Array of PTE pages for the aperture. In this array we save all the
-	 * leaf pages of the domain page table used for the aperture. This way
-	 * we don't need to walk the page table to find a specific PTE. We can
-	 * just calculate its address in constant time.
-	 */
-	u64 *pte_pages[64];
-
-	unsigned long offset;
-};
-
-/*
- * Data container for a dma_ops specific protection domain
- */
-struct dma_ops_domain {
-	struct list_head list;
-
-	/* generic protection domain information */
-	struct protection_domain domain;
-
-	/* size of the aperture for the mappings */
-	unsigned long aperture_size;
-
-	/* address we start to search for free addresses */
-	unsigned long next_address;
-
-	/* address space relevant data */
-	struct aperture_range *aperture[APERTURE_MAX_RANGES];
-
-	/* This will be set to true when TLB needs to be flushed */
-	bool need_flush;
-
-	/*
-	 * if this is a preallocated domain, keep the device for which it was
-	 * preallocated in this variable
-	 */
-	u16 target_dev;
 };
 
 /*
@@ -523,11 +477,6 @@ struct amd_iommu {
 	/* pci domain of this IOMMU */
 	u16 pci_seg;
 
-	/* first device this IOMMU handles. read from PCI */
-	u16 first_device;
-	/* last device this IOMMU handles. read from PCI */
-	u16 last_device;
-
 	/* start of exclusion range of that IOMMU */
 	u64 exclusion_start;
 	/* length of exclusion range of that IOMMU */
@@ -535,11 +484,7 @@ struct amd_iommu {
 
 	/* command buffer virtual address */
 	u8 *cmd_buf;
-	/* size of command buffer */
-	u32 cmd_buf_size;
 
-	/* size of event buffer */
-	u32 evt_buf_size;
 	/* event buffer virtual address */
 	u8 *evt_buf;
 
@@ -551,9 +496,6 @@ struct amd_iommu {
 
 	/* if one, we need to send a completion wait command */
 	bool need_sync;
-
-	/* default dma_ops domain for that IOMMU */
-	struct dma_ops_domain *default_dom;
 
 	/* IOMMU sysfs device */
 	struct device *iommu_dev;
@@ -579,6 +521,23 @@ struct amd_iommu {
 	/* The maximum PC banks and counters/bank (PCSup=1) */
 	u8 max_banks;
 	u8 max_counters;
+#ifdef CONFIG_IRQ_REMAP
+	struct irq_domain *ir_domain;
+	struct irq_domain *msi_domain;
+#endif
+};
+
+#define ACPIHID_UID_LEN 256
+#define ACPIHID_HID_LEN 9
+
+struct acpihid_map_entry {
+	struct list_head list;
+	u8 uid[ACPIHID_UID_LEN];
+	u8 hid[ACPIHID_HID_LEN];
+	u16 devid;
+	u16 root_devid;
+	bool cmd_line;
+	struct iommu_group *group;
 };
 
 struct devid_map {
@@ -591,6 +550,7 @@ struct devid_map {
 /* Map HPET and IOAPIC ids to the devid used by the IOMMU */
 extern struct list_head ioapic_map;
 extern struct list_head hpet_map;
+extern struct list_head acpihid_map;
 
 /*
  * List with all IOMMUs in the system. This list is not locked because it is
@@ -680,7 +640,7 @@ extern unsigned long *amd_iommu_pd_alloc_bitmap;
  * If true, the addresses will be flushed on unmap time, not when
  * they are reused
  */
-extern u32 amd_iommu_unmap_flush;
+extern bool amd_iommu_unmap_flush;
 
 /* Smallest max PASID supported by any IOMMU in the system */
 extern u32 amd_iommu_max_pasid;
@@ -721,31 +681,5 @@ static inline int get_hpet_devid(int id)
 
 	return -EINVAL;
 }
-
-#ifdef CONFIG_AMD_IOMMU_STATS
-
-struct __iommu_counter {
-	char *name;
-	struct dentry *dent;
-	u64 value;
-};
-
-#define DECLARE_STATS_COUNTER(nm) \
-	static struct __iommu_counter nm = {	\
-		.name = #nm,			\
-	}
-
-#define INC_STATS_COUNTER(name)		name.value += 1
-#define ADD_STATS_COUNTER(name, x)	name.value += (x)
-#define SUB_STATS_COUNTER(name, x)	name.value -= (x)
-
-#else /* CONFIG_AMD_IOMMU_STATS */
-
-#define DECLARE_STATS_COUNTER(name)
-#define INC_STATS_COUNTER(name)
-#define ADD_STATS_COUNTER(name, x)
-#define SUB_STATS_COUNTER(name, x)
-
-#endif /* CONFIG_AMD_IOMMU_STATS */
 
 #endif /* _ASM_X86_AMD_IOMMU_TYPES_H */

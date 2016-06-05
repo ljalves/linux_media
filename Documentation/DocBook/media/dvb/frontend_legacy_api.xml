@@ -20,22 +20,22 @@
   </thead>
   <tbody valign="top">
   <row>
-     <entry id="FE_QPSK"><constant>FE_QPSK</constant></entry>
+     <entry id="FE-QPSK"><constant>FE_QPSK</constant></entry>
      <entry>For DVB-S standard</entry>
      <entry><constant>SYS_DVBS</constant></entry>
   </row>
   <row>
-     <entry id="FE_QAM"><constant>FE_QAM</constant></entry>
+     <entry id="FE-QAM"><constant>FE_QAM</constant></entry>
      <entry>For DVB-C annex A standard</entry>
      <entry><constant>SYS_DVBC_ANNEX_A</constant></entry>
   </row>
   <row>
-     <entry id="FE_OFDM"><constant>FE_OFDM</constant></entry>
+     <entry id="FE-OFDM"><constant>FE_OFDM</constant></entry>
      <entry>For DVB-T standard</entry>
      <entry><constant>SYS_DVBT</constant></entry>
   </row>
   <row>
-     <entry id="FE_ATSC"><constant>FE_ATSC</constant></entry>
+     <entry id="FE-ATSC"><constant>FE_ATSC</constant></entry>
      <entry>For ATSC standard (terrestrial) or for DVB-C Annex B (cable) used in US.</entry>
      <entry><constant>SYS_ATSC</constant> (terrestrial) or <constant>SYS_DVBC_ANNEX_B</constant> (cable)</entry>
   </row>
@@ -75,25 +75,25 @@ supported via the new <link linkend="FE_GET_PROPERTY">FE_GET_PROPERTY/FE_GET_SET
 	</thead>
 	<tbody valign="top">
 	<row>
-	    <entry>BANDWIDTH_AUTO</entry>
+	    <entry id="BANDWIDTH-AUTO"><constant>BANDWIDTH_AUTO</constant></entry>
 	    <entry>Autodetect bandwidth (if supported)</entry>
 	</row><row>
-	    <entry>BANDWIDTH_1_712_MHZ</entry>
+	    <entry id="BANDWIDTH-1-712-MHZ"><constant>BANDWIDTH_1_712_MHZ</constant></entry>
 	    <entry>1.712 MHz</entry>
 	</row><row>
-	    <entry>BANDWIDTH_5_MHZ</entry>
+	    <entry id="BANDWIDTH-5-MHZ"><constant>BANDWIDTH_5_MHZ</constant></entry>
 	    <entry>5 MHz</entry>
 	</row><row>
-	    <entry>BANDWIDTH_6_MHZ</entry>
+	    <entry id="BANDWIDTH-6-MHZ"><constant>BANDWIDTH_6_MHZ</constant></entry>
 	    <entry>6 MHz</entry>
 	</row><row>
-	    <entry>BANDWIDTH_7_MHZ</entry>
+	    <entry id="BANDWIDTH-7-MHZ"><constant>BANDWIDTH_7_MHZ</constant></entry>
 	    <entry>7 MHz</entry>
 	</row><row>
-	    <entry>BANDWIDTH_8_MHZ</entry>
+	    <entry id="BANDWIDTH-8-MHZ"><constant>BANDWIDTH_8_MHZ</constant></entry>
 	    <entry>8 MHz</entry>
 	</row><row>
-	    <entry>BANDWIDTH_10_MHZ</entry>
+	    <entry id="BANDWIDTH-10-MHZ"><constant>BANDWIDTH_10_MHZ</constant></entry>
 	    <entry>10 MHz</entry>
 	</row>
         </tbody>

@@ -140,6 +140,7 @@ struct inode *affs_iget(struct super_block *sb, unsigned long ino)
 		break;
 	case ST_SOFTLINK:
 		inode->i_mode |= S_IFLNK;
+		inode_nohighmem(inode);
 		inode->i_op = &affs_symlink_inode_operations;
 		inode->i_data.a_ops = &affs_symlink_aops;
 		break;
@@ -346,7 +347,7 @@ affs_add_entry(struct inode *dir, struct inode *inode, struct dentry *dentry, s3
 {
 	struct super_block *sb = dir->i_sb;
 	struct buffer_head *inode_bh = NULL;
-	struct buffer_head *bh = NULL;
+	struct buffer_head *bh;
 	u32 block = 0;
 	int retval;
 

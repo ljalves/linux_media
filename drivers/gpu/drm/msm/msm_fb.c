@@ -77,7 +77,7 @@ void msm_framebuffer_describe(struct drm_framebuffer *fb, struct seq_file *m)
 
 	seq_printf(m, "fb: %dx%d@%4.4s (%2d, ID:%d)\n",
 			fb->width, fb->height, (char *)&fb->pixel_format,
-			fb->refcount.refcount.counter, fb->base.id);
+			drm_framebuffer_read_refcount(fb), fb->base.id);
 
 	for (i = 0; i < n; i++) {
 		seq_printf(m, "   %d: offset=%d pitch=%d, obj: ",
@@ -138,15 +138,14 @@ const struct msm_format *msm_framebuffer_format(struct drm_framebuffer *fb)
 }
 
 struct drm_framebuffer *msm_framebuffer_create(struct drm_device *dev,
-		struct drm_file *file, struct drm_mode_fb_cmd2 *mode_cmd)
+		struct drm_file *file, const struct drm_mode_fb_cmd2 *mode_cmd)
 {
 	struct drm_gem_object *bos[4] = {0};
 	struct drm_framebuffer *fb;
 	int ret, i, n = drm_format_num_planes(mode_cmd->pixel_format);
 
 	for (i = 0; i < n; i++) {
-		bos[i] = drm_gem_object_lookup(dev, file,
-				mode_cmd->handles[i]);
+		bos[i] = drm_gem_object_lookup(file, mode_cmd->handles[i]);
 		if (!bos[i]) {
 			ret = -ENXIO;
 			goto out_unref;
@@ -168,12 +167,12 @@ out_unref:
 }
 
 struct drm_framebuffer *msm_framebuffer_init(struct drm_device *dev,
-		struct drm_mode_fb_cmd2 *mode_cmd, struct drm_gem_object **bos)
+		const struct drm_mode_fb_cmd2 *mode_cmd, struct drm_gem_object **bos)
 {
 	struct msm_drm_private *priv = dev->dev_private;
 	struct msm_kms *kms = priv->kms;
-	struct msm_framebuffer *msm_fb;
-	struct drm_framebuffer *fb = NULL;
+	struct msm_framebuffer *msm_fb = NULL;
+	struct drm_framebuffer *fb;
 	const struct msm_format *format;
 	int ret, i, n;
 	unsigned int hsub, vsub;
@@ -239,8 +238,7 @@ struct drm_framebuffer *msm_framebuffer_init(struct drm_device *dev,
 	return fb;
 
 fail:
-	if (fb)
-		msm_framebuffer_destroy(fb);
+	kfree(msm_fb);
 
 	return ERR_PTR(ret);
 }

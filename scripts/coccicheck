@@ -30,7 +30,7 @@ FLAGS="$SPFLAGS --very-quiet"
 # spatch only allows include directories with the syntax "-I include"
 # while gcc also allows "-Iinclude" and "-include include"
 COCCIINCLUDE=${LINUXINCLUDE//-I/-I }
-COCCIINCLUDE=${COCCIINCLUDE//-include/-I}
+COCCIINCLUDE=${COCCIINCLUDE// -include/ --include}
 
 if [ "$C" = "1" -o "$C" = "2" ]; then
     ONLINE=1
@@ -98,7 +98,7 @@ run_cmd() {
 }
 
 kill_running() {
-	for i in $(seq $(( NPROC - 1 )) ); do
+	for i in $(seq 0 $(( NPROC - 1 )) ); do
 		if [ $VERBOSE -eq 2 ] ; then
 			echo "Killing ${SPATCH_PID[$i]}"
 		fi

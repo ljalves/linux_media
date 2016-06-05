@@ -98,7 +98,7 @@ static struct irq_chip egpio_muxed_chip = {
 	.irq_unmask	= egpio_unmask,
 };
 
-static void egpio_handler(unsigned int irq, struct irq_desc *desc)
+static void egpio_handler(struct irq_desc *desc)
 {
 	struct egpio_info *ei = irq_desc_get_handler_data(desc);
 	int irqpin;
@@ -155,7 +155,7 @@ static int egpio_get(struct gpio_chip *chip, unsigned offset)
 
 	pr_debug("egpio_get_value(%d)\n", chip->base + offset);
 
-	egpio = container_of(chip, struct egpio_chip, chip);
+	egpio = gpiochip_get_data(chip);
 	ei    = dev_get_drvdata(egpio->dev);
 	bit   = egpio_bit(ei, offset);
 	reg   = egpio->reg_start + egpio_pos(ei, offset);
@@ -163,14 +163,14 @@ static int egpio_get(struct gpio_chip *chip, unsigned offset)
 	value = egpio_readw(ei, reg);
 	pr_debug("readw(%p + %x) = %x\n",
 			ei->base_addr, reg << ei->bus_shift, value);
-	return value & bit;
+	return !!(value & bit);
 }
 
 static int egpio_direction_input(struct gpio_chip *chip, unsigned offset)
 {
 	struct egpio_chip *egpio;
 
-	egpio = container_of(chip, struct egpio_chip, chip);
+	egpio = gpiochip_get_data(chip);
 	return test_bit(offset, &egpio->is_out) ? -EINVAL : 0;
 }
 
@@ -192,7 +192,7 @@ static void egpio_set(struct gpio_chip *chip, unsigned offset, int value)
 	pr_debug("egpio_set(%s, %d(%d), %d)\n",
 			chip->label, offset, offset+chip->base, value);
 
-	egpio = container_of(chip, struct egpio_chip, chip);
+	egpio = gpiochip_get_data(chip);
 	ei    = dev_get_drvdata(egpio->dev);
 	bit   = egpio_bit(ei, offset);
 	pos   = egpio_pos(ei, offset);
@@ -216,7 +216,7 @@ static int egpio_direction_output(struct gpio_chip *chip,
 {
 	struct egpio_chip *egpio;
 
-	egpio = container_of(chip, struct egpio_chip, chip);
+	egpio = gpiochip_get_data(chip);
 	if (test_bit(offset, &egpio->is_out)) {
 		egpio_set(chip, offset, value);
 		return 0;
@@ -321,7 +321,7 @@ static int __init egpio_probe(struct platform_device *pdev)
 		ei->chip[i].dev = &(pdev->dev);
 		chip = &(ei->chip[i].chip);
 		chip->label           = "htc-egpio";
-		chip->dev             = &pdev->dev;
+		chip->parent          = &pdev->dev;
 		chip->owner           = THIS_MODULE;
 		chip->get             = egpio_get;
 		chip->set             = egpio_set;
@@ -330,7 +330,7 @@ static int __init egpio_probe(struct platform_device *pdev)
 		chip->base            = pdata->chip[i].gpio_base;
 		chip->ngpio           = pdata->chip[i].num_gpios;
 
-		gpiochip_add(chip);
+		gpiochip_add_data(chip, &ei->chip[i]);
 	}
 
 	/* Set initial pin values */
@@ -350,11 +350,11 @@ static int __init egpio_probe(struct platform_device *pdev)
 			irq_set_chip_and_handler(irq, &egpio_muxed_chip,
 						 handle_simple_irq);
 			irq_set_chip_data(irq, ei);
-			set_irq_flags(irq, IRQF_VALID | IRQF_PROBE);
+			irq_clear_status_flags(irq, IRQ_NOREQUEST | IRQ_NOPROBE);
 		}
 		irq_set_irq_type(ei->chained_irq, IRQ_TYPE_EDGE_RISING);
-		irq_set_handler_data(ei->chained_irq, ei);
-		irq_set_chained_handler(ei->chained_irq, egpio_handler);
+		irq_set_chained_handler_and_data(ei->chained_irq,
+						 egpio_handler, ei);
 		ack_irqs(ei);
 
 		device_init_wakeup(&pdev->dev, 1);
@@ -376,7 +376,7 @@ static int __exit egpio_remove(struct platform_device *pdev)
 		irq_end = ei->irq_start + ei->nirqs;
 		for (irq = ei->irq_start; irq < irq_end; irq++) {
 			irq_set_chip_and_handler(irq, NULL, NULL);
-			set_irq_flags(irq, 0);
+			irq_set_status_flags(irq, IRQ_NOREQUEST | IRQ_NOPROBE);
 		}
 		irq_set_chained_handler(ei->chained_irq, NULL);
 		device_init_wakeup(&pdev->dev, 0);

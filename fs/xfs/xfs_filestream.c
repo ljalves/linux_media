@@ -151,7 +151,7 @@ xfs_filestream_pick_ag(
 	xfs_agnumber_t		ag, max_ag = NULLAGNUMBER;
 	int			err, trylock, nscan;
 
-	ASSERT(S_ISDIR(ip->i_d.di_mode));
+	ASSERT(S_ISDIR(VFS_I(ip)->i_mode));
 
 	/* 2% of an AG's blocks must be free for it to be chosen. */
 	minfree = mp->m_sb.sb_agblocks / 50;
@@ -196,7 +196,8 @@ xfs_filestream_pick_ag(
 			goto next_ag;
 		}
 
-		longest = xfs_alloc_longest_free_extent(mp, pag);
+		longest = xfs_alloc_longest_free_extent(mp, pag,
+					xfs_alloc_min_freelist(mp, pag));
 		if (((minlen && longest >= minlen) ||
 		     (!minlen && pag->pagf_freeblks >= minfree)) &&
 		    (!pag->pagf_metadata || !(flags & XFS_PICK_USERDATA) ||
@@ -318,7 +319,7 @@ xfs_filestream_lookup_ag(
 	xfs_agnumber_t		startag, ag = NULLAGNUMBER;
 	struct xfs_mru_cache_elem *mru;
 
-	ASSERT(S_ISREG(ip->i_d.di_mode));
+	ASSERT(S_ISREG(VFS_I(ip)->i_mode));
 
 	pip = xfs_filestream_get_parent(ip);
 	if (!pip)

@@ -102,7 +102,7 @@ static void omap_prcm_events_filter_priority(unsigned long *events,
  * dispatched accordingly. Clearing of the wakeup events should be
  * done by the SoC specific individual handlers.
  */
-static void omap_prcm_irq_handler(unsigned int irq, struct irq_desc *desc)
+static void omap_prcm_irq_handler(struct irq_desc *desc)
 {
 	unsigned long pending[OMAP_PRCM_MAX_NR_PENDING_REG];
 	unsigned long priority_pending[OMAP_PRCM_MAX_NR_PENDING_REG];
@@ -664,6 +664,13 @@ static struct omap_prcm_init_data am3_prm_data __initdata = {
 };
 #endif
 
+#ifdef CONFIG_SOC_TI81XX
+static struct omap_prcm_init_data dm814_pllss_data __initdata = {
+	.index = TI_CLKM_PLLSS,
+	.init = am33xx_prm_init,
+};
+#endif
+
 #ifdef CONFIG_ARCH_OMAP4
 static struct omap_prcm_init_data omap4_prm_data __initdata = {
 	.index = TI_CLKM_PRM,
@@ -696,6 +703,7 @@ static struct omap_prcm_init_data am4_prm_data __initdata = {
 	.index = TI_CLKM_PRM,
 	.init = omap44xx_prm_init,
 	.device_inst_offset = AM43XX_PRM_DEVICE_INST,
+	.flags = PRM_HAS_IO_WAKEUP,
 };
 #endif
 
@@ -705,7 +713,7 @@ static struct omap_prcm_init_data scrm_data __initdata = {
 };
 #endif
 
-static const struct of_device_id omap_prcm_dt_match_table[] __initconst = {
+static const struct of_device_id const omap_prcm_dt_match_table[] __initconst = {
 #ifdef CONFIG_SOC_AM33XX
 	{ .compatible = "ti,am3-prcm", .data = &am3_prm_data },
 #endif
@@ -714,6 +722,7 @@ static const struct of_device_id omap_prcm_dt_match_table[] __initconst = {
 #endif
 #ifdef CONFIG_SOC_TI81XX
 	{ .compatible = "ti,dm814-prcm", .data = &am3_prm_data },
+	{ .compatible = "ti,dm814-pllss", .data = &dm814_pllss_data },
 	{ .compatible = "ti,dm816-prcm", .data = &am3_prm_data },
 #endif
 #ifdef CONFIG_ARCH_OMAP2

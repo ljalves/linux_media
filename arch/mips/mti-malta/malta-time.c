@@ -21,6 +21,7 @@
 #include <linux/i8253.h>
 #include <linux/init.h>
 #include <linux/kernel_stat.h>
+#include <linux/math64.h>
 #include <linux/sched.h>
 #include <linux/spinlock.h>
 #include <linux/interrupt.h>
@@ -72,6 +73,8 @@ static void __init estimate_frequencies(void)
 {
 	unsigned long flags;
 	unsigned int count, start;
+	unsigned char secs1, secs2, ctrl;
+	int secs;
 	cycle_t giccount = 0, gicstart = 0;
 
 #if defined(CONFIG_KVM_GUEST) && CONFIG_KVM_GUEST_TIMER_FREQ
@@ -81,32 +84,51 @@ static void __init estimate_frequencies(void)
 
 	local_irq_save(flags);
 
-	/* Start counter exactly on falling edge of update flag. */
-	while (CMOS_READ(RTC_REG_A) & RTC_UIP);
-	while (!(CMOS_READ(RTC_REG_A) & RTC_UIP));
-
-	/* Initialize counters. */
-	start = read_c0_count();
-	if (gic_present) {
+	if (gic_present)
 		gic_start_count();
-		gicstart = gic_read_count();
-	}
 
-	/* Read counter exactly on falling edge of update flag. */
+	/*
+	 * Read counters exactly on rising edge of update flag.
+	 * This helps get an accurate reading under virtualisation.
+	 */
 	while (CMOS_READ(RTC_REG_A) & RTC_UIP);
 	while (!(CMOS_READ(RTC_REG_A) & RTC_UIP));
+	start = read_c0_count();
+	if (gic_present)
+		gicstart = gic_read_count();
 
+	/* Wait for falling edge before reading RTC. */
+	while (CMOS_READ(RTC_REG_A) & RTC_UIP);
+	secs1 = CMOS_READ(RTC_SECONDS);
+
+	/* Read counters again exactly on rising edge of update flag. */
+	while (!(CMOS_READ(RTC_REG_A) & RTC_UIP));
 	count = read_c0_count();
 	if (gic_present)
 		giccount = gic_read_count();
 
+	/* Wait for falling edge before reading RTC again. */
+	while (CMOS_READ(RTC_REG_A) & RTC_UIP);
+	secs2 = CMOS_READ(RTC_SECONDS);
+
+	ctrl = CMOS_READ(RTC_CONTROL);
+
 	local_irq_restore(flags);
 
+	if (!(ctrl & RTC_DM_BINARY) || RTC_ALWAYS_BCD) {
+		secs1 = bcd2bin(secs1);
+		secs2 = bcd2bin(secs2);
+	}
+	secs = secs2 - secs1;
+	if (secs < 1)
+		secs += 60;
+
 	count -= start;
+	count /= secs;
 	mips_hpt_frequency = count;
 
 	if (gic_present) {
-		giccount -= gicstart;
+		giccount = div_u64(giccount - gicstart, secs);
 		gic_frequency = giccount;
 	}
 }
@@ -119,18 +141,24 @@ void read_persistent_clock(struct timespec *ts)
 
 int get_c0_fdc_int(void)
 {
-	int mips_cpu_fdc_irq;
+	/*
+	 * Some cores claim the FDC is routable through the GIC, but it doesn't
+	 * actually seem to be connected for those Malta bitstreams.
+	 */
+	switch (current_cpu_type()) {
+	case CPU_INTERAPTIV:
+	case CPU_PROAPTIV:
+		return -1;
+	};
 
 	if (cpu_has_veic)
-		mips_cpu_fdc_irq = -1;
+		return -1;
 	else if (gic_present)
-		mips_cpu_fdc_irq = gic_get_c0_fdc_int();
+		return gic_get_c0_fdc_int();
 	else if (cp0_fdc_irq >= 0)
-		mips_cpu_fdc_irq = MIPS_CPU_IRQ_BASE + cp0_fdc_irq;
+		return MIPS_CPU_IRQ_BASE + cp0_fdc_irq;
 	else
-		mips_cpu_fdc_irq = -1;
-
-	return mips_cpu_fdc_irq;
+		return -1;
 }
 
 int get_c0_perfcount_int(void)
@@ -148,6 +176,7 @@ int get_c0_perfcount_int(void)
 
 	return mips_cpu_perf_irq;
 }
+EXPORT_SYMBOL_GPL(get_c0_perfcount_int);
 
 unsigned int get_c0_compare_int(void)
 {
@@ -165,14 +194,17 @@ unsigned int get_c0_compare_int(void)
 
 static void __init init_rtc(void)
 {
-	/* stop the clock whilst setting it up */
-	CMOS_WRITE(RTC_SET | RTC_24H, RTC_CONTROL);
+	unsigned char freq, ctrl;
 
-	/* 32KHz time base */
-	CMOS_WRITE(RTC_REF_CLCK_32KHZ, RTC_FREQ_SELECT);
+	/* Set 32KHz time base if not already set */
+	freq = CMOS_READ(RTC_FREQ_SELECT);
+	if ((freq & RTC_DIV_CTL) != RTC_REF_CLCK_32KHZ)
+		CMOS_WRITE(RTC_REF_CLCK_32KHZ, RTC_FREQ_SELECT);
 
-	/* start the clock */
-	CMOS_WRITE(RTC_24H, RTC_CONTROL);
+	/* Ensure SET bit is clear so RTC can run */
+	ctrl = CMOS_READ(RTC_CONTROL);
+	if (ctrl & RTC_SET)
+		CMOS_WRITE(ctrl & ~RTC_SET, RTC_CONTROL);
 }
 
 void __init plat_time_init(void)

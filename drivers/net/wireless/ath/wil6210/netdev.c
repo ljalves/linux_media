@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2012-2015 Qualcomm Atheros, Inc.
+ * Copyright (c) 2012-2016 Qualcomm Atheros, Inc.
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -23,6 +23,11 @@ static int wil_open(struct net_device *ndev)
 	struct wil6210_priv *wil = ndev_to_wil(ndev);
 
 	wil_dbg_misc(wil, "%s()\n", __func__);
+
+	if (debug_fw) {
+		wil_err(wil, "%s() while in debug_fw mode\n", __func__);
+		return -EINVAL;
+	}
 
 	return wil_up(wil);
 }
@@ -55,11 +60,7 @@ static int wil_do_ioctl(struct net_device *ndev, struct ifreq *ifr, int cmd)
 {
 	struct wil6210_priv *wil = ndev_to_wil(ndev);
 
-	int ret = wil_ioctl(wil, ifr->ifr_data, cmd);
-
-	wil_dbg_misc(wil, "ioctl(0x%04x) -> %d\n", cmd, ret);
-
-	return ret;
+	return wil_ioctl(wil, ifr->ifr_data, cmd);
 }
 
 static const struct net_device_ops wil_netdev_ops = {
@@ -103,8 +104,9 @@ static int wil6210_netdev_poll_tx(struct napi_struct *napi, int budget)
 	/* always process ALL Tx complete, regardless budget - it is fast */
 	for (i = 0; i < WIL6210_MAX_TX_RINGS; i++) {
 		struct vring *vring = &wil->vring_tx[i];
+		struct vring_tx_data *txdata = &wil->vring_tx_data[i];
 
-		if (!vring->va)
+		if (!vring->va || !txdata->enabled)
 			continue;
 
 		tx_done += wil_tx_complete(wil, i);
@@ -127,7 +129,7 @@ static void wil_dev_setup(struct net_device *dev)
 	dev->tx_queue_len = WIL_TX_Q_LEN_DEFAULT;
 }
 
-void *wil_if_alloc(struct device *dev, void __iomem *csr)
+void *wil_if_alloc(struct device *dev)
 {
 	struct net_device *ndev;
 	struct wireless_dev *wdev;
@@ -142,8 +144,8 @@ void *wil_if_alloc(struct device *dev, void __iomem *csr)
 	}
 
 	wil = wdev_to_wil(wdev);
-	wil->csr = csr;
 	wil->wdev = wdev;
+	wil->radio_wdev = wdev;
 
 	wil_dbg_misc(wil, "%s()\n", __func__);
 
@@ -155,7 +157,7 @@ void *wil_if_alloc(struct device *dev, void __iomem *csr)
 
 	wdev->iftype = NL80211_IFTYPE_STATION; /* TODO */
 	/* default monitor channel */
-	ch = wdev->wiphy->bands[IEEE80211_BAND_60GHZ]->channels;
+	ch = wdev->wiphy->bands[NL80211_BAND_60GHZ]->channels;
 	cfg80211_chandef_create(&wdev->preset_chandef, ch, NL80211_CHAN_NO_HT);
 
 	ndev = alloc_netdev(0, "wlan%d", NET_NAME_UNKNOWN, wil_dev_setup);
@@ -169,14 +171,17 @@ void *wil_if_alloc(struct device *dev, void __iomem *csr)
 	wil_set_ethtoolops(ndev);
 	ndev->ieee80211_ptr = wdev;
 	ndev->hw_features = NETIF_F_HW_CSUM | NETIF_F_RXCSUM |
-			    NETIF_F_SG | NETIF_F_GRO;
+			    NETIF_F_SG | NETIF_F_GRO |
+			    NETIF_F_TSO | NETIF_F_TSO6 |
+			    NETIF_F_RXHASH;
+
 	ndev->features |= ndev->hw_features;
 	SET_NETDEV_DEV(ndev, wiphy_dev(wdev->wiphy));
 	wdev->netdev = ndev;
 
 	netif_napi_add(ndev, &wil->napi_rx, wil6210_netdev_poll_rx,
 		       WIL6210_NAPI_BUDGET);
-	netif_napi_add(ndev, &wil->napi_tx, wil6210_netdev_poll_tx,
+	netif_tx_napi_add(ndev, &wil->napi_tx, wil6210_netdev_poll_tx,
 		       WIL6210_NAPI_BUDGET);
 
 	netif_tx_stop_all_queues(ndev);

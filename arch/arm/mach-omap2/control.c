@@ -36,7 +36,6 @@
 
 static void __iomem *omap2_ctrl_base;
 static s16 omap2_ctrl_offset;
-static struct regmap *omap2_ctrl_syscon;
 
 #if defined(CONFIG_ARCH_OMAP3) && defined(CONFIG_PM)
 struct omap3_scratchpad {
@@ -112,6 +111,7 @@ struct omap3_control_regs {
 	u32 csirxfe;
 	u32 iva2_bootaddr;
 	u32 iva2_bootmod;
+	u32 wkup_ctrl;
 	u32 debobs_0;
 	u32 debobs_1;
 	u32 debobs_2;
@@ -165,16 +165,9 @@ u16 omap_ctrl_readw(u16 offset)
 
 u32 omap_ctrl_readl(u16 offset)
 {
-	u32 val;
-
 	offset &= 0xfffc;
-	if (!omap2_ctrl_syscon)
-		val = readl_relaxed(omap2_ctrl_base + offset);
-	else
-		regmap_read(omap2_ctrl_syscon, omap2_ctrl_offset + offset,
-			    &val);
 
-	return val;
+	return readl_relaxed(omap2_ctrl_base + offset);
 }
 
 void omap_ctrl_writeb(u8 val, u16 offset)
@@ -206,11 +199,7 @@ void omap_ctrl_writew(u16 val, u16 offset)
 void omap_ctrl_writel(u32 val, u16 offset)
 {
 	offset &= 0xfffc;
-	if (!omap2_ctrl_syscon)
-		writel_relaxed(val, omap2_ctrl_base + offset);
-	else
-		regmap_write(omap2_ctrl_syscon, omap2_ctrl_offset + offset,
-			     val);
+	writel_relaxed(val, omap2_ctrl_base + offset);
 }
 
 #ifdef CONFIG_ARCH_OMAP3
@@ -455,6 +444,7 @@ void omap3_control_save_context(void)
 			omap_ctrl_readl(OMAP343X_CONTROL_IVA2_BOOTADDR);
 	control_context.iva2_bootmod =
 			omap_ctrl_readl(OMAP343X_CONTROL_IVA2_BOOTMOD);
+	control_context.wkup_ctrl = omap_ctrl_readl(OMAP34XX_CONTROL_WKUP_CTRL);
 	control_context.debobs_0 = omap_ctrl_readl(OMAP343X_CONTROL_DEBOBS(0));
 	control_context.debobs_1 = omap_ctrl_readl(OMAP343X_CONTROL_DEBOBS(1));
 	control_context.debobs_2 = omap_ctrl_readl(OMAP343X_CONTROL_DEBOBS(2));
@@ -512,6 +502,7 @@ void omap3_control_restore_context(void)
 					OMAP343X_CONTROL_IVA2_BOOTADDR);
 	omap_ctrl_writel(control_context.iva2_bootmod,
 					OMAP343X_CONTROL_IVA2_BOOTMOD);
+	omap_ctrl_writel(control_context.wkup_ctrl, OMAP34XX_CONTROL_WKUP_CTRL);
 	omap_ctrl_writel(control_context.debobs_0, OMAP343X_CONTROL_DEBOBS(0));
 	omap_ctrl_writel(control_context.debobs_1, OMAP343X_CONTROL_DEBOBS(1));
 	omap_ctrl_writel(control_context.debobs_2, OMAP343X_CONTROL_DEBOBS(2));
@@ -649,6 +640,7 @@ static const struct of_device_id omap_scrm_dt_match_table[] = {
 	{ .compatible = "ti,am4-scm", .data = &ctrl_data },
 	{ .compatible = "ti,omap2-scm", .data = &omap2_ctrl_data },
 	{ .compatible = "ti,omap3-scm", .data = &omap2_ctrl_data },
+	{ .compatible = "ti,dm814-scm", .data = &ctrl_data },
 	{ .compatible = "ti,dm816-scrm", .data = &ctrl_data },
 	{ .compatible = "ti,omap4-scm-core", .data = &ctrl_data },
 	{ .compatible = "ti,omap5-scm-core", .data = &ctrl_data },
@@ -711,8 +703,6 @@ int __init omap_control_init(void)
 			if (IS_ERR(syscon))
 				return PTR_ERR(syscon);
 
-			omap2_ctrl_syscon = syscon;
-
 			if (of_get_child_by_name(scm_conf, "clocks")) {
 				ret = omap2_clk_provider_init(scm_conf,
 							      data->index,
@@ -720,9 +710,6 @@ int __init omap_control_init(void)
 				if (ret)
 					return ret;
 			}
-
-			iounmap(omap2_ctrl_base);
-			omap2_ctrl_base = NULL;
 		} else {
 			/* No scm_conf found, direct access */
 			ret = omap2_clk_provider_init(np, data->index, NULL,

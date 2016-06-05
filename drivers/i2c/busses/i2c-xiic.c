@@ -37,6 +37,8 @@
 #include <linux/io.h>
 #include <linux/slab.h>
 #include <linux/of.h>
+#include <linux/clk.h>
+#include <linux/pm_runtime.h>
 
 #define DRIVER_NAME "xiic-i2c"
 
@@ -63,19 +65,22 @@ enum xiic_endian {
  * @state:	See STATE_
  * @rx_msg:	Current RX message
  * @rx_pos:	Position within current RX message
+ * @endianness: big/little-endian byte order
  */
 struct xiic_i2c {
+	struct device		*dev;
 	void __iomem		*base;
 	wait_queue_head_t	wait;
 	struct i2c_adapter	adap;
 	struct i2c_msg		*tx_msg;
-	spinlock_t		lock;
+	struct mutex		lock;
 	unsigned int		tx_pos;
 	unsigned int		nmsgs;
 	enum xilinx_i2c_state	state;
 	struct i2c_msg		*rx_msg;
 	int			rx_pos;
 	enum xiic_endian	endianness;
+	struct clk *clk;
 };
 
 
@@ -163,6 +168,7 @@ struct xiic_i2c {
 
 #define XIIC_RESET_MASK             0xAUL
 
+#define XIIC_PM_TIMEOUT		1000	/* ms */
 /*
  * The following constant is used for the device global interrupt enable
  * register, to enable all interrupts for the device, this is the only bit
@@ -282,7 +288,7 @@ static void xiic_reinit(struct xiic_i2c *i2c)
 	/* Enable interrupts */
 	xiic_setreg32(i2c, XIIC_DGIER_OFFSET, XIIC_GINTR_ENABLE_MASK);
 
-	xiic_irq_clr_en(i2c, XIIC_INTR_AAS_MASK | XIIC_INTR_ARB_LOST_MASK);
+	xiic_irq_clr_en(i2c, XIIC_INTR_ARB_LOST_MASK);
 }
 
 static void xiic_deinit(struct xiic_i2c *i2c)
@@ -357,8 +363,9 @@ static void xiic_wakeup(struct xiic_i2c *i2c, int code)
 	wake_up(&i2c->wait);
 }
 
-static void xiic_process(struct xiic_i2c *i2c)
+static irqreturn_t xiic_process(int irq, void *dev_id)
 {
+	struct xiic_i2c *i2c = dev_id;
 	u32 pend, isr, ier;
 	u32 clr = 0;
 
@@ -367,6 +374,7 @@ static void xiic_process(struct xiic_i2c *i2c)
 	 * To find which interrupts are pending; AND interrupts pending with
 	 * interrupts masked.
 	 */
+	mutex_lock(&i2c->lock);
 	isr = xiic_getreg32(i2c, XIIC_IISR_OFFSET);
 	ier = xiic_getreg32(i2c, XIIC_IIER_OFFSET);
 	pend = isr & ier;
@@ -377,11 +385,6 @@ static void xiic_process(struct xiic_i2c *i2c)
 		__func__, xiic_getreg8(i2c, XIIC_SR_REG_OFFSET),
 		i2c->tx_msg, i2c->nmsgs);
 
-	/* Do not processes a devices interrupts if the device has no
-	 * interrupts pending
-	 */
-	if (!pend)
-		return;
 
 	/* Service requesting interrupt */
 	if ((pend & XIIC_INTR_ARB_LOST_MASK) ||
@@ -401,13 +404,15 @@ static void xiic_process(struct xiic_i2c *i2c)
 		 */
 		xiic_reinit(i2c);
 
+		if (i2c->rx_msg)
+			xiic_wakeup(i2c, STATE_ERROR);
 		if (i2c->tx_msg)
 			xiic_wakeup(i2c, STATE_ERROR);
-
-	} else if (pend & XIIC_INTR_RX_FULL_MASK) {
+	}
+	if (pend & XIIC_INTR_RX_FULL_MASK) {
 		/* Receive register/FIFO is full */
 
-		clr = XIIC_INTR_RX_FULL_MASK;
+		clr |= XIIC_INTR_RX_FULL_MASK;
 		if (!i2c->rx_msg) {
 			dev_dbg(i2c->adap.dev.parent,
 				"%s unexpexted RX IRQ\n", __func__);
@@ -440,9 +445,10 @@ static void xiic_process(struct xiic_i2c *i2c)
 				__xiic_start_xfer(i2c);
 			}
 		}
-	} else if (pend & XIIC_INTR_BNB_MASK) {
+	}
+	if (pend & XIIC_INTR_BNB_MASK) {
 		/* IIC bus has transitioned to not busy */
-		clr = XIIC_INTR_BNB_MASK;
+		clr |= XIIC_INTR_BNB_MASK;
 
 		/* The bus is not busy, disable BusNotBusy interrupt */
 		xiic_irq_dis(i2c, XIIC_INTR_BNB_MASK);
@@ -455,12 +461,12 @@ static void xiic_process(struct xiic_i2c *i2c)
 			xiic_wakeup(i2c, STATE_DONE);
 		else
 			xiic_wakeup(i2c, STATE_ERROR);
-
-	} else if (pend & (XIIC_INTR_TX_EMPTY_MASK | XIIC_INTR_TX_HALF_MASK)) {
+	}
+	if (pend & (XIIC_INTR_TX_EMPTY_MASK | XIIC_INTR_TX_HALF_MASK)) {
 		/* Transmit register/FIFO is empty or ½ empty */
 
-		clr = pend &
-			(XIIC_INTR_TX_EMPTY_MASK | XIIC_INTR_TX_HALF_MASK);
+		clr |= (pend &
+			(XIIC_INTR_TX_EMPTY_MASK | XIIC_INTR_TX_HALF_MASK));
 
 		if (!i2c->tx_msg) {
 			dev_dbg(i2c->adap.dev.parent,
@@ -491,16 +497,13 @@ static void xiic_process(struct xiic_i2c *i2c)
 			 * make sure to disable tx half
 			 */
 			xiic_irq_dis(i2c, XIIC_INTR_TX_HALF_MASK);
-	} else {
-		/* got IRQ which is not acked */
-		dev_err(i2c->adap.dev.parent, "%s Got unexpected IRQ\n",
-			__func__);
-		clr = pend;
 	}
 out:
 	dev_dbg(i2c->adap.dev.parent, "%s clr: 0x%x\n", __func__, clr);
 
 	xiic_setreg32(i2c, XIIC_IISR_OFFSET, clr);
+	mutex_unlock(&i2c->lock);
+	return IRQ_HANDLED;
 }
 
 static int xiic_bus_busy(struct xiic_i2c *i2c)
@@ -524,7 +527,7 @@ static int xiic_busy(struct xiic_i2c *i2c)
 	 */
 	err = xiic_bus_busy(i2c);
 	while (err && tries--) {
-		mdelay(1);
+		msleep(1);
 		err = xiic_bus_busy(i2c);
 	}
 
@@ -601,19 +604,21 @@ static void xiic_start_send(struct xiic_i2c *i2c)
 static irqreturn_t xiic_isr(int irq, void *dev_id)
 {
 	struct xiic_i2c *i2c = dev_id;
-
-	spin_lock(&i2c->lock);
-	/* disable interrupts globally */
-	xiic_setreg32(i2c, XIIC_DGIER_OFFSET, 0);
+	u32 pend, isr, ier;
+	irqreturn_t ret = IRQ_NONE;
+	/* Do not processes a devices interrupts if the device has no
+	 * interrupts pending
+	 */
 
 	dev_dbg(i2c->adap.dev.parent, "%s entry\n", __func__);
 
-	xiic_process(i2c);
+	isr = xiic_getreg32(i2c, XIIC_IISR_OFFSET);
+	ier = xiic_getreg32(i2c, XIIC_IIER_OFFSET);
+	pend = isr & ier;
+	if (pend)
+		ret = IRQ_WAKE_THREAD;
 
-	xiic_setreg32(i2c, XIIC_DGIER_OFFSET, XIIC_GINTR_ENABLE_MASK);
-	spin_unlock(&i2c->lock);
-
-	return IRQ_HANDLED;
+	return ret;
 }
 
 static void __xiic_start_xfer(struct xiic_i2c *i2c)
@@ -662,16 +667,10 @@ static void __xiic_start_xfer(struct xiic_i2c *i2c)
 
 static void xiic_start_xfer(struct xiic_i2c *i2c)
 {
-	unsigned long flags;
-
-	spin_lock_irqsave(&i2c->lock, flags);
+	mutex_lock(&i2c->lock);
 	xiic_reinit(i2c);
-	/* disable interrupts globally */
-	xiic_setreg32(i2c, XIIC_DGIER_OFFSET, 0);
-	spin_unlock_irqrestore(&i2c->lock, flags);
-
 	__xiic_start_xfer(i2c);
-	xiic_setreg32(i2c, XIIC_DGIER_OFFSET, XIIC_GINTR_ENABLE_MASK);
+	mutex_unlock(&i2c->lock);
 }
 
 static int xiic_xfer(struct i2c_adapter *adap, struct i2c_msg *msgs, int num)
@@ -682,9 +681,13 @@ static int xiic_xfer(struct i2c_adapter *adap, struct i2c_msg *msgs, int num)
 	dev_dbg(adap->dev.parent, "%s entry SR: 0x%x\n", __func__,
 		xiic_getreg8(i2c, XIIC_SR_REG_OFFSET));
 
+	err = pm_runtime_get_sync(i2c->dev);
+	if (err < 0)
+		return err;
+
 	err = xiic_busy(i2c);
 	if (err)
-		return err;
+		goto out;
 
 	i2c->tx_msg = msgs;
 	i2c->nmsgs = num;
@@ -692,14 +695,20 @@ static int xiic_xfer(struct i2c_adapter *adap, struct i2c_msg *msgs, int num)
 	xiic_start_xfer(i2c);
 
 	if (wait_event_timeout(i2c->wait, (i2c->state == STATE_ERROR) ||
-		(i2c->state == STATE_DONE), HZ))
-		return (i2c->state == STATE_DONE) ? num : -EIO;
-	else {
+		(i2c->state == STATE_DONE), HZ)) {
+		err = (i2c->state == STATE_DONE) ? num : -EIO;
+		goto out;
+	} else {
 		i2c->tx_msg = NULL;
 		i2c->rx_msg = NULL;
 		i2c->nmsgs = 0;
-		return -ETIMEDOUT;
+		err = -ETIMEDOUT;
+		goto out;
 	}
+out:
+	pm_runtime_mark_last_busy(i2c->dev);
+	pm_runtime_put_autosuspend(i2c->dev);
+	return err;
 }
 
 static u32 xiic_func(struct i2c_adapter *adap)
@@ -751,13 +760,31 @@ static int xiic_i2c_probe(struct platform_device *pdev)
 	i2c->adap.dev.parent = &pdev->dev;
 	i2c->adap.dev.of_node = pdev->dev.of_node;
 
-	spin_lock_init(&i2c->lock);
+	mutex_init(&i2c->lock);
 	init_waitqueue_head(&i2c->wait);
 
-	ret = devm_request_irq(&pdev->dev, irq, xiic_isr, 0, pdev->name, i2c);
+	i2c->clk = devm_clk_get(&pdev->dev, NULL);
+	if (IS_ERR(i2c->clk)) {
+		dev_err(&pdev->dev, "input clock not found.\n");
+		return PTR_ERR(i2c->clk);
+	}
+	ret = clk_prepare_enable(i2c->clk);
+	if (ret) {
+		dev_err(&pdev->dev, "Unable to enable clock.\n");
+		return ret;
+	}
+	i2c->dev = &pdev->dev;
+	pm_runtime_enable(i2c->dev);
+	pm_runtime_set_autosuspend_delay(i2c->dev, XIIC_PM_TIMEOUT);
+	pm_runtime_use_autosuspend(i2c->dev);
+	pm_runtime_set_active(i2c->dev);
+	ret = devm_request_threaded_irq(&pdev->dev, irq, xiic_isr,
+					xiic_process, IRQF_ONESHOT,
+					pdev->name, i2c);
+
 	if (ret < 0) {
 		dev_err(&pdev->dev, "Cannot claim IRQ\n");
-		return ret;
+		goto err_clk_dis;
 	}
 
 	/*
@@ -779,7 +806,7 @@ static int xiic_i2c_probe(struct platform_device *pdev)
 	if (ret) {
 		dev_err(&pdev->dev, "Failed to add adapter\n");
 		xiic_deinit(i2c);
-		return ret;
+		goto err_clk_dis;
 	}
 
 	if (pdata) {
@@ -789,16 +816,30 @@ static int xiic_i2c_probe(struct platform_device *pdev)
 	}
 
 	return 0;
+
+err_clk_dis:
+	pm_runtime_set_suspended(&pdev->dev);
+	pm_runtime_disable(&pdev->dev);
+	clk_disable_unprepare(i2c->clk);
+	return ret;
 }
 
 static int xiic_i2c_remove(struct platform_device *pdev)
 {
 	struct xiic_i2c *i2c = platform_get_drvdata(pdev);
+	int ret;
 
 	/* remove adapter & data */
 	i2c_del_adapter(&i2c->adap);
 
+	ret = clk_prepare_enable(i2c->clk);
+	if (ret) {
+		dev_err(&pdev->dev, "Unable to enable clock.\n");
+		return ret;
+	}
 	xiic_deinit(i2c);
+	clk_disable_unprepare(i2c->clk);
+	pm_runtime_disable(&pdev->dev);
 
 	return 0;
 }
@@ -811,12 +852,42 @@ static const struct of_device_id xiic_of_match[] = {
 MODULE_DEVICE_TABLE(of, xiic_of_match);
 #endif
 
+static int __maybe_unused cdns_i2c_runtime_suspend(struct device *dev)
+{
+	struct platform_device *pdev = to_platform_device(dev);
+	struct xiic_i2c *i2c = platform_get_drvdata(pdev);
+
+	clk_disable(i2c->clk);
+
+	return 0;
+}
+
+static int __maybe_unused cdns_i2c_runtime_resume(struct device *dev)
+{
+	struct platform_device *pdev = to_platform_device(dev);
+	struct xiic_i2c *i2c = platform_get_drvdata(pdev);
+	int ret;
+
+	ret = clk_enable(i2c->clk);
+	if (ret) {
+		dev_err(dev, "Cannot enable clock.\n");
+		return ret;
+	}
+
+	return 0;
+}
+
+static const struct dev_pm_ops xiic_dev_pm_ops = {
+	SET_RUNTIME_PM_OPS(cdns_i2c_runtime_suspend,
+			   cdns_i2c_runtime_resume, NULL)
+};
 static struct platform_driver xiic_i2c_driver = {
 	.probe   = xiic_i2c_probe,
 	.remove  = xiic_i2c_remove,
 	.driver  = {
 		.name = DRIVER_NAME,
 		.of_match_table = of_match_ptr(xiic_of_match),
+		.pm = &xiic_dev_pm_ops,
 	},
 };
 

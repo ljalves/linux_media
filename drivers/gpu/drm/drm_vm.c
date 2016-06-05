@@ -95,7 +95,7 @@ static pgprot_t drm_dma_prot(uint32_t map_type, struct vm_area_struct *vma)
  * Find the right map and if it's AGP memory find the real physical page to
  * map, get the page, increment the use count and return it.
  */
-#if __OS_HAS_AGP
+#if IS_ENABLED(CONFIG_AGP)
 static int drm_do_vm_fault(struct vm_area_struct *vma, struct vm_fault *vmf)
 {
 	struct drm_file *priv = vma->vm_file->private_data;
@@ -168,12 +168,12 @@ static int drm_do_vm_fault(struct vm_area_struct *vma, struct vm_fault *vmf)
 vm_fault_error:
 	return VM_FAULT_SIGBUS;	/* Disallow mremap */
 }
-#else				/* __OS_HAS_AGP */
+#else
 static int drm_do_vm_fault(struct vm_area_struct *vma, struct vm_fault *vmf)
 {
 	return VM_FAULT_SIGBUS;
 }
-#endif				/* __OS_HAS_AGP */
+#endif
 
 /**
  * \c nopage method for shared virtual memory.
@@ -395,16 +395,8 @@ static const struct vm_operations_struct drm_vm_sg_ops = {
 	.close = drm_vm_close,
 };
 
-/**
- * \c open method for shared virtual memory.
- *
- * \param vma virtual memory area.
- *
- * Create a new drm_vma_entry structure as the \p vma private data entry and
- * add it to drm_device::vmalist.
- */
-void drm_vm_open_locked(struct drm_device *dev,
-		struct vm_area_struct *vma)
+static void drm_vm_open_locked(struct drm_device *dev,
+			       struct vm_area_struct *vma)
 {
 	struct drm_vma_entry *vma_entry;
 
@@ -429,8 +421,8 @@ static void drm_vm_open(struct vm_area_struct *vma)
 	mutex_unlock(&dev->struct_mutex);
 }
 
-void drm_vm_close_locked(struct drm_device *dev,
-		struct vm_area_struct *vma)
+static void drm_vm_close_locked(struct drm_device *dev,
+				struct vm_area_struct *vma)
 {
 	struct drm_vma_entry *pt, *temp;
 
@@ -556,7 +548,7 @@ static int drm_mmap_locked(struct file *filp, struct vm_area_struct *vma)
 	 * --BenH.
 	 */
 	if (!vma->vm_pgoff
-#if __OS_HAS_AGP
+#if IS_ENABLED(CONFIG_AGP)
 	    && (!dev->agp
 		|| dev->agp->agp_info.device->vendor != PCI_VENDOR_ID_APPLE)
 #endif

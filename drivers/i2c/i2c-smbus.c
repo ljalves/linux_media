@@ -15,14 +15,14 @@
  * GNU General Public License for more details.
  */
 
-#include <linux/kernel.h>
-#include <linux/module.h>
 #include <linux/device.h>
-#include <linux/interrupt.h>
-#include <linux/workqueue.h>
 #include <linux/i2c.h>
 #include <linux/i2c-smbus.h>
+#include <linux/interrupt.h>
+#include <linux/kernel.h>
+#include <linux/module.h>
 #include <linux/slab.h>
+#include <linux/workqueue.h>
 
 struct i2c_smbus_alert {
 	unsigned int		alert_edge_triggered:1;
@@ -89,7 +89,7 @@ static void smbus_alert(struct work_struct *work)
 		 * to high, because of slave transmit arbitration.  After
 		 * responding, an SMBus device stops asserting SMBALERT#.
 		 *
-		 * Note that SMBus 2.0 reserves 10-bit addresess for future
+		 * Note that SMBus 2.0 reserves 10-bit addresses for future
 		 * use.  We neither handle them, nor try to use PEC here.
 		 */
 		status = i2c_smbus_read_byte(ara);

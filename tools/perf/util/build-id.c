@@ -28,7 +28,6 @@ int build_id__mark_dso_hit(struct perf_tool *tool __maybe_unused,
 			   struct machine *machine)
 {
 	struct addr_location al;
-	u8 cpumode = event->header.misc & PERF_RECORD_MISC_CPUMODE_MASK;
 	struct thread *thread = machine__findnew_thread(machine, sample->pid,
 							sample->tid);
 
@@ -38,11 +37,12 @@ int build_id__mark_dso_hit(struct perf_tool *tool __maybe_unused,
 		return -1;
 	}
 
-	thread__find_addr_map(thread, cpumode, MAP__FUNCTION, sample->ip, &al);
+	thread__find_addr_map(thread, sample->cpumode, MAP__FUNCTION, sample->ip, &al);
 
 	if (al.map != NULL)
 		al.map->dso->hit = 1;
 
+	thread__put(thread);
 	return 0;
 }
 
@@ -59,8 +59,10 @@ static int perf_event__exit_del_thread(struct perf_tool *tool __maybe_unused,
 	dump_printf("(%d:%d):(%d:%d)\n", event->fork.pid, event->fork.tid,
 		    event->fork.ppid, event->fork.ptid);
 
-	if (thread)
+	if (thread) {
 		machine__remove_thread(machine, thread);
+		thread__put(thread);
+	}
 
 	return 0;
 }
@@ -73,6 +75,7 @@ struct perf_tool build_id__mark_dso_hit_ops = {
 	.exit	= perf_event__exit_del_thread,
 	.attr		 = perf_event__process_attr,
 	.build_id	 = perf_event__process_build_id,
+	.ordered_events	 = true,
 };
 
 int build_id__sprintf(const u8 *build_id, int len, char *bf)
@@ -87,7 +90,39 @@ int build_id__sprintf(const u8 *build_id, int len, char *bf)
 		bid += 2;
 	}
 
-	return raw - build_id;
+	return (bid - bf) + 1;
+}
+
+int sysfs__sprintf_build_id(const char *root_dir, char *sbuild_id)
+{
+	char notes[PATH_MAX];
+	u8 build_id[BUILD_ID_SIZE];
+	int ret;
+
+	if (!root_dir)
+		root_dir = "";
+
+	scnprintf(notes, sizeof(notes), "%s/sys/kernel/notes", root_dir);
+
+	ret = sysfs__read_build_id(notes, build_id, sizeof(build_id));
+	if (ret < 0)
+		return ret;
+
+	return build_id__sprintf(build_id, sizeof(build_id), sbuild_id);
+}
+
+int filename__sprintf_build_id(const char *pathname, char *sbuild_id)
+{
+	u8 build_id[BUILD_ID_SIZE];
+	int ret;
+
+	ret = filename__read_build_id(pathname, build_id, sizeof(build_id));
+	if (ret < 0)
+		return ret;
+	else if (ret != sizeof(build_id))
+		return -EINVAL;
+
+	return build_id__sprintf(build_id, sizeof(build_id), sbuild_id);
 }
 
 /* asnprintf consolidates asprintf and snprintf */
@@ -121,13 +156,57 @@ static char *build_id__filename(const char *sbuild_id, char *bf, size_t size)
 
 char *dso__build_id_filename(const struct dso *dso, char *bf, size_t size)
 {
-	char build_id_hex[BUILD_ID_SIZE * 2 + 1];
+	char build_id_hex[SBUILD_ID_SIZE];
 
 	if (!dso->has_build_id)
 		return NULL;
 
 	build_id__sprintf(dso->build_id, sizeof(dso->build_id), build_id_hex);
 	return build_id__filename(build_id_hex, bf, size);
+}
+
+bool dso__build_id_is_kmod(const struct dso *dso, char *bf, size_t size)
+{
+	char *id_name, *ch;
+	struct stat sb;
+
+	id_name = dso__build_id_filename(dso, bf, size);
+	if (!id_name)
+		goto err;
+	if (access(id_name, F_OK))
+		goto err;
+	if (lstat(id_name, &sb) == -1)
+		goto err;
+	if ((size_t)sb.st_size > size - 1)
+		goto err;
+	if (readlink(id_name, bf, size - 1) < 0)
+		goto err;
+
+	bf[sb.st_size] = '\0';
+
+	/*
+	 * link should be:
+	 * ../../lib/modules/4.4.0-rc4/kernel/net/ipv4/netfilter/nf_nat_ipv4.ko/a09fe3eb3147dafa4e3b31dbd6257e4d696bdc92
+	 */
+	ch = strrchr(bf, '/');
+	if (!ch)
+		goto err;
+	if (ch - 3 < bf)
+		goto err;
+
+	return strncmp(".ko", ch - 3, 3) == 0;
+err:
+	/*
+	 * If dso__build_id_filename work, get id_name again,
+	 * because id_name points to bf and is broken.
+	 */
+	if (id_name)
+		id_name = dso__build_id_filename(dso, bf, size);
+	pr_err("Invalid build id: %s\n", id_name ? :
+					 dso->long_name ? :
+					 dso->short_name ? :
+					 "[unknown]");
+	return false;
 }
 
 #define dsos__for_each_with_build_id(pos, head)	\
@@ -159,45 +238,11 @@ static int write_buildid(const char *name, size_t name_len, u8 *build_id,
 	return write_padded(fd, name, name_len + 1, len);
 }
 
-static int __dsos__write_buildid_table(struct list_head *head,
-				       struct machine *machine,
-				       pid_t pid, u16 misc, int fd)
-{
-	char nm[PATH_MAX];
-	struct dso *pos;
-
-	dsos__for_each_with_build_id(pos, head) {
-		int err;
-		const char *name;
-		size_t name_len;
-
-		if (!pos->hit)
-			continue;
-
-		if (dso__is_vdso(pos)) {
-			name = pos->short_name;
-			name_len = pos->short_name_len + 1;
-		} else if (dso__is_kcore(pos)) {
-			machine__mmap_name(machine, nm, sizeof(nm));
-			name = nm;
-			name_len = strlen(nm) + 1;
-		} else {
-			name = pos->long_name;
-			name_len = pos->long_name_len + 1;
-		}
-
-		err = write_buildid(name, name_len, pos->build_id,
-				    pid, misc, fd);
-		if (err)
-			return err;
-	}
-
-	return 0;
-}
-
 static int machine__write_buildid_table(struct machine *machine, int fd)
 {
-	int err;
+	int err = 0;
+	char nm[PATH_MAX];
+	struct dso *pos;
 	u16 kmisc = PERF_RECORD_MISC_KERNEL,
 	    umisc = PERF_RECORD_MISC_USER;
 
@@ -206,12 +251,35 @@ static int machine__write_buildid_table(struct machine *machine, int fd)
 		umisc = PERF_RECORD_MISC_GUEST_USER;
 	}
 
-	err = __dsos__write_buildid_table(&machine->kernel_dsos.head, machine,
-					  machine->pid, kmisc, fd);
-	if (err == 0)
-		err = __dsos__write_buildid_table(&machine->user_dsos.head,
-						  machine, machine->pid, umisc,
-						  fd);
+	dsos__for_each_with_build_id(pos, &machine->dsos.head) {
+		const char *name;
+		size_t name_len;
+		bool in_kernel = false;
+
+		if (!pos->hit && !dso__is_vdso(pos))
+			continue;
+
+		if (dso__is_vdso(pos)) {
+			name = pos->short_name;
+			name_len = pos->short_name_len;
+		} else if (dso__is_kcore(pos)) {
+			machine__mmap_name(machine, nm, sizeof(nm));
+			name = nm;
+			name_len = strlen(nm);
+		} else {
+			name = pos->long_name;
+			name_len = pos->long_name_len;
+		}
+
+		in_kernel = pos->kernel ||
+				is_kernel_module(name,
+					PERF_RECORD_MISC_CPUMODE_UNKNOWN);
+		err = write_buildid(name, name_len, pos->build_id, machine->pid,
+				    in_kernel ? kmisc : umisc, fd);
+		if (err)
+			break;
+	}
+
 	return err;
 }
 
@@ -244,13 +312,7 @@ static int __dsos__hit_all(struct list_head *head)
 
 static int machine__hit_all_dsos(struct machine *machine)
 {
-	int err;
-
-	err = __dsos__hit_all(&machine->kernel_dsos.head);
-	if (err)
-		return err;
-
-	return __dsos__hit_all(&machine->user_dsos.head);
+	return __dsos__hit_all(&machine->dsos.head);
 }
 
 int dsos__hit_all(struct perf_session *session)
@@ -303,39 +365,17 @@ static char *build_id_cache__dirname_from_path(const char *name,
 int build_id_cache__list_build_ids(const char *pathname,
 				   struct strlist **result)
 {
-	struct strlist *list;
 	char *dir_name;
-	DIR *dir;
-	struct dirent *d;
 	int ret = 0;
 
-	list = strlist__new(true, NULL);
 	dir_name = build_id_cache__dirname_from_path(pathname, false, false);
-	if (!list || !dir_name) {
-		ret = -ENOMEM;
-		goto out;
-	}
+	if (!dir_name)
+		return -ENOMEM;
 
-	/* List up all dirents */
-	dir = opendir(dir_name);
-	if (!dir) {
+	*result = lsdir(dir_name, lsdir_no_dot_filter);
+	if (!*result)
 		ret = -errno;
-		goto out;
-	}
-
-	while ((d = readdir(dir)) != NULL) {
-		if (!strcmp(d->d_name, ".") || !strcmp(d->d_name, ".."))
-			continue;
-		strlist__add(list, d->d_name);
-	}
-	closedir(dir);
-
-out:
 	free(dir_name);
-	if (ret)
-		strlist__delete(list);
-	else
-		*result = list;
 
 	return ret;
 }
@@ -402,7 +442,7 @@ static int build_id_cache__add_b(const u8 *build_id, size_t build_id_size,
 				 const char *name, bool is_kallsyms,
 				 bool is_vdso)
 {
-	char sbuild_id[BUILD_ID_SIZE * 2 + 1];
+	char sbuild_id[SBUILD_ID_SIZE];
 
 	build_id__sprintf(build_id, build_id_size, sbuild_id);
 
@@ -490,9 +530,7 @@ static int __dsos__cache_build_ids(struct list_head *head,
 
 static int machine__cache_build_ids(struct machine *machine)
 {
-	int ret = __dsos__cache_build_ids(&machine->kernel_dsos.head, machine);
-	ret |= __dsos__cache_build_ids(&machine->user_dsos.head, machine);
-	return ret;
+	return __dsos__cache_build_ids(&machine->dsos.head, machine);
 }
 
 int perf_session__cache_build_ids(struct perf_session *session)
@@ -517,11 +555,7 @@ int perf_session__cache_build_ids(struct perf_session *session)
 
 static bool machine__read_build_ids(struct machine *machine, bool with_hits)
 {
-	bool ret;
-
-	ret  = __dsos__read_build_ids(&machine->kernel_dsos.head, with_hits);
-	ret |= __dsos__read_build_ids(&machine->user_dsos.head, with_hits);
-	return ret;
+	return __dsos__read_build_ids(&machine->dsos.head, with_hits);
 }
 
 bool perf_session__read_build_ids(struct perf_session *session, bool with_hits)

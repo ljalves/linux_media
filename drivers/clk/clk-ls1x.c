@@ -80,16 +80,15 @@ static struct clk *__init clk_register_pll(struct device *dev,
 	return clk;
 }
 
-static const char const *cpu_parents[] = { "cpu_clk_div", "osc_33m_clk", };
-static const char const *ahb_parents[] = { "ahb_clk_div", "osc_33m_clk", };
-static const char const *dc_parents[] = { "dc_clk_div", "osc_33m_clk", };
+static const char * const cpu_parents[] = { "cpu_clk_div", "osc_33m_clk", };
+static const char * const ahb_parents[] = { "ahb_clk_div", "osc_33m_clk", };
+static const char * const dc_parents[] = { "dc_clk_div", "osc_33m_clk", };
 
 void __init ls1x_clk_init(void)
 {
 	struct clk *clk;
 
-	clk = clk_register_fixed_rate(NULL, "osc_33m_clk", NULL, CLK_IS_ROOT,
-				      OSC);
+	clk = clk_register_fixed_rate(NULL, "osc_33m_clk", NULL, 0, OSC);
 	clk_register_clkdev(clk, "osc_33m_clk", NULL);
 
 	/* clock derived from 33 MHz OSC clk */

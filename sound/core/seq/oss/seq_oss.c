@@ -23,6 +23,7 @@
 #include <linux/init.h>
 #include <linux/module.h>
 #include <linux/mutex.h>
+#include <linux/compat.h>
 #include <sound/core.h>
 #include <sound/minors.h>
 #include <sound/initval.h>
@@ -45,7 +46,7 @@ MODULE_ALIAS_SNDRV_MINOR(SNDRV_MINOR_OSS_MUSIC);
  */
 static int register_device(void);
 static void unregister_device(void);
-#ifdef CONFIG_PROC_FS
+#ifdef CONFIG_SND_PROC_FS
 static int register_proc(void);
 static void unregister_proc(void);
 #else
@@ -148,8 +149,6 @@ odev_release(struct inode *inode, struct file *file)
 	if ((dp = file->private_data) == NULL)
 		return 0;
 
-	snd_seq_oss_drain_write(dp);
-
 	mutex_lock(&register_mutex);
 	snd_seq_oss_release(dp);
 	mutex_unlock(&register_mutex);
@@ -189,7 +188,11 @@ odev_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 }
 
 #ifdef CONFIG_COMPAT
-#define odev_ioctl_compat	odev_ioctl
+static long odev_ioctl_compat(struct file *file, unsigned int cmd,
+			      unsigned long arg)
+{
+	return odev_ioctl(file, cmd, (unsigned long)compat_ptr(arg));
+}
 #else
 #define odev_ioctl_compat	NULL
 #endif
@@ -261,7 +264,7 @@ unregister_device(void)
  * /proc interface
  */
 
-#ifdef CONFIG_PROC_FS
+#ifdef CONFIG_SND_PROC_FS
 
 static struct snd_info_entry *info_entry;
 
@@ -303,4 +306,4 @@ unregister_proc(void)
 	snd_info_free_entry(info_entry);
 	info_entry = NULL;
 }
-#endif /* CONFIG_PROC_FS */
+#endif /* CONFIG_SND_PROC_FS */

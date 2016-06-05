@@ -30,7 +30,7 @@
 
 #include "perf.h"
 #include "util/header.h"
-#include "util/parse-options.h"
+#include <subcmd/parse-options.h>
 #include "util/parse-events.h"
 #include "util/event.h"
 #include "util/session.h"
@@ -61,13 +61,13 @@ struct timechart {
 				tasks_only,
 				with_backtrace,
 				topology;
+	bool			force;
 	/* IO related settings */
-	u64			io_events;
 	bool			io_only,
 				skip_eagain;
+	u64			io_events;
 	u64			min_time,
 				merge_dist;
-	bool			force;
 };
 
 struct per_pidcomm;
@@ -489,7 +489,7 @@ static const char *cat_backtrace(union perf_event *event,
 	if (!chain)
 		goto exit;
 
-	if (perf_event__preprocess_sample(event, machine, &al, sample) < 0) {
+	if (machine__resolve(machine, &al, sample) < 0) {
 		fprintf(stderr, "problem processing %d event, skipping it.\n",
 			event->header.type);
 		goto exit;
@@ -523,7 +523,7 @@ static const char *cat_backtrace(union perf_event *event,
 				 * Discard all.
 				 */
 				zfree(&p);
-				goto exit;
+				goto exit_put;
 			}
 			continue;
 		}
@@ -538,7 +538,8 @@ static const char *cat_backtrace(union perf_event *event,
 		else
 			fprintf(f, "..... %016" PRIx64 "\n", ip);
 	}
-
+exit_put:
+	addr_location__put(&al);
 exit:
 	fclose(f);
 
@@ -1944,8 +1945,9 @@ int cmd_timechart(int argc, const char **argv,
 	OPT_CALLBACK('p', "process", NULL, "process",
 		      "process selector. Pass a pid or process name.",
 		       parse_process),
-	OPT_STRING(0, "symfs", &symbol_conf.symfs, "directory",
-		    "Look for files with symbols relative to this directory"),
+	OPT_CALLBACK(0, "symfs", NULL, "directory",
+		     "Look for files with symbols relative to this directory",
+		     symbol__config_symfs),
 	OPT_INTEGER('n', "proc-num", &tchart.proc_num,
 		    "min. number of tasks to print"),
 	OPT_BOOLEAN('t', "topology", &tchart.topology,

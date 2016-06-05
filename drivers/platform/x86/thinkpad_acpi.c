@@ -83,6 +83,7 @@
 #include <sound/control.h>
 #include <sound/initval.h>
 #include <asm/uaccess.h>
+#include <acpi/video.h>
 
 /* ThinkPad CMOS commands */
 #define TP_CMOS_VOLUME_DOWN	0
@@ -302,6 +303,7 @@ static struct {
 	u32 hotkey_mask:1;
 	u32 hotkey_wlsw:1;
 	u32 hotkey_tablet:1;
+	u32 kbdlight:1;
 	u32 light:1;
 	u32 light_status:1;
 	u32 bright_acpimode:1;
@@ -401,7 +403,7 @@ static const char *str_supported(int is_supported);
 #else
 static inline const char *str_supported(int is_supported) { return ""; }
 #define vdbg_printk(a_dbg_level, format, arg...)	\
-	no_printk(format, ##arg)
+	do { if (0) no_printk(format, ##arg); } while (0)
 #endif
 
 static void tpacpi_log_usertask(const char * const what)
@@ -2897,7 +2899,7 @@ static ssize_t hotkey_wakeup_reason_show(struct device *dev,
 	return snprintf(buf, PAGE_SIZE, "%d\n", hotkey_wakeup_reason);
 }
 
-static DEVICE_ATTR_RO(hotkey_wakeup_reason);
+static DEVICE_ATTR(wakeup_reason, S_IRUGO, hotkey_wakeup_reason_show, NULL);
 
 static void hotkey_wakeup_reason_notify_change(void)
 {
@@ -2913,7 +2915,8 @@ static ssize_t hotkey_wakeup_hotunplug_complete_show(struct device *dev,
 	return snprintf(buf, PAGE_SIZE, "%d\n", hotkey_autosleep_ack);
 }
 
-static DEVICE_ATTR_RO(hotkey_wakeup_hotunplug_complete);
+static DEVICE_ATTR(wakeup_hotunplug_complete, S_IRUGO,
+		   hotkey_wakeup_hotunplug_complete_show, NULL);
 
 static void hotkey_wakeup_hotunplug_complete_notify_change(void)
 {
@@ -2978,8 +2981,8 @@ static struct attribute *hotkey_attributes[] __initdata = {
 	&dev_attr_hotkey_enable.attr,
 	&dev_attr_hotkey_bios_enabled.attr,
 	&dev_attr_hotkey_bios_mask.attr,
-	&dev_attr_hotkey_wakeup_reason.attr,
-	&dev_attr_hotkey_wakeup_hotunplug_complete.attr,
+	&dev_attr_wakeup_reason.attr,
+	&dev_attr_wakeup_hotunplug_complete.attr,
 	&dev_attr_hotkey_mask.attr,
 	&dev_attr_hotkey_all_mask.attr,
 	&dev_attr_hotkey_recommended_mask.attr,
@@ -3486,7 +3489,7 @@ static int __init hotkey_init(struct ibm_init_struct *iibm)
 	/* Do not issue duplicate brightness change events to
 	 * userspace. tpacpi_detect_brightness_capabilities() must have
 	 * been called before this point  */
-	if (acpi_video_backlight_support()) {
+	if (acpi_video_get_backlight_type() != acpi_backlight_vendor) {
 		pr_info("This ThinkPad has standard ACPI backlight "
 			"brightness control, supported by the ACPI "
 			"video driver\n");
@@ -4393,12 +4396,13 @@ static ssize_t wan_enable_store(struct device *dev,
 			attr, buf, count);
 }
 
-static DEVICE_ATTR_RW(wan_enable);
+static DEVICE_ATTR(wwan_enable, S_IWUSR | S_IRUGO,
+		   wan_enable_show, wan_enable_store);
 
 /* --------------------------------------------------------------------- */
 
 static struct attribute *wan_attributes[] = {
-	&dev_attr_wan_enable.attr,
+	&dev_attr_wwan_enable.attr,
 	NULL
 };
 
@@ -4981,6 +4985,244 @@ static struct ibm_struct video_driver_data = {
 };
 
 #endif /* CONFIG_THINKPAD_ACPI_VIDEO */
+
+/*************************************************************************
+ * Keyboard backlight subdriver
+ */
+
+static int kbdlight_set_level(int level)
+{
+	if (!hkey_handle)
+		return -ENXIO;
+
+	if (!acpi_evalf(hkey_handle, NULL, "MLCS", "dd", level))
+		return -EIO;
+
+	return 0;
+}
+
+static int kbdlight_set_level_and_update(int level);
+
+static int kbdlight_get_level(void)
+{
+	int status = 0;
+
+	if (!hkey_handle)
+		return -ENXIO;
+
+	if (!acpi_evalf(hkey_handle, &status, "MLCG", "dd", 0))
+		return -EIO;
+
+	if (status < 0)
+		return status;
+
+	return status & 0x3;
+}
+
+static bool kbdlight_is_supported(void)
+{
+	int status = 0;
+
+	if (!hkey_handle)
+		return false;
+
+	if (!acpi_has_method(hkey_handle, "MLCG")) {
+		vdbg_printk(TPACPI_DBG_INIT, "kbdlight MLCG is unavailable\n");
+		return false;
+	}
+
+	if (!acpi_evalf(hkey_handle, &status, "MLCG", "qdd", 0)) {
+		vdbg_printk(TPACPI_DBG_INIT, "kbdlight MLCG failed\n");
+		return false;
+	}
+
+	if (status < 0) {
+		vdbg_printk(TPACPI_DBG_INIT, "kbdlight MLCG err: %d\n", status);
+		return false;
+	}
+
+	vdbg_printk(TPACPI_DBG_INIT, "kbdlight MLCG returned 0x%x\n", status);
+	/*
+	 * Guessed test for keyboard backlight:
+	 *
+	 * Machines with backlight keyboard return:
+	 *   b010100000010000000XX - ThinkPad X1 Carbon 3rd
+	 *   b110100010010000000XX - ThinkPad x230
+	 *   b010100000010000000XX - ThinkPad x240
+	 *   b010100000010000000XX - ThinkPad W541
+	 * (XX is current backlight level)
+	 *
+	 * Machines without backlight keyboard return:
+	 *   b10100001000000000000 - ThinkPad x230
+	 *   b10110001000000000000 - ThinkPad E430
+	 *   b00000000000000000000 - ThinkPad E450
+	 *
+	 * Candidate BITs for detection test (XOR):
+	 *   b01000000001000000000
+	 *              ^
+	 */
+	return status & BIT(9);
+}
+
+static void kbdlight_set_worker(struct work_struct *work)
+{
+	struct tpacpi_led_classdev *data =
+			container_of(work, struct tpacpi_led_classdev, work);
+
+	if (likely(tpacpi_lifecycle == TPACPI_LIFE_RUNNING))
+		kbdlight_set_level_and_update(data->new_state);
+}
+
+static void kbdlight_sysfs_set(struct led_classdev *led_cdev,
+			enum led_brightness brightness)
+{
+	struct tpacpi_led_classdev *data =
+			container_of(led_cdev,
+				     struct tpacpi_led_classdev,
+				     led_classdev);
+	data->new_state = brightness;
+	queue_work(tpacpi_wq, &data->work);
+}
+
+static enum led_brightness kbdlight_sysfs_get(struct led_classdev *led_cdev)
+{
+	int level;
+
+	level = kbdlight_get_level();
+	if (level < 0)
+		return 0;
+
+	return level;
+}
+
+static struct tpacpi_led_classdev tpacpi_led_kbdlight = {
+	.led_classdev = {
+		.name		= "tpacpi::kbd_backlight",
+		.max_brightness	= 2,
+		.brightness_set	= &kbdlight_sysfs_set,
+		.brightness_get	= &kbdlight_sysfs_get,
+	}
+};
+
+static int __init kbdlight_init(struct ibm_init_struct *iibm)
+{
+	int rc;
+
+	vdbg_printk(TPACPI_DBG_INIT, "initializing kbdlight subdriver\n");
+
+	TPACPI_ACPIHANDLE_INIT(hkey);
+	INIT_WORK(&tpacpi_led_kbdlight.work, kbdlight_set_worker);
+
+	if (!kbdlight_is_supported()) {
+		tp_features.kbdlight = 0;
+		vdbg_printk(TPACPI_DBG_INIT, "kbdlight is unsupported\n");
+		return 1;
+	}
+
+	tp_features.kbdlight = 1;
+
+	rc = led_classdev_register(&tpacpi_pdev->dev,
+				   &tpacpi_led_kbdlight.led_classdev);
+	if (rc < 0) {
+		tp_features.kbdlight = 0;
+		return rc;
+	}
+
+	return 0;
+}
+
+static void kbdlight_exit(void)
+{
+	if (tp_features.kbdlight)
+		led_classdev_unregister(&tpacpi_led_kbdlight.led_classdev);
+	flush_workqueue(tpacpi_wq);
+}
+
+static int kbdlight_set_level_and_update(int level)
+{
+	int ret;
+	struct led_classdev *led_cdev;
+
+	ret = kbdlight_set_level(level);
+	led_cdev = &tpacpi_led_kbdlight.led_classdev;
+
+	if (ret == 0 && !(led_cdev->flags & LED_SUSPENDED))
+		led_cdev->brightness = level;
+
+	return ret;
+}
+
+static int kbdlight_read(struct seq_file *m)
+{
+	int level;
+
+	if (!tp_features.kbdlight) {
+		seq_printf(m, "status:\t\tnot supported\n");
+	} else {
+		level = kbdlight_get_level();
+		if (level < 0)
+			seq_printf(m, "status:\t\terror %d\n", level);
+		else
+			seq_printf(m, "status:\t\t%d\n", level);
+		seq_printf(m, "commands:\t0, 1, 2\n");
+	}
+
+	return 0;
+}
+
+static int kbdlight_write(char *buf)
+{
+	char *cmd;
+	int level = -1;
+
+	if (!tp_features.kbdlight)
+		return -ENODEV;
+
+	while ((cmd = next_cmd(&buf))) {
+		if (strlencmp(cmd, "0") == 0)
+			level = 0;
+		else if (strlencmp(cmd, "1") == 0)
+			level = 1;
+		else if (strlencmp(cmd, "2") == 0)
+			level = 2;
+		else
+			return -EINVAL;
+	}
+
+	if (level == -1)
+		return -EINVAL;
+
+	return kbdlight_set_level_and_update(level);
+}
+
+static void kbdlight_suspend(void)
+{
+	struct led_classdev *led_cdev;
+
+	if (!tp_features.kbdlight)
+		return;
+
+	led_cdev = &tpacpi_led_kbdlight.led_classdev;
+	led_update_brightness(led_cdev);
+	led_classdev_suspend(led_cdev);
+}
+
+static void kbdlight_resume(void)
+{
+	if (!tp_features.kbdlight)
+		return;
+
+	led_classdev_resume(&tpacpi_led_kbdlight.led_classdev);
+}
+
+static struct ibm_struct kbdlight_driver_data = {
+	.name = "kbdlight",
+	.read = kbdlight_read,
+	.write = kbdlight_write,
+	.suspend = kbdlight_suspend,
+	.resume = kbdlight_resume,
+	.exit = kbdlight_exit,
+};
 
 /*************************************************************************
  * Light (thinklight) subdriver
@@ -6448,19 +6690,16 @@ static void __init tpacpi_detect_brightness_capabilities(void)
 	switch (b) {
 	case 16:
 		bright_maxlvl = 15;
-		pr_info("detected a 16-level brightness capable ThinkPad\n");
 		break;
 	case 8:
 	case 0:
 		bright_maxlvl = 7;
-		pr_info("detected a 8-level brightness capable ThinkPad\n");
 		break;
 	default:
-		pr_err("Unsupported brightness interface, "
-		       "please contact %s\n", TPACPI_MAIL);
 		tp_features.bright_unkfw = 1;
 		bright_maxlvl = b - 1;
 	}
+	pr_debug("detected %u brightness levels\n", bright_maxlvl + 1);
 }
 
 static int __init brightness_init(struct ibm_init_struct *iibm)
@@ -6489,7 +6728,7 @@ static int __init brightness_init(struct ibm_init_struct *iibm)
 		return 1;
 	}
 
-	if (acpi_video_backlight_support()) {
+	if (acpi_video_get_backlight_type() != acpi_backlight_vendor) {
 		if (brightness_enable > 1) {
 			pr_info("Standard ACPI backlight interface "
 				"available, not loading native one\n");
@@ -7770,10 +8009,12 @@ static int fan_get_status_safe(u8 *status)
 		fan_update_desired_level(s);
 	mutex_unlock(&fan_mutex);
 
+	if (rc)
+		return rc;
 	if (status)
 		*status = s;
 
-	return rc;
+	return 0;
 }
 
 static int fan_get_speed(unsigned int *speed)
@@ -8138,7 +8379,8 @@ static ssize_t fan_pwm1_enable_store(struct device *dev,
 	return count;
 }
 
-static DEVICE_ATTR_RW(fan_pwm1_enable);
+static DEVICE_ATTR(pwm1_enable, S_IWUSR | S_IRUGO,
+		   fan_pwm1_enable_show, fan_pwm1_enable_store);
 
 /* sysfs fan pwm1 ------------------------------------------------------ */
 static ssize_t fan_pwm1_show(struct device *dev,
@@ -8198,7 +8440,7 @@ static ssize_t fan_pwm1_store(struct device *dev,
 	return (rc) ? rc : count;
 }
 
-static DEVICE_ATTR_RW(fan_pwm1);
+static DEVICE_ATTR(pwm1, S_IWUSR | S_IRUGO, fan_pwm1_show, fan_pwm1_store);
 
 /* sysfs fan fan1_input ------------------------------------------------ */
 static ssize_t fan_fan1_input_show(struct device *dev,
@@ -8215,7 +8457,7 @@ static ssize_t fan_fan1_input_show(struct device *dev,
 	return snprintf(buf, PAGE_SIZE, "%u\n", speed);
 }
 
-static DEVICE_ATTR_RO(fan_fan1_input);
+static DEVICE_ATTR(fan1_input, S_IRUGO, fan_fan1_input_show, NULL);
 
 /* sysfs fan fan2_input ------------------------------------------------ */
 static ssize_t fan_fan2_input_show(struct device *dev,
@@ -8232,7 +8474,7 @@ static ssize_t fan_fan2_input_show(struct device *dev,
 	return snprintf(buf, PAGE_SIZE, "%u\n", speed);
 }
 
-static DEVICE_ATTR_RO(fan_fan2_input);
+static DEVICE_ATTR(fan2_input, S_IRUGO, fan_fan2_input_show, NULL);
 
 /* sysfs fan fan_watchdog (hwmon driver) ------------------------------- */
 static ssize_t fan_fan_watchdog_show(struct device_driver *drv,
@@ -8265,8 +8507,8 @@ static DRIVER_ATTR(fan_watchdog, S_IWUSR | S_IRUGO,
 
 /* --------------------------------------------------------------------- */
 static struct attribute *fan_attributes[] = {
-	&dev_attr_fan_pwm1_enable.attr, &dev_attr_fan_pwm1.attr,
-	&dev_attr_fan_fan1_input.attr,
+	&dev_attr_pwm1_enable.attr, &dev_attr_pwm1.attr,
+	&dev_attr_fan1_input.attr,
 	NULL, /* for fan2_input */
 	NULL
 };
@@ -8400,7 +8642,7 @@ static int __init fan_init(struct ibm_init_struct *iibm)
 		if (tp_features.second_fan) {
 			/* attach second fan tachometer */
 			fan_attributes[ARRAY_SIZE(fan_attributes)-2] =
-					&dev_attr_fan_fan2_input.attr;
+					&dev_attr_fan2_input.attr;
 		}
 		rc = sysfs_create_group(&tpacpi_sensors_pdev->dev.kobj,
 					 &fan_attr_group);
@@ -8848,7 +9090,7 @@ static ssize_t thinkpad_acpi_pdev_name_show(struct device *dev,
 	return snprintf(buf, PAGE_SIZE, "%s\n", TPACPI_NAME);
 }
 
-static DEVICE_ATTR_RO(thinkpad_acpi_pdev_name);
+static DEVICE_ATTR(name, S_IRUGO, thinkpad_acpi_pdev_name_show, NULL);
 
 /* --------------------------------------------------------------------- */
 
@@ -9204,6 +9446,10 @@ static struct ibm_init_struct ibms_init[] __initdata = {
 	},
 #endif
 	{
+		.init = kbdlight_init,
+		.data = &kbdlight_driver_data,
+	},
+	{
 		.init = light_init,
 		.data = &light_driver_data,
 	},
@@ -9390,8 +9636,7 @@ static void thinkpad_acpi_module_exit(void)
 		hwmon_device_unregister(tpacpi_hwmon);
 
 	if (tp_features.sensors_pdev_attrs_registered)
-		device_remove_file(&tpacpi_sensors_pdev->dev,
-				   &dev_attr_thinkpad_acpi_pdev_name);
+		device_remove_file(&tpacpi_sensors_pdev->dev, &dev_attr_name);
 	if (tpacpi_sensors_pdev)
 		platform_device_unregister(tpacpi_sensors_pdev);
 	if (tpacpi_pdev)
@@ -9512,8 +9757,7 @@ static int __init thinkpad_acpi_module_init(void)
 		thinkpad_acpi_module_exit();
 		return ret;
 	}
-	ret = device_create_file(&tpacpi_sensors_pdev->dev,
-				 &dev_attr_thinkpad_acpi_pdev_name);
+	ret = device_create_file(&tpacpi_sensors_pdev->dev, &dev_attr_name);
 	if (ret) {
 		pr_err("unable to create sysfs hwmon device attributes\n");
 		thinkpad_acpi_module_exit();

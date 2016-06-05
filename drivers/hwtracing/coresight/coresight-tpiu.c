@@ -1,5 +1,7 @@
 /* Copyright (c) 2011-2012, The Linux Foundation. All rights reserved.
  *
+ * Description: CoreSight Trace Port Interface Unit driver
+ *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
  * only version 2 as published by the Free Software Foundation.
@@ -11,15 +13,15 @@
  */
 
 #include <linux/kernel.h>
-#include <linux/module.h>
 #include <linux/init.h>
 #include <linux/device.h>
 #include <linux/io.h>
 #include <linux/err.h>
 #include <linux/slab.h>
-#include <linux/clk.h>
+#include <linux/pm_runtime.h>
 #include <linux/coresight.h>
 #include <linux/amba/bus.h>
+#include <linux/clk.h>
 
 #include "coresight-priv.h"
 
@@ -50,14 +52,14 @@
 /**
  * @base:	memory mapped base address for this component.
  * @dev:	the device entity associated to this component.
+ * @atclk:	optional clock for the core parts of the TPIU.
  * @csdev:	component vitals needed by the framework.
- * @clk:	the clock this component is associated to.
  */
 struct tpiu_drvdata {
 	void __iomem		*base;
 	struct device		*dev;
+	struct clk		*atclk;
 	struct coresight_device	*csdev;
-	struct clk		*clk;
 };
 
 static void tpiu_enable_hw(struct tpiu_drvdata *drvdata)
@@ -69,14 +71,9 @@ static void tpiu_enable_hw(struct tpiu_drvdata *drvdata)
 	CS_LOCK(drvdata->base);
 }
 
-static int tpiu_enable(struct coresight_device *csdev)
+static int tpiu_enable(struct coresight_device *csdev, u32 mode)
 {
 	struct tpiu_drvdata *drvdata = dev_get_drvdata(csdev->dev.parent);
-	int ret;
-
-	ret = clk_prepare_enable(drvdata->clk);
-	if (ret)
-		return ret;
 
 	tpiu_enable_hw(drvdata);
 
@@ -101,8 +98,6 @@ static void tpiu_disable(struct coresight_device *csdev)
 	struct tpiu_drvdata *drvdata = dev_get_drvdata(csdev->dev.parent);
 
 	tpiu_disable_hw(drvdata);
-
-	clk_disable_unprepare(drvdata->clk);
 
 	dev_info(drvdata->dev, "TPIU disabled\n");
 }
@@ -139,6 +134,12 @@ static int tpiu_probe(struct amba_device *adev, const struct amba_id *id)
 		return -ENOMEM;
 
 	drvdata->dev = &adev->dev;
+	drvdata->atclk = devm_clk_get(&adev->dev, "atclk"); /* optional */
+	if (!IS_ERR(drvdata->atclk)) {
+		ret = clk_prepare_enable(drvdata->atclk);
+		if (ret)
+			return ret;
+	}
 	dev_set_drvdata(dev, drvdata);
 
 	/* Validity for the resource is already checked by the AMBA core */
@@ -148,15 +149,10 @@ static int tpiu_probe(struct amba_device *adev, const struct amba_id *id)
 
 	drvdata->base = base;
 
-	drvdata->clk = adev->pclk;
-	ret = clk_prepare_enable(drvdata->clk);
-	if (ret)
-		return ret;
-
 	/* Disable tpiu to support older devices */
 	tpiu_disable_hw(drvdata);
 
-	clk_disable_unprepare(drvdata->clk);
+	pm_runtime_put(&adev->dev);
 
 	desc = devm_kzalloc(dev, sizeof(*desc), GFP_KERNEL);
 	if (!desc)
@@ -171,22 +167,43 @@ static int tpiu_probe(struct amba_device *adev, const struct amba_id *id)
 	if (IS_ERR(drvdata->csdev))
 		return PTR_ERR(drvdata->csdev);
 
-	dev_info(dev, "TPIU initialized\n");
 	return 0;
 }
 
-static int tpiu_remove(struct amba_device *adev)
+#ifdef CONFIG_PM
+static int tpiu_runtime_suspend(struct device *dev)
 {
-	struct tpiu_drvdata *drvdata = amba_get_drvdata(adev);
+	struct tpiu_drvdata *drvdata = dev_get_drvdata(dev);
 
-	coresight_unregister(drvdata->csdev);
+	if (drvdata && !IS_ERR(drvdata->atclk))
+		clk_disable_unprepare(drvdata->atclk);
+
 	return 0;
 }
+
+static int tpiu_runtime_resume(struct device *dev)
+{
+	struct tpiu_drvdata *drvdata = dev_get_drvdata(dev);
+
+	if (drvdata && !IS_ERR(drvdata->atclk))
+		clk_prepare_enable(drvdata->atclk);
+
+	return 0;
+}
+#endif
+
+static const struct dev_pm_ops tpiu_dev_pm_ops = {
+	SET_RUNTIME_PM_OPS(tpiu_runtime_suspend, tpiu_runtime_resume, NULL)
+};
 
 static struct amba_id tpiu_ids[] = {
 	{
 		.id	= 0x0003b912,
 		.mask	= 0x0003ffff,
+	},
+	{
+		.id	= 0x0004b912,
+		.mask	= 0x0007ffff,
 	},
 	{ 0, 0},
 };
@@ -195,13 +212,10 @@ static struct amba_driver tpiu_driver = {
 	.drv = {
 		.name	= "coresight-tpiu",
 		.owner	= THIS_MODULE,
+		.pm	= &tpiu_dev_pm_ops,
+		.suppress_bind_attrs = true,
 	},
 	.probe		= tpiu_probe,
-	.remove		= tpiu_remove,
 	.id_table	= tpiu_ids,
 };
-
-module_amba_driver(tpiu_driver);
-
-MODULE_LICENSE("GPL v2");
-MODULE_DESCRIPTION("CoreSight Trace Port Interface Unit driver");
+builtin_amba_driver(tpiu_driver);

@@ -5,16 +5,20 @@
 #
 # Licensed under GPLv2
 
-# Configuration options for the EXYNOS4
+# Configuration options for the EXYNOS
 
 menuconfig ARCH_EXYNOS
-	bool "Samsung EXYNOS" if ARCH_MULTI_V7
+	bool "Samsung EXYNOS"
+	depends on ARCH_MULTI_V7
 	select ARCH_HAS_BANDGAP
 	select ARCH_HAS_HOLES_MEMORYMODEL
 	select ARCH_REQUIRE_GPIOLIB
 	select ARM_AMBA
 	select ARM_GIC
 	select COMMON_CLK_SAMSUNG
+	select EXYNOS_THERMAL
+	select EXYNOS_PMU
+	select EXYNOS_SROM
 	select HAVE_ARM_SCU if SMP
 	select HAVE_S3C2410_I2C if I2C
 	select HAVE_S3C2410_WATCHDOG if WATCHDOG
@@ -23,12 +27,26 @@ menuconfig ARCH_EXYNOS
 	select PINCTRL_EXYNOS
 	select PM_GENERIC_DOMAINS if PM
 	select S5P_DEV_MFC
+	select SAMSUNG_MC
+	select SOC_SAMSUNG
 	select SRAM
+	select THERMAL
+	select THERMAL_OF
 	select MFD_SYSCON
+	select MEMORY
+	select CLKSRC_EXYNOS_MCT
+	select POWER_RESET
+	select POWER_RESET_SYSCON
+	select POWER_RESET_SYSCON_POWEROFF
 	help
 	  Support for SAMSUNG EXYNOS SoCs (EXYNOS4/5)
 
 if ARCH_EXYNOS
+
+config S5P_DEV_MFC
+	bool
+	help
+	  Compile in setup memory (init) code for MFC
 
 config ARCH_EXYNOS3
 	bool "SAMSUNG EXYNOS3"

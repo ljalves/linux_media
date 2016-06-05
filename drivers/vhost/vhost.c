@@ -22,19 +22,114 @@
 #include <linux/file.h>
 #include <linux/highmem.h>
 #include <linux/slab.h>
+#include <linux/vmalloc.h>
 #include <linux/kthread.h>
 #include <linux/cgroup.h>
 #include <linux/module.h>
+#include <linux/sort.h>
 
 #include "vhost.h"
 
+static ushort max_mem_regions = 64;
+module_param(max_mem_regions, ushort, 0444);
+MODULE_PARM_DESC(max_mem_regions,
+	"Maximum number of memory regions in memory map. (default: 64)");
+
 enum {
-	VHOST_MEMORY_MAX_NREGIONS = 64,
 	VHOST_MEMORY_F_LOG = 0x1,
 };
 
 #define vhost_used_event(vq) ((__virtio16 __user *)&vq->avail->ring[vq->num])
 #define vhost_avail_event(vq) ((__virtio16 __user *)&vq->used->ring[vq->num])
+
+#ifdef CONFIG_VHOST_CROSS_ENDIAN_LEGACY
+static void vhost_disable_cross_endian(struct vhost_virtqueue *vq)
+{
+	vq->user_be = !virtio_legacy_is_little_endian();
+}
+
+static void vhost_enable_cross_endian_big(struct vhost_virtqueue *vq)
+{
+	vq->user_be = true;
+}
+
+static void vhost_enable_cross_endian_little(struct vhost_virtqueue *vq)
+{
+	vq->user_be = false;
+}
+
+static long vhost_set_vring_endian(struct vhost_virtqueue *vq, int __user *argp)
+{
+	struct vhost_vring_state s;
+
+	if (vq->private_data)
+		return -EBUSY;
+
+	if (copy_from_user(&s, argp, sizeof(s)))
+		return -EFAULT;
+
+	if (s.num != VHOST_VRING_LITTLE_ENDIAN &&
+	    s.num != VHOST_VRING_BIG_ENDIAN)
+		return -EINVAL;
+
+	if (s.num == VHOST_VRING_BIG_ENDIAN)
+		vhost_enable_cross_endian_big(vq);
+	else
+		vhost_enable_cross_endian_little(vq);
+
+	return 0;
+}
+
+static long vhost_get_vring_endian(struct vhost_virtqueue *vq, u32 idx,
+				   int __user *argp)
+{
+	struct vhost_vring_state s = {
+		.index = idx,
+		.num = vq->user_be
+	};
+
+	if (copy_to_user(argp, &s, sizeof(s)))
+		return -EFAULT;
+
+	return 0;
+}
+
+static void vhost_init_is_le(struct vhost_virtqueue *vq)
+{
+	/* Note for legacy virtio: user_be is initialized at reset time
+	 * according to the host endianness. If userspace does not set an
+	 * explicit endianness, the default behavior is native endian, as
+	 * expected by legacy virtio.
+	 */
+	vq->is_le = vhost_has_feature(vq, VIRTIO_F_VERSION_1) || !vq->user_be;
+}
+#else
+static void vhost_disable_cross_endian(struct vhost_virtqueue *vq)
+{
+}
+
+static long vhost_set_vring_endian(struct vhost_virtqueue *vq, int __user *argp)
+{
+	return -ENOIOCTLCMD;
+}
+
+static long vhost_get_vring_endian(struct vhost_virtqueue *vq, u32 idx,
+				   int __user *argp)
+{
+	return -ENOIOCTLCMD;
+}
+
+static void vhost_init_is_le(struct vhost_virtqueue *vq)
+{
+	if (vhost_has_feature(vq, VIRTIO_F_VERSION_1))
+		vq->is_le = true;
+}
+#endif /* CONFIG_VHOST_CROSS_ENDIAN_LEGACY */
+
+static void vhost_reset_is_le(struct vhost_virtqueue *vq)
+{
+	vq->is_le = virtio_legacy_is_little_endian();
+}
 
 static void vhost_poll_func(struct file *file, wait_queue_head_t *wqh,
 			    poll_table *pt)
@@ -168,6 +263,13 @@ void vhost_work_queue(struct vhost_dev *dev, struct vhost_work *work)
 }
 EXPORT_SYMBOL_GPL(vhost_work_queue);
 
+/* A lockless hint for busy polling code to exit the loop */
+bool vhost_has_work(struct vhost_dev *dev)
+{
+	return !list_empty(&dev->work_list);
+}
+EXPORT_SYMBOL_GPL(vhost_has_work);
+
 void vhost_poll_queue(struct vhost_poll *poll)
 {
 	vhost_work_queue(poll->dev, &poll->work);
@@ -199,6 +301,9 @@ static void vhost_vq_reset(struct vhost_dev *dev,
 	vq->call = NULL;
 	vq->log_ctx = NULL;
 	vq->memory = NULL;
+	vhost_reset_is_le(vq);
+	vhost_disable_cross_endian(vq);
+	vq->busyloop_timeout = 0;
 }
 
 static int vhost_worker(void *data)
@@ -470,7 +575,7 @@ void vhost_dev_cleanup(struct vhost_dev *dev, bool locked)
 		fput(dev->log_file);
 	dev->log_file = NULL;
 	/* No one will access memory at this point */
-	kfree(dev->memory);
+	kvfree(dev->memory);
 	dev->memory = NULL;
 	WARN_ON(!list_empty(&dev->work_list));
 	if (dev->worker) {
@@ -590,6 +695,25 @@ int vhost_vq_access_ok(struct vhost_virtqueue *vq)
 }
 EXPORT_SYMBOL_GPL(vhost_vq_access_ok);
 
+static int vhost_memory_reg_sort_cmp(const void *p1, const void *p2)
+{
+	const struct vhost_memory_region *r1 = p1, *r2 = p2;
+	if (r1->guest_phys_addr < r2->guest_phys_addr)
+		return 1;
+	if (r1->guest_phys_addr > r2->guest_phys_addr)
+		return -1;
+	return 0;
+}
+
+static void *vhost_kvzalloc(unsigned long size)
+{
+	void *n = kzalloc(size, GFP_KERNEL | __GFP_NOWARN | __GFP_REPEAT);
+
+	if (!n)
+		n = vzalloc(size);
+	return n;
+}
+
 static long vhost_set_memory(struct vhost_dev *d, struct vhost_memory __user *m)
 {
 	struct vhost_memory mem, *newmem, *oldmem;
@@ -600,21 +724,23 @@ static long vhost_set_memory(struct vhost_dev *d, struct vhost_memory __user *m)
 		return -EFAULT;
 	if (mem.padding)
 		return -EOPNOTSUPP;
-	if (mem.nregions > VHOST_MEMORY_MAX_NREGIONS)
+	if (mem.nregions > max_mem_regions)
 		return -E2BIG;
-	newmem = kmalloc(size + mem.nregions * sizeof *m->regions, GFP_KERNEL);
+	newmem = vhost_kvzalloc(size + mem.nregions * sizeof(*m->regions));
 	if (!newmem)
 		return -ENOMEM;
 
 	memcpy(newmem, &mem, size);
 	if (copy_from_user(newmem->regions, m->regions,
 			   mem.nregions * sizeof *m->regions)) {
-		kfree(newmem);
+		kvfree(newmem);
 		return -EFAULT;
 	}
+	sort(newmem->regions, newmem->nregions, sizeof(*newmem->regions),
+		vhost_memory_reg_sort_cmp, NULL);
 
 	if (!memory_access_ok(d, newmem, 0)) {
-		kfree(newmem);
+		kvfree(newmem);
 		return -EFAULT;
 	}
 	oldmem = d->memory;
@@ -626,7 +752,7 @@ static long vhost_set_memory(struct vhost_dev *d, struct vhost_memory __user *m)
 		d->vqs[i]->memory = newmem;
 		mutex_unlock(&d->vqs[i]->mutex);
 	}
-	kfree(oldmem);
+	kvfree(oldmem);
 	return 0;
 }
 
@@ -719,7 +845,7 @@ long vhost_vring_ioctl(struct vhost_dev *d, int ioctl, void __user *argp)
 		BUILD_BUG_ON(__alignof__ *vq->used > VRING_USED_ALIGN_SIZE);
 		if ((a.avail_user_addr & (VRING_AVAIL_ALIGN_SIZE - 1)) ||
 		    (a.used_user_addr & (VRING_USED_ALIGN_SIZE - 1)) ||
-		    (a.log_guest_addr & (sizeof(u64) - 1))) {
+		    (a.log_guest_addr & (VRING_USED_ALIGN_SIZE - 1))) {
 			r = -EINVAL;
 			break;
 		}
@@ -806,6 +932,25 @@ long vhost_vring_ioctl(struct vhost_dev *d, int ioctl, void __user *argp)
 		} else
 			filep = eventfp;
 		break;
+	case VHOST_SET_VRING_ENDIAN:
+		r = vhost_set_vring_endian(vq, argp);
+		break;
+	case VHOST_GET_VRING_ENDIAN:
+		r = vhost_get_vring_endian(vq, idx, argp);
+		break;
+	case VHOST_SET_VRING_BUSYLOOP_TIMEOUT:
+		if (copy_from_user(&s, argp, sizeof(s))) {
+			r = -EFAULT;
+			break;
+		}
+		vq->busyloop_timeout = s.num;
+		break;
+	case VHOST_GET_VRING_BUSYLOOP_TIMEOUT:
+		s.index = idx;
+		s.num = vq->busyloop_timeout;
+		if (copy_to_user(argp, &s, sizeof(s)))
+			r = -EFAULT;
+		break;
 	default:
 		r = -ENOIOCTLCMD;
 	}
@@ -886,6 +1031,7 @@ long vhost_dev_ioctl(struct vhost_dev *d, unsigned int ioctl, void __user *argp)
 		}
 		if (eventfp != d->log_file) {
 			filep = d->log_file;
+			d->log_file = eventfp;
 			ctx = d->log_ctx;
 			d->log_ctx = eventfp ?
 				eventfd_ctx_fileget(eventfp) : NULL;
@@ -913,17 +1059,22 @@ EXPORT_SYMBOL_GPL(vhost_dev_ioctl);
 static const struct vhost_memory_region *find_region(struct vhost_memory *mem,
 						     __u64 addr, __u32 len)
 {
-	struct vhost_memory_region *reg;
-	int i;
+	const struct vhost_memory_region *reg;
+	int start = 0, end = mem->nregions;
 
-	/* linear search is not brilliant, but we really have on the order of 6
-	 * regions in practice */
-	for (i = 0; i < mem->nregions; ++i) {
-		reg = mem->regions + i;
-		if (reg->guest_phys_addr <= addr &&
-		    reg->guest_phys_addr + reg->memory_size - 1 >= addr)
-			return reg;
+	while (start < end) {
+		int slot = start + (end - start) / 2;
+		reg = mem->regions + slot;
+		if (addr >= reg->guest_phys_addr)
+			end = slot;
+		else
+			start = slot + 1;
 	}
+
+	reg = mem->regions + start;
+	if (addr >= reg->guest_phys_addr &&
+		reg->guest_phys_addr + reg->memory_size > addr)
+		return reg;
 	return NULL;
 }
 
@@ -1040,26 +1191,37 @@ static int vhost_update_avail_event(struct vhost_virtqueue *vq, u16 avail_event)
 	return 0;
 }
 
-int vhost_init_used(struct vhost_virtqueue *vq)
+int vhost_vq_init_access(struct vhost_virtqueue *vq)
 {
 	__virtio16 last_used_idx;
 	int r;
-	if (!vq->private_data)
+	bool is_le = vq->is_le;
+
+	if (!vq->private_data) {
+		vhost_reset_is_le(vq);
 		return 0;
+	}
+
+	vhost_init_is_le(vq);
 
 	r = vhost_update_used_flags(vq);
 	if (r)
-		return r;
+		goto err;
 	vq->signalled_used_valid = false;
-	if (!access_ok(VERIFY_READ, &vq->used->idx, sizeof vq->used->idx))
-		return -EFAULT;
+	if (!access_ok(VERIFY_READ, &vq->used->idx, sizeof vq->used->idx)) {
+		r = -EFAULT;
+		goto err;
+	}
 	r = __get_user(last_used_idx, &vq->used->idx);
 	if (r)
-		return r;
+		goto err;
 	vq->last_used_idx = vhost16_to_cpu(vq, last_used_idx);
 	return 0;
+err:
+	vq->is_le = is_le;
+	return r;
 }
-EXPORT_SYMBOL_GPL(vhost_init_used);
+EXPORT_SYMBOL_GPL(vhost_vq_init_access);
 
 static int translate_desc(struct vhost_virtqueue *vq, u64 addr, u32 len,
 			  struct iovec iov[], int iov_size)
@@ -1253,7 +1415,7 @@ int vhost_get_vq_desc(struct vhost_virtqueue *vq,
 	/* Grab the next descriptor number they're advertising, and increment
 	 * the index we've seen. */
 	if (unlikely(__get_user(ring_head,
-				&vq->avail->ring[last_avail_idx % vq->num]))) {
+				&vq->avail->ring[last_avail_idx & (vq->num - 1)]))) {
 		vq_err(vq, "Failed to read head: idx %d address %p\n",
 		       last_avail_idx,
 		       &vq->avail->ring[last_avail_idx % vq->num]);
@@ -1373,7 +1535,7 @@ static int __vhost_add_used_n(struct vhost_virtqueue *vq,
 	u16 old, new;
 	int start;
 
-	start = vq->last_used_idx % vq->num;
+	start = vq->last_used_idx & (vq->num - 1);
 	used = vq->used->ring + start;
 	if (count == 1) {
 		if (__put_user(heads[0].id, &used->id)) {
@@ -1415,7 +1577,7 @@ int vhost_add_used_n(struct vhost_virtqueue *vq, struct vring_used_elem *heads,
 {
 	int start, n, r;
 
-	start = vq->last_used_idx % vq->num;
+	start = vq->last_used_idx & (vq->num - 1);
 	n = vq->num - start;
 	if (n < count) {
 		r = __vhost_add_used_n(vq, heads, n);
@@ -1509,6 +1671,20 @@ void vhost_add_used_and_signal_n(struct vhost_dev *dev,
 	vhost_signal(dev, vq);
 }
 EXPORT_SYMBOL_GPL(vhost_add_used_and_signal_n);
+
+/* return true if we're sure that avaiable ring is empty */
+bool vhost_vq_avail_empty(struct vhost_dev *dev, struct vhost_virtqueue *vq)
+{
+	__virtio16 avail_idx;
+	int r;
+
+	r = __get_user(avail_idx, &vq->avail->idx);
+	if (r)
+		return false;
+
+	return vhost16_to_cpu(vq, avail_idx) == vq->avail_idx;
+}
+EXPORT_SYMBOL_GPL(vhost_vq_avail_empty);
 
 /* OK, now we need to know about added descriptors. */
 bool vhost_enable_notify(struct vhost_dev *dev, struct vhost_virtqueue *vq)

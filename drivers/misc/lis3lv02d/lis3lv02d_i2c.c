@@ -209,7 +209,7 @@ static int lis3lv02d_i2c_remove(struct i2c_client *client)
 #ifdef CONFIG_PM_SLEEP
 static int lis3lv02d_i2c_suspend(struct device *dev)
 {
-	struct i2c_client *client = container_of(dev, struct i2c_client, dev);
+	struct i2c_client *client = to_i2c_client(dev);
 	struct lis3lv02d *lis3 = i2c_get_clientdata(client);
 
 	if (!lis3->pdata || !lis3->pdata->wakeup_flags)
@@ -219,7 +219,7 @@ static int lis3lv02d_i2c_suspend(struct device *dev)
 
 static int lis3lv02d_i2c_resume(struct device *dev)
 {
-	struct i2c_client *client = container_of(dev, struct i2c_client, dev);
+	struct i2c_client *client = to_i2c_client(dev);
 	struct lis3lv02d *lis3 = i2c_get_clientdata(client);
 
 	/*
@@ -238,7 +238,7 @@ static int lis3lv02d_i2c_resume(struct device *dev)
 #ifdef CONFIG_PM
 static int lis3_i2c_runtime_suspend(struct device *dev)
 {
-	struct i2c_client *client = container_of(dev, struct i2c_client, dev);
+	struct i2c_client *client = to_i2c_client(dev);
 	struct lis3lv02d *lis3 = i2c_get_clientdata(client);
 
 	lis3lv02d_poweroff(lis3);
@@ -247,7 +247,7 @@ static int lis3_i2c_runtime_suspend(struct device *dev)
 
 static int lis3_i2c_runtime_resume(struct device *dev)
 {
-	struct i2c_client *client = container_of(dev, struct i2c_client, dev);
+	struct i2c_client *client = to_i2c_client(dev);
 	struct lis3lv02d *lis3 = i2c_get_clientdata(client);
 
 	lis3lv02d_poweron(lis3);
@@ -274,7 +274,6 @@ static const struct dev_pm_ops lis3_pm_ops = {
 static struct i2c_driver lis3lv02d_i2c_driver = {
 	.driver	 = {
 		.name   = DRV_NAME,
-		.owner  = THIS_MODULE,
 		.pm     = &lis3_pm_ops,
 		.of_match_table = of_match_ptr(lis3lv02d_i2c_dt_ids),
 	},

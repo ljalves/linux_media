@@ -37,6 +37,7 @@ struct vhost_poll {
 
 void vhost_work_init(struct vhost_work *work, vhost_work_fn_t fn);
 void vhost_work_queue(struct vhost_dev *dev, struct vhost_work *work);
+bool vhost_has_work(struct vhost_dev *dev);
 
 void vhost_poll_init(struct vhost_poll *poll, vhost_work_fn_t fn,
 		     unsigned long mask, struct vhost_dev *dev);
@@ -106,6 +107,15 @@ struct vhost_virtqueue {
 	/* Log write descriptors */
 	void __user *log_base;
 	struct vhost_log *log;
+
+	/* Ring endianness. Defaults to legacy native endianness.
+	 * Set to true when starting a modern virtio device. */
+	bool is_le;
+#ifdef CONFIG_VHOST_CROSS_ENDIAN_LEGACY
+	/* Ring endianness requested by userspace for cross-endian support. */
+	bool user_be;
+#endif
+	u32 busyloop_timeout;
 };
 
 struct vhost_dev {
@@ -140,7 +150,7 @@ int vhost_get_vq_desc(struct vhost_virtqueue *,
 		      struct vhost_log *log, unsigned int *log_num);
 void vhost_discard_vq_desc(struct vhost_virtqueue *, int n);
 
-int vhost_init_used(struct vhost_virtqueue *);
+int vhost_vq_init_access(struct vhost_virtqueue *);
 int vhost_add_used(struct vhost_virtqueue *, unsigned int head, int len);
 int vhost_add_used_n(struct vhost_virtqueue *, struct vring_used_elem *heads,
 		     unsigned count);
@@ -150,6 +160,7 @@ void vhost_add_used_and_signal_n(struct vhost_dev *, struct vhost_virtqueue *,
 			       struct vring_used_elem *heads, unsigned count);
 void vhost_signal(struct vhost_dev *, struct vhost_virtqueue *);
 void vhost_disable_notify(struct vhost_dev *, struct vhost_virtqueue *);
+bool vhost_vq_avail_empty(struct vhost_dev *, struct vhost_virtqueue *);
 bool vhost_enable_notify(struct vhost_dev *, struct vhost_virtqueue *);
 
 int vhost_log_write(struct vhost_virtqueue *vq, struct vhost_log *log,
@@ -165,7 +176,9 @@ enum {
 	VHOST_FEATURES = (1ULL << VIRTIO_F_NOTIFY_ON_EMPTY) |
 			 (1ULL << VIRTIO_RING_F_INDIRECT_DESC) |
 			 (1ULL << VIRTIO_RING_F_EVENT_IDX) |
-			 (1ULL << VHOST_F_LOG_ALL),
+			 (1ULL << VHOST_F_LOG_ALL) |
+			 (1ULL << VIRTIO_F_ANY_LAYOUT) |
+			 (1ULL << VIRTIO_F_VERSION_1)
 };
 
 static inline bool vhost_has_feature(struct vhost_virtqueue *vq, int bit)
@@ -173,34 +186,46 @@ static inline bool vhost_has_feature(struct vhost_virtqueue *vq, int bit)
 	return vq->acked_features & (1ULL << bit);
 }
 
+#ifdef CONFIG_VHOST_CROSS_ENDIAN_LEGACY
+static inline bool vhost_is_little_endian(struct vhost_virtqueue *vq)
+{
+	return vq->is_le;
+}
+#else
+static inline bool vhost_is_little_endian(struct vhost_virtqueue *vq)
+{
+	return virtio_legacy_is_little_endian() || vq->is_le;
+}
+#endif
+
 /* Memory accessors */
 static inline u16 vhost16_to_cpu(struct vhost_virtqueue *vq, __virtio16 val)
 {
-	return __virtio16_to_cpu(vhost_has_feature(vq, VIRTIO_F_VERSION_1), val);
+	return __virtio16_to_cpu(vhost_is_little_endian(vq), val);
 }
 
 static inline __virtio16 cpu_to_vhost16(struct vhost_virtqueue *vq, u16 val)
 {
-	return __cpu_to_virtio16(vhost_has_feature(vq, VIRTIO_F_VERSION_1), val);
+	return __cpu_to_virtio16(vhost_is_little_endian(vq), val);
 }
 
 static inline u32 vhost32_to_cpu(struct vhost_virtqueue *vq, __virtio32 val)
 {
-	return __virtio32_to_cpu(vhost_has_feature(vq, VIRTIO_F_VERSION_1), val);
+	return __virtio32_to_cpu(vhost_is_little_endian(vq), val);
 }
 
 static inline __virtio32 cpu_to_vhost32(struct vhost_virtqueue *vq, u32 val)
 {
-	return __cpu_to_virtio32(vhost_has_feature(vq, VIRTIO_F_VERSION_1), val);
+	return __cpu_to_virtio32(vhost_is_little_endian(vq), val);
 }
 
 static inline u64 vhost64_to_cpu(struct vhost_virtqueue *vq, __virtio64 val)
 {
-	return __virtio64_to_cpu(vhost_has_feature(vq, VIRTIO_F_VERSION_1), val);
+	return __virtio64_to_cpu(vhost_is_little_endian(vq), val);
 }
 
 static inline __virtio64 cpu_to_vhost64(struct vhost_virtqueue *vq, u64 val)
 {
-	return __cpu_to_virtio64(vhost_has_feature(vq, VIRTIO_F_VERSION_1), val);
+	return __cpu_to_virtio64(vhost_is_little_endian(vq), val);
 }
 #endif

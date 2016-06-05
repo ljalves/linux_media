@@ -142,7 +142,7 @@ static int tas2101_wrtable(struct tas2101_priv *priv,
 	return 0;
 }
 
-static int tas2101_read_status(struct dvb_frontend *fe, fe_status_t *status)
+static int tas2101_read_status(struct dvb_frontend *fe, enum fe_status *status)
 {
 	struct tas2101_priv *priv = fe->demodulator_priv;
 	int ret;
@@ -287,7 +287,7 @@ static int tas2101_read_ucblocks(struct dvb_frontend *fe, u32 *ucblocks)
 }
 
 static int tas2101_set_voltage(struct dvb_frontend *fe,
-	fe_sec_voltage_t voltage)
+	enum fe_sec_voltage voltage)
 {
 	struct tas2101_priv *priv = fe->demodulator_priv;
 	int ret = 0;
@@ -319,7 +319,7 @@ static int tas2101_set_voltage(struct dvb_frontend *fe,
 }
 
 static int tas2101_set_tone(struct dvb_frontend *fe,
-	fe_sec_tone_mode_t tone)
+	enum fe_sec_tone_mode tone)
 {
 	struct tas2101_priv *priv = fe->demodulator_priv;
 	int ret = -EINVAL;
@@ -403,7 +403,7 @@ exit:
 }
 
 static int tas2101_diseqc_send_burst(struct dvb_frontend *fe,
-	fe_sec_mini_cmd_t burst)
+	enum fe_sec_mini_cmd burst)
 {
 	struct tas2101_priv *priv = fe->demodulator_priv;
 	int ret, i;
@@ -648,7 +648,7 @@ static int tas2101_set_frontend(struct dvb_frontend *fe)
 {
 	struct tas2101_priv *priv = fe->demodulator_priv;
 	struct dtv_frontend_properties *c = &fe->dtv_property_cache;
-	fe_status_t tunerstat;
+	enum fe_status tunerstat;
 	int ret, i;
 	u32 s;
 	u8 buf[3];
@@ -723,11 +723,10 @@ static int tas2101_set_frontend(struct dvb_frontend *fe)
 	return -EINVAL;
 }
 
-/* unimplemented */
-static int tas2101_get_frontend(struct dvb_frontend *fe)
+static int tas2101_get_frontend(struct dvb_frontend *fe,
+	struct dtv_frontend_properties *c)
 {
 	struct tas2101_priv *priv = fe->demodulator_priv;
-	struct dtv_frontend_properties *c = &fe->dtv_property_cache;
 	int ret;
 	u8 reg, buf[2];
 
@@ -769,7 +768,7 @@ static int tas2101_get_frontend(struct dvb_frontend *fe)
 }
 
 static int tas2101_tune(struct dvb_frontend *fe, bool re_tune,
-	unsigned int mode_flags, unsigned int *delay, fe_status_t *status)
+	unsigned int mode_flags, unsigned int *delay, enum fe_status *status)
 {
 	struct tas2101_priv *priv = fe->demodulator_priv;
 

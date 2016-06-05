@@ -30,7 +30,7 @@
 #include <linux/vmalloc.h>
 
 #include <media/soc_camera.h>
-#include <media/soc_mediabus.h>
+#include <media/drv-intf/soc_mediabus.h>
 #include <media/v4l2-async.h>
 #include <media/v4l2-clk.h>
 #include <media/v4l2-common.h>
@@ -38,7 +38,7 @@
 #include <media/v4l2-dev.h>
 #include <media/v4l2-of.h>
 #include <media/videobuf-core.h>
-#include <media/videobuf2-core.h>
+#include <media/videobuf2-v4l2.h>
 
 /* Default to VGA resolution */
 #define DEFAULT_WIDTH	640
@@ -309,11 +309,14 @@ static int soc_camera_try_fmt_vid_cap(struct file *file, void *priv,
 static int soc_camera_enum_input(struct file *file, void *priv,
 				 struct v4l2_input *inp)
 {
+	struct soc_camera_device *icd = file->private_data;
+
 	if (inp->index != 0)
 		return -EINVAL;
 
 	/* default is camera */
 	inp->type = V4L2_INPUT_TYPE_CAMERA;
+	inp->std = icd->vdev->tvnorms;
 	strcpy(inp->name, "Camera");
 
 	return 0;
@@ -381,9 +384,8 @@ static int soc_camera_reqbufs(struct file *file, void *priv,
 		ret = vb2_reqbufs(&icd->vb2_vidq, p);
 	}
 
-	if (!ret && !icd->streamer)
-		icd->streamer = file;
-
+	if (!ret)
+		icd->streamer = p->count ? file : NULL;
 	return ret;
 }
 
@@ -440,12 +442,19 @@ static int soc_camera_create_bufs(struct file *file, void *priv,
 {
 	struct soc_camera_device *icd = file->private_data;
 	struct soc_camera_host *ici = to_soc_camera_host(icd->parent);
+	int ret;
 
 	/* videobuf2 only */
 	if (ici->ops->init_videobuf)
-		return -EINVAL;
-	else
-		return vb2_create_bufs(&icd->vb2_vidq, create);
+		return -ENOTTY;
+
+	if (icd->streamer && icd->streamer != file)
+		return -EBUSY;
+
+	ret = vb2_create_bufs(&icd->vb2_vidq, create);
+	if (!ret)
+		icd->streamer = file;
+	return ret;
 }
 
 static int soc_camera_prepare_buf(struct file *file, void *priv,
@@ -467,14 +476,13 @@ static int soc_camera_expbuf(struct file *file, void *priv,
 	struct soc_camera_device *icd = file->private_data;
 	struct soc_camera_host *ici = to_soc_camera_host(icd->parent);
 
-	if (icd->streamer != file)
-		return -EBUSY;
-
 	/* videobuf2 only */
 	if (ici->ops->init_videobuf)
-		return -EINVAL;
-	else
-		return vb2_expbuf(&icd->vb2_vidq, p);
+		return -ENOTTY;
+
+	if (icd->streamer && icd->streamer != file)
+		return -EBUSY;
+	return vb2_expbuf(&icd->vb2_vidq, p);
 }
 
 /* Always entered with .host_lock held */
@@ -780,20 +788,21 @@ static int soc_camera_close(struct file *file)
 	struct soc_camera_host *ici = to_soc_camera_host(icd->parent);
 
 	mutex_lock(&ici->host_lock);
+	if (icd->streamer == file) {
+		if (ici->ops->init_videobuf2)
+			vb2_queue_release(&icd->vb2_vidq);
+		icd->streamer = NULL;
+	}
 	icd->use_count--;
 	if (!icd->use_count) {
 		pm_runtime_suspend(&icd->vdev->dev);
 		pm_runtime_disable(&icd->vdev->dev);
 
-		if (ici->ops->init_videobuf2)
-			vb2_queue_release(&icd->vb2_vidq);
 		__soc_camera_power_off(icd);
 
 		soc_camera_remove_device(icd);
 	}
 
-	if (icd->streamer == file)
-		icd->streamer = NULL;
 	mutex_unlock(&ici->host_lock);
 
 	module_put(ici->ops->owner);
@@ -992,6 +1001,7 @@ static int soc_camera_streamoff(struct file *file, void *priv,
 	struct soc_camera_device *icd = file->private_data;
 	struct v4l2_subdev *sd = soc_camera_to_subdev(icd);
 	struct soc_camera_host *ici = to_soc_camera_host(icd->parent);
+	int ret;
 
 	WARN_ON(priv != file->private_data);
 
@@ -1006,13 +1016,13 @@ static int soc_camera_streamoff(struct file *file, void *priv,
 	 * remaining buffers. When the last buffer is freed, stop capture
 	 */
 	if (ici->ops->init_videobuf)
-		videobuf_streamoff(&icd->vb_vidq);
+		ret = videobuf_streamoff(&icd->vb_vidq);
 	else
-		vb2_streamoff(&icd->vb2_vidq, i);
+		ret = vb2_streamoff(&icd->vb2_vidq, i);
 
 	v4l2_subdev_call(sd, video, s_stream, 0);
 
-	return 0;
+	return ret;
 }
 
 static int soc_camera_cropcap(struct file *file, void *fh,
@@ -1350,7 +1360,7 @@ static int soc_camera_i2c_init(struct soc_camera_device *icd,
 	struct soc_camera_host_desc *shd = &sdesc->host_desc;
 	struct i2c_adapter *adap;
 	struct v4l2_subdev *subdev;
-	char clk_name[V4L2_SUBDEV_NAME_SIZE];
+	char clk_name[V4L2_CLK_NAME_SIZE];
 	int ret;
 
 	/* First find out how we link the main client */
@@ -1381,8 +1391,8 @@ static int soc_camera_i2c_init(struct soc_camera_device *icd,
 	ssdd->sd_pdata.regulators = NULL;
 	shd->board_info->platform_data = ssdd;
 
-	snprintf(clk_name, sizeof(clk_name), "%d-%04x",
-		 shd->i2c_adapter_id, shd->board_info->addr);
+	v4l2_clk_name_i2c(clk_name, sizeof(clk_name),
+			  shd->i2c_adapter_id, shd->board_info->addr);
 
 	icd->clk = v4l2_clk_register(&soc_camera_clk_ops, clk_name, icd);
 	if (IS_ERR(icd->clk)) {
@@ -1483,6 +1493,8 @@ static void soc_camera_async_unbind(struct v4l2_async_notifier *notifier,
 					struct soc_camera_async_client, notifier);
 	struct soc_camera_device *icd = platform_get_drvdata(sasc->pdev);
 
+	icd->control = NULL;
+
 	if (icd->clk) {
 		v4l2_clk_unregister(icd->clk);
 		icd->clk = NULL;
@@ -1516,7 +1528,7 @@ static int scan_async_group(struct soc_camera_host *ici,
 	struct soc_camera_async_client *sasc;
 	struct soc_camera_device *icd;
 	struct soc_camera_desc sdesc = {.host_desc.bus_id = ici->nr,};
-	char clk_name[V4L2_SUBDEV_NAME_SIZE];
+	char clk_name[V4L2_CLK_NAME_SIZE];
 	unsigned int i;
 	int ret;
 
@@ -1562,8 +1574,9 @@ static int scan_async_group(struct soc_camera_host *ici,
 	icd->sasc = sasc;
 	icd->parent = ici->v4l2_dev.dev;
 
-	snprintf(clk_name, sizeof(clk_name), "%d-%04x",
-		 sasd->asd.match.i2c.adapter_id, sasd->asd.match.i2c.address);
+	v4l2_clk_name_i2c(clk_name, sizeof(clk_name),
+			  sasd->asd.match.i2c.adapter_id,
+			  sasd->asd.match.i2c.address);
 
 	icd->clk = v4l2_clk_register(&soc_camera_clk_ops, clk_name, icd);
 	if (IS_ERR(icd->clk)) {
@@ -1621,7 +1634,7 @@ static int soc_of_bind(struct soc_camera_host *ici,
 	struct soc_camera_async_client *sasc;
 	struct soc_of_info *info;
 	struct i2c_client *client;
-	char clk_name[V4L2_SUBDEV_NAME_SIZE];
+	char clk_name[V4L2_CLK_NAME_SIZE];
 	int ret;
 
 	/* allocate a new subdev and add match info to it */
@@ -1664,11 +1677,11 @@ static int soc_of_bind(struct soc_camera_host *ici,
 	client = of_find_i2c_device_by_node(remote);
 
 	if (client)
-		snprintf(clk_name, sizeof(clk_name), "%d-%04x",
-			 client->adapter->nr, client->addr);
+		v4l2_clk_name_i2c(clk_name, sizeof(clk_name),
+				  client->adapter->nr, client->addr);
 	else
-		snprintf(clk_name, sizeof(clk_name), "of-%s",
-			 of_node_full_name(remote));
+		v4l2_clk_name_of(clk_name, sizeof(clk_name),
+				 of_node_full_name(remote));
 
 	icd->clk = v4l2_clk_register(&soc_camera_clk_ops, clk_name, icd);
 	if (IS_ERR(icd->clk)) {

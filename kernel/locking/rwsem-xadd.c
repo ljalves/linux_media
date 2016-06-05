@@ -262,7 +262,7 @@ static inline bool rwsem_try_write_lock(long count, struct rw_semaphore *sem)
 	 * to reduce unnecessary expensive cmpxchg() operations.
 	 */
 	if (count == RWSEM_WAITING_BIAS &&
-	    cmpxchg(&sem->count, RWSEM_WAITING_BIAS,
+	    cmpxchg_acquire(&sem->count, RWSEM_WAITING_BIAS,
 		    RWSEM_ACTIVE_WRITE_BIAS) == RWSEM_WAITING_BIAS) {
 		if (!list_is_singular(&sem->wait_list))
 			rwsem_atomic_update(RWSEM_WAITING_BIAS, sem);
@@ -285,7 +285,8 @@ static inline bool rwsem_try_write_lock_unqueued(struct rw_semaphore *sem)
 		if (!(count == 0 || count == RWSEM_WAITING_BIAS))
 			return false;
 
-		old = cmpxchg(&sem->count, count, count + RWSEM_ACTIVE_WRITE_BIAS);
+		old = cmpxchg_acquire(&sem->count, count,
+				      count + RWSEM_ACTIVE_WRITE_BIAS);
 		if (old == count) {
 			rwsem_set_owner(sem);
 			return true;
@@ -409,8 +410,21 @@ done:
 	return taken;
 }
 
+/*
+ * Return true if the rwsem has active spinner
+ */
+static inline bool rwsem_has_spinner(struct rw_semaphore *sem)
+{
+	return osq_is_locked(&sem->osq);
+}
+
 #else
 static bool rwsem_optimistic_spin(struct rw_semaphore *sem)
+{
+	return false;
+}
+
+static inline bool rwsem_has_spinner(struct rw_semaphore *sem)
 {
 	return false;
 }
@@ -419,12 +433,13 @@ static bool rwsem_optimistic_spin(struct rw_semaphore *sem)
 /*
  * Wait until we successfully acquire the write lock
  */
-__visible
-struct rw_semaphore __sched *rwsem_down_write_failed(struct rw_semaphore *sem)
+static inline struct rw_semaphore *
+__rwsem_down_write_failed_common(struct rw_semaphore *sem, int state)
 {
 	long count;
 	bool waiting = true; /* any queued threads before us */
 	struct rwsem_waiter waiter;
+	struct rw_semaphore *ret = sem;
 
 	/* undo write bias from down_write operation, stop active locking */
 	count = rwsem_atomic_update(-RWSEM_ACTIVE_WRITE_BIAS, sem);
@@ -464,7 +479,7 @@ struct rw_semaphore __sched *rwsem_down_write_failed(struct rw_semaphore *sem)
 		count = rwsem_atomic_update(RWSEM_WAITING_BIAS, sem);
 
 	/* wait until we successfully acquire the lock */
-	set_current_state(TASK_UNINTERRUPTIBLE);
+	set_current_state(state);
 	while (true) {
 		if (rwsem_try_write_lock(count, sem))
 			break;
@@ -472,20 +487,47 @@ struct rw_semaphore __sched *rwsem_down_write_failed(struct rw_semaphore *sem)
 
 		/* Block until there are no active lockers. */
 		do {
+			if (signal_pending_state(state, current))
+				goto out_nolock;
+
 			schedule();
-			set_current_state(TASK_UNINTERRUPTIBLE);
+			set_current_state(state);
 		} while ((count = sem->count) & RWSEM_ACTIVE_MASK);
 
 		raw_spin_lock_irq(&sem->wait_lock);
 	}
 	__set_current_state(TASK_RUNNING);
-
 	list_del(&waiter.list);
 	raw_spin_unlock_irq(&sem->wait_lock);
 
-	return sem;
+	return ret;
+
+out_nolock:
+	__set_current_state(TASK_RUNNING);
+	raw_spin_lock_irq(&sem->wait_lock);
+	list_del(&waiter.list);
+	if (list_empty(&sem->wait_list))
+		rwsem_atomic_update(-RWSEM_WAITING_BIAS, sem);
+	else
+		__rwsem_do_wake(sem, RWSEM_WAKE_ANY);
+	raw_spin_unlock_irq(&sem->wait_lock);
+
+	return ERR_PTR(-EINTR);
+}
+
+__visible struct rw_semaphore * __sched
+rwsem_down_write_failed(struct rw_semaphore *sem)
+{
+	return __rwsem_down_write_failed_common(sem, TASK_UNINTERRUPTIBLE);
 }
 EXPORT_SYMBOL(rwsem_down_write_failed);
+
+__visible struct rw_semaphore * __sched
+rwsem_down_write_failed_killable(struct rw_semaphore *sem)
+{
+	return __rwsem_down_write_failed_common(sem, TASK_KILLABLE);
+}
+EXPORT_SYMBOL(rwsem_down_write_failed_killable);
 
 /*
  * handle waking up a waiter on the semaphore
@@ -496,7 +538,38 @@ struct rw_semaphore *rwsem_wake(struct rw_semaphore *sem)
 {
 	unsigned long flags;
 
+	/*
+	 * If a spinner is present, it is not necessary to do the wakeup.
+	 * Try to do wakeup only if the trylock succeeds to minimize
+	 * spinlock contention which may introduce too much delay in the
+	 * unlock operation.
+	 *
+	 *    spinning writer		up_write/up_read caller
+	 *    ---------------		-----------------------
+	 * [S]   osq_unlock()		[L]   osq
+	 *	 MB			      RMB
+	 * [RmW] rwsem_try_write_lock() [RmW] spin_trylock(wait_lock)
+	 *
+	 * Here, it is important to make sure that there won't be a missed
+	 * wakeup while the rwsem is free and the only spinning writer goes
+	 * to sleep without taking the rwsem. Even when the spinning writer
+	 * is just going to break out of the waiting loop, it will still do
+	 * a trylock in rwsem_down_write_failed() before sleeping. IOW, if
+	 * rwsem_has_spinner() is true, it will guarantee at least one
+	 * trylock attempt on the rwsem later on.
+	 */
+	if (rwsem_has_spinner(sem)) {
+		/*
+		 * The smp_rmb() here is to make sure that the spinner
+		 * state is consulted before reading the wait_lock.
+		 */
+		smp_rmb();
+		if (!raw_spin_trylock_irqsave(&sem->wait_lock, flags))
+			return sem;
+		goto locked;
+	}
 	raw_spin_lock_irqsave(&sem->wait_lock, flags);
+locked:
 
 	/* do nothing if list empty */
 	if (!list_empty(&sem->wait_list))

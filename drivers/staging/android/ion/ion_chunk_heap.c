@@ -55,7 +55,7 @@ static int ion_chunk_heap_allocate(struct ion_heap *heap,
 	if (allocated_size > chunk_heap->size - chunk_heap->allocated)
 		return -ENOMEM;
 
-	table = kmalloc(sizeof(struct sg_table), GFP_KERNEL);
+	table = kmalloc(sizeof(*table), GFP_KERNEL);
 	if (!table)
 		return -ENOMEM;
 	ret = sg_alloc_table(table, num_chunks, GFP_KERNEL);
@@ -154,7 +154,7 @@ struct ion_heap *ion_chunk_heap_create(struct ion_platform_heap *heap_data)
 	if (ret)
 		return ERR_PTR(ret);
 
-	chunk_heap = kzalloc(sizeof(struct ion_chunk_heap), GFP_KERNEL);
+	chunk_heap = kzalloc(sizeof(*chunk_heap), GFP_KERNEL);
 	if (!chunk_heap)
 		return ERR_PTR(-ENOMEM);
 
@@ -173,8 +173,8 @@ struct ion_heap *ion_chunk_heap_create(struct ion_platform_heap *heap_data)
 	chunk_heap->heap.ops = &chunk_heap_ops;
 	chunk_heap->heap.type = ION_HEAP_TYPE_CHUNK;
 	chunk_heap->heap.flags = ION_HEAP_FLAG_DEFER_FREE;
-	pr_info("%s: base %lu size %zu align %ld\n", __func__, chunk_heap->base,
-		heap_data->size, heap_data->align);
+	pr_debug("%s: base %lu size %zu align %ld\n", __func__,
+		chunk_heap->base, heap_data->size, heap_data->align);
 
 	return &chunk_heap->heap;
 

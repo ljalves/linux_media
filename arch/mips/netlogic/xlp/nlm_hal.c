@@ -58,7 +58,7 @@ void nlm_node_init(int node)
 		nodep->coremask = 1;	/* node 0, boot cpu */
 	nodep->sysbase = nlm_get_sys_regbase(node);
 	nodep->picbase = nlm_get_pic_regbase(node);
-	nodep->ebase = read_c0_ebase() & (~((1 << 12) - 1));
+	nodep->ebase = read_c0_ebase() & MIPS_EBASE_BASE;
 	if (cpu_is_xlp9xx())
 		nodep->socbus = xlp9xx_get_socbus(node);
 	else
@@ -91,6 +91,8 @@ static int xlp9xx_irq_to_irt(int irq)
 		return 134;
 	case PIC_SATA_IRQ:
 		return 143;
+	case PIC_NAND_IRQ:
+		return 151;
 	case PIC_SPI_IRQ:
 		return 152;
 	case PIC_MMC_IRQ:

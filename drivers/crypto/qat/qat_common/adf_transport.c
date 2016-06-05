@@ -122,7 +122,7 @@ int adf_send_message(struct adf_etr_ring_data *ring, uint32_t *msg)
 		return -EAGAIN;
 	}
 	spin_lock_bh(&ring->lock);
-	memcpy(ring->base_addr + ring->tail, msg,
+	memcpy((void *)((uintptr_t)ring->base_addr + ring->tail), msg,
 	       ADF_MSG_SIZE_TO_BYTES(ring->msg_size));
 
 	ring->tail = adf_modulo(ring->tail +
@@ -137,23 +137,22 @@ int adf_send_message(struct adf_etr_ring_data *ring, uint32_t *msg)
 static int adf_handle_response(struct adf_etr_ring_data *ring)
 {
 	uint32_t msg_counter = 0;
-	uint32_t *msg = (uint32_t *)(ring->base_addr + ring->head);
+	uint32_t *msg = (uint32_t *)((uintptr_t)ring->base_addr + ring->head);
 
 	while (*msg != ADF_RING_EMPTY_SIG) {
 		ring->callback((uint32_t *)msg);
+		atomic_dec(ring->inflights);
 		*msg = ADF_RING_EMPTY_SIG;
 		ring->head = adf_modulo(ring->head +
 					ADF_MSG_SIZE_TO_BYTES(ring->msg_size),
 					ADF_RING_SIZE_MODULO(ring->ring_size));
 		msg_counter++;
-		msg = (uint32_t *)(ring->base_addr + ring->head);
+		msg = (uint32_t *)((uintptr_t)ring->base_addr + ring->head);
 	}
-	if (msg_counter > 0) {
+	if (msg_counter > 0)
 		WRITE_CSR_RING_HEAD(ring->bank->csr_addr,
 				    ring->bank->bank_number,
 				    ring->ring_number, ring->head);
-		atomic_sub(msg_counter, ring->inflights);
-	}
 	return 0;
 }
 
@@ -264,6 +263,10 @@ int adf_create_ring(struct adf_accel_dev *accel_dev, const char *section,
 		dev_err(&GET_DEV(accel_dev), "Can't get ring number\n");
 		return -EFAULT;
 	}
+	if (ring_num >= ADF_ETR_MAX_RINGS_PER_BANK) {
+		dev_err(&GET_DEV(accel_dev), "Invalid ring number\n");
+		return -EFAULT;
+	}
 
 	bank = &transport_data->banks[bank_num];
 	if (adf_reserve_ring(bank, ring_num)) {
@@ -285,7 +288,7 @@ int adf_create_ring(struct adf_accel_dev *accel_dev, const char *section,
 		goto err;
 
 	/* Enable HW arbitration for the given ring */
-	accel_dev->hw_device->hw_arb_ring_enable(ring);
+	adf_update_ring_arb(ring);
 
 	if (adf_ring_debugfs_add(ring, ring_name)) {
 		dev_err(&GET_DEV(accel_dev),
@@ -302,14 +305,13 @@ int adf_create_ring(struct adf_accel_dev *accel_dev, const char *section,
 err:
 	adf_cleanup_ring(ring);
 	adf_unreserve_ring(bank, ring_num);
-	accel_dev->hw_device->hw_arb_ring_disable(ring);
+	adf_update_ring_arb(ring);
 	return ret;
 }
 
 void adf_remove_ring(struct adf_etr_ring_data *ring)
 {
 	struct adf_etr_bank_data *bank = ring->bank;
-	struct adf_accel_dev *accel_dev = bank->accel_dev;
 
 	/* Disable interrupts for the given ring */
 	adf_disable_ring_irq(bank, ring->ring_number);
@@ -322,7 +324,7 @@ void adf_remove_ring(struct adf_etr_ring_data *ring)
 	adf_ring_debugfs_rm(ring);
 	adf_unreserve_ring(bank, ring->ring_number);
 	/* Disable HW arbitration for the given ring */
-	accel_dev->hw_device->hw_arb_ring_disable(ring);
+	adf_update_ring_arb(ring);
 	adf_cleanup_ring(ring);
 }
 
@@ -339,27 +341,15 @@ static void adf_ring_response_handler(struct adf_etr_bank_data *bank)
 	}
 }
 
-/**
- * adf_response_handler() - Bottom half handler response handler
- * @bank_addr:  Address of a ring bank for with the BH was scheduled.
- *
- * Function is the bottom half handler for the response from acceleration
- * device. There is one handler for every ring bank. Function checks all
- * communication rings in the bank.
- * To be used by QAT device specific drivers.
- *
- * Return: void
- */
-void adf_response_handler(unsigned long bank_addr)
+void adf_response_handler(uintptr_t bank_addr)
 {
 	struct adf_etr_bank_data *bank = (void *)bank_addr;
 
-	/* Handle all the responses nad reenable IRQs */
+	/* Handle all the responses and reenable IRQs */
 	adf_ring_response_handler(bank);
 	WRITE_CSR_INT_FLAG_AND_COL(bank->csr_addr, bank->bank_number,
 				   bank->irq_mask);
 }
-EXPORT_SYMBOL_GPL(adf_response_handler);
 
 static inline int adf_get_cfg_int(struct adf_accel_dev *accel_dev,
 				  const char *section, const char *format,
@@ -444,12 +434,13 @@ static int adf_init_bank(struct adf_accel_dev *accel_dev,
 		goto err;
 	}
 
+	WRITE_CSR_INT_FLAG(csr_addr, bank_num, ADF_BANK_INT_FLAG_CLEAR_MASK);
 	WRITE_CSR_INT_SRCSEL(csr_addr, bank_num);
 	return 0;
 err:
 	for (i = 0; i < ADF_ETR_MAX_RINGS_PER_BANK; i++) {
 		ring = &bank->rings[i];
-		if (hw_data->tx_rings_mask & (1 << i) && ring->inflights)
+		if (hw_data->tx_rings_mask & (1 << i))
 			kfree(ring->inflights);
 	}
 	return -ENOMEM;
@@ -463,7 +454,7 @@ err:
  * acceleration device accel_dev.
  * To be used by QAT device specific drivers.
  *
- * Return: 0 on success, error code othewise.
+ * Return: 0 on success, error code otherwise.
  */
 int adf_init_etr_data(struct adf_accel_dev *accel_dev)
 {

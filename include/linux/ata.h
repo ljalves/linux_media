@@ -45,6 +45,7 @@ enum {
 	ATA_SECT_SIZE		= 512,
 	ATA_MAX_SECTORS_128	= 128,
 	ATA_MAX_SECTORS		= 256,
+	ATA_MAX_SECTORS_1024    = 1024,
 	ATA_MAX_SECTORS_LBA48	= 65535,/* TODO: 65536? */
 	ATA_MAX_SECTORS_TAPE	= 65535,
 
@@ -242,6 +243,7 @@ enum {
 	ATA_CMD_WRITE_QUEUED_FUA_EXT = 0x3E,
 	ATA_CMD_FPDMA_READ	= 0x60,
 	ATA_CMD_FPDMA_WRITE	= 0x61,
+	ATA_CMD_NCQ_NON_DATA	= 0x63,
 	ATA_CMD_FPDMA_SEND	= 0x64,
 	ATA_CMD_FPDMA_RECV	= 0x65,
 	ATA_CMD_PIO_READ	= 0x20,
@@ -300,19 +302,43 @@ enum {
 	ATA_CMD_CFA_WRITE_MULT_NE = 0xCD,
 	ATA_CMD_REQ_SENSE_DATA  = 0x0B,
 	ATA_CMD_SANITIZE_DEVICE = 0xB4,
+	ATA_CMD_ZAC_MGMT_IN	= 0x4A,
+	ATA_CMD_ZAC_MGMT_OUT	= 0x9F,
 
 	/* marked obsolete in the ATA/ATAPI-7 spec */
 	ATA_CMD_RESTORE		= 0x10,
+
+	/* Subcmds for ATA_CMD_FPDMA_RECV */
+	ATA_SUBCMD_FPDMA_RECV_RD_LOG_DMA_EXT = 0x01,
+	ATA_SUBCMD_FPDMA_RECV_ZAC_MGMT_IN    = 0x02,
 
 	/* Subcmds for ATA_CMD_FPDMA_SEND */
 	ATA_SUBCMD_FPDMA_SEND_DSM            = 0x00,
 	ATA_SUBCMD_FPDMA_SEND_WR_LOG_DMA_EXT = 0x02,
 
+	/* Subcmds for ATA_CMD_NCQ_NON_DATA */
+	ATA_SUBCMD_NCQ_NON_DATA_ABORT_QUEUE  = 0x00,
+	ATA_SUBCMD_NCQ_NON_DATA_SET_FEATURES = 0x05,
+	ATA_SUBCMD_NCQ_NON_DATA_ZERO_EXT     = 0x06,
+	ATA_SUBCMD_NCQ_NON_DATA_ZAC_MGMT_OUT = 0x07,
+
+	/* Subcmds for ATA_CMD_ZAC_MGMT_IN */
+	ATA_SUBCMD_ZAC_MGMT_IN_REPORT_ZONES = 0x00,
+
+	/* Subcmds for ATA_CMD_ZAC_MGMT_OUT */
+	ATA_SUBCMD_ZAC_MGMT_OUT_CLOSE_ZONE = 0x01,
+	ATA_SUBCMD_ZAC_MGMT_OUT_FINISH_ZONE = 0x02,
+	ATA_SUBCMD_ZAC_MGMT_OUT_OPEN_ZONE = 0x03,
+	ATA_SUBCMD_ZAC_MGMT_OUT_RESET_WRITE_POINTER = 0x04,
+
 	/* READ_LOG_EXT pages */
+	ATA_LOG_DIRECTORY	= 0x0,
 	ATA_LOG_SATA_NCQ	= 0x10,
+	ATA_LOG_NCQ_NON_DATA	  = 0x12,
 	ATA_LOG_NCQ_SEND_RECV	  = 0x13,
 	ATA_LOG_SATA_ID_DEV_DATA  = 0x30,
 	ATA_LOG_SATA_SETTINGS	  = 0x08,
+	ATA_LOG_ZONED_INFORMATION = 0x09,
 	ATA_LOG_DEVSLP_OFFSET	  = 0x30,
 	ATA_LOG_DEVSLP_SIZE	  = 0x08,
 	ATA_LOG_DEVSLP_MDAT	  = 0x00,
@@ -327,8 +353,25 @@ enum {
 	ATA_LOG_NCQ_SEND_RECV_DSM_OFFSET	= 0x04,
 	ATA_LOG_NCQ_SEND_RECV_DSM_TRIM		= (1 << 0),
 	ATA_LOG_NCQ_SEND_RECV_RD_LOG_OFFSET	= 0x08,
+	ATA_LOG_NCQ_SEND_RECV_RD_LOG_SUPPORTED  = (1 << 0),
 	ATA_LOG_NCQ_SEND_RECV_WR_LOG_OFFSET	= 0x0C,
-	ATA_LOG_NCQ_SEND_RECV_SIZE		= 0x10,
+	ATA_LOG_NCQ_SEND_RECV_WR_LOG_SUPPORTED  = (1 << 0),
+	ATA_LOG_NCQ_SEND_RECV_ZAC_MGMT_OFFSET	= 0x10,
+	ATA_LOG_NCQ_SEND_RECV_ZAC_MGMT_OUT_SUPPORTED = (1 << 0),
+	ATA_LOG_NCQ_SEND_RECV_ZAC_MGMT_IN_SUPPORTED = (1 << 1),
+	ATA_LOG_NCQ_SEND_RECV_SIZE		= 0x14,
+
+	/* NCQ Non-Data log */
+	ATA_LOG_NCQ_NON_DATA_SUBCMDS_OFFSET	= 0x00,
+	ATA_LOG_NCQ_NON_DATA_ABORT_OFFSET	= 0x00,
+	ATA_LOG_NCQ_NON_DATA_ABORT_NCQ		= (1 << 0),
+	ATA_LOG_NCQ_NON_DATA_ABORT_ALL		= (1 << 1),
+	ATA_LOG_NCQ_NON_DATA_ABORT_STREAMING	= (1 << 2),
+	ATA_LOG_NCQ_NON_DATA_ABORT_NON_STREAMING = (1 << 3),
+	ATA_LOG_NCQ_NON_DATA_ABORT_SELECTED	= (1 << 4),
+	ATA_LOG_NCQ_NON_DATA_ZAC_MGMT_OFFSET	= 0x1C,
+	ATA_LOG_NCQ_NON_DATA_ZAC_MGMT_OUT	= (1 << 0),
+	ATA_LOG_NCQ_NON_DATA_SIZE		= 0x40,
 
 	/* READ/WRITE LONG (obsolete) */
 	ATA_CMD_READ_LONG	= 0x22,
@@ -370,7 +413,8 @@ enum {
 	SETFEATURES_AAM_ON	= 0x42,
 	SETFEATURES_AAM_OFF	= 0xC2,
 
-	SETFEATURES_SPINUP	= 0x07, /* Spin-up drive */
+	SETFEATURES_SPINUP		= 0x07, /* Spin-up drive */
+	SETFEATURES_SPINUP_TIMEOUT	= 30000, /* 30s timeout for drive spin-up from PUIS */
 
 	SETFEATURES_SATA_ENABLE = 0x10, /* Enable use of SATA feature */
 	SETFEATURES_SATA_DISABLE = 0x90, /* Disable use of SATA feature */
@@ -384,7 +428,7 @@ enum {
 	SATA_SSP		= 0x06,	/* Software Settings Preservation */
 	SATA_DEVSLP		= 0x09,	/* Device Sleep */
 
-	SETFEATURE_SENSE_DATA = 0xC3, /* Sense Data Reporting feature */
+	SETFEATURE_SENSE_DATA	= 0xC3, /* Sense Data Reporting feature */
 
 	/* feature values for SET_MAX */
 	ATA_SET_MAX_ADDR	= 0x00,
@@ -488,8 +532,8 @@ enum ata_tf_protocols {
 };
 
 enum ata_ioctls {
-	ATA_IOC_GET_IO32	= 0x309,
-	ATA_IOC_SET_IO32	= 0x324,
+	ATA_IOC_GET_IO32	= 0x309, /* HDIO_GET_32BIT */
+	ATA_IOC_SET_IO32	= 0x324, /* HDIO_SET_32BIT */
 };
 
 /* core structures */
@@ -704,9 +748,19 @@ static inline bool ata_id_wcache_enabled(const u16 *id)
 
 static inline bool ata_id_has_read_log_dma_ext(const u16 *id)
 {
+	/* Word 86 must have bit 15 set */
 	if (!(id[ATA_ID_CFS_ENABLE_2] & (1 << 15)))
 		return false;
-	return id[ATA_ID_COMMAND_SET_3] & (1 << 3);
+
+	/* READ LOG DMA EXT support can be signaled either from word 119
+	 * or from word 120. The format is the same for both words: Bit
+	 * 15 must be cleared, bit 14 set and bit 3 set.
+	 */
+	if ((id[ATA_ID_COMMAND_SET_3] & 0xC008) == 0x4008 ||
+	    (id[ATA_ID_COMMAND_SET_4] & 0xC008) == 0x4008)
+		return true;
+
+	return false;
 }
 
 static inline bool ata_id_has_sense_reporting(const u16 *id)
@@ -827,6 +881,11 @@ static inline bool ata_id_has_ncq_send_and_recv(const u16 *id)
 	return id[ATA_ID_SATA_CAPABILITY_2] & BIT(6);
 }
 
+static inline bool ata_id_has_ncq_non_data(const u16 *id)
+{
+	return id[ATA_ID_SATA_CAPABILITY_2] & BIT(5);
+}
+
 static inline bool ata_id_has_trim(const u16 *id)
 {
 	if (ata_id_major_version(id) >= 7 &&
@@ -876,6 +935,11 @@ static inline bool ata_id_is_cfa(const u16 *id)
 static inline bool ata_id_is_ssd(const u16 *id)
 {
 	return id[ATA_ID_ROT_SPEED] == 0x01;
+}
+
+static inline u8 ata_id_zoned_cap(const u16 *id)
+{
+	return (id[ATA_ID_ADDITIONAL_SUPP] & 0x3);
 }
 
 static inline bool ata_id_pio_need_iordy(const u16 *id, const u8 pio)

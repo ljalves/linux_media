@@ -293,7 +293,6 @@ mips_pci_controller:
 	console_config();
 #endif
 	/* Early detection of CMP support */
-	mips_cm_probe();
 	mips_cpc_probe();
 
 	if (!register_cps_smp_ops())
@@ -302,4 +301,5 @@ mips_pci_controller:
 		return;
 	if (!register_vsmp_smp_ops())
 		return;
+	register_up_smp_ops();
 }

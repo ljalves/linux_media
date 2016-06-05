@@ -86,7 +86,7 @@ static void mxr_graph_buffer_set(struct mxr_layer *layer,
 	dma_addr_t addr = 0;
 
 	if (buf)
-		addr = vb2_dma_contig_plane_dma_addr(&buf->vb, 0);
+		addr = vb2_dma_contig_plane_dma_addr(&buf->vb.vb2_buf, 0);
 	mxr_reg_graph_buffer(layer->mdev, layer->idx, addr);
 }
 
@@ -235,7 +235,7 @@ struct mxr_layer *mxr_graph_layer_create(struct mxr_device *mdev, int idx)
 {
 	struct mxr_layer *layer;
 	int ret;
-	struct mxr_layer_ops ops = {
+	const struct mxr_layer_ops ops = {
 		.release = mxr_graph_layer_release,
 		.buffer_set = mxr_graph_buffer_set,
 		.stream_set = mxr_graph_stream_set,

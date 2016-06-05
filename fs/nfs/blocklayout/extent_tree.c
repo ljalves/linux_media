@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014 Christoph Hellwig.
+ * Copyright (c) 2014-2016 Christoph Hellwig.
  */
 
 #include <linux/vmalloc.h>
@@ -462,6 +462,14 @@ out:
 	return err;
 }
 
+static size_t ext_tree_layoutupdate_size(struct pnfs_block_layout *bl, size_t count)
+{
+	if (bl->bl_scsi_layout)
+		return sizeof(__be32) + PNFS_SCSI_RANGE_SIZE * count;
+	else
+		return sizeof(__be32) + PNFS_BLOCK_EXTENT_SIZE * count;
+}
+
 static void ext_tree_free_commitdata(struct nfs4_layoutcommit_args *arg,
 		size_t buffer_size)
 {
@@ -470,10 +478,28 @@ static void ext_tree_free_commitdata(struct nfs4_layoutcommit_args *arg,
 
 		for (i = 0; i < nr_pages; i++)
 			put_page(arg->layoutupdate_pages[i]);
+		vfree(arg->start_p);
 		kfree(arg->layoutupdate_pages);
 	} else {
 		put_page(arg->layoutupdate_page);
 	}
+}
+
+static __be32 *encode_block_extent(struct pnfs_block_extent *be, __be32 *p)
+{
+	p = xdr_encode_opaque_fixed(p, be->be_device->deviceid.data,
+			NFS4_DEVICEID4_SIZE);
+	p = xdr_encode_hyper(p, be->be_f_offset << SECTOR_SHIFT);
+	p = xdr_encode_hyper(p, be->be_length << SECTOR_SHIFT);
+	p = xdr_encode_hyper(p, 0LL);
+	*p++ = cpu_to_be32(PNFS_BLOCK_READWRITE_DATA);
+	return p;
+}
+
+static __be32 *encode_scsi_range(struct pnfs_block_extent *be, __be32 *p)
+{
+	p = xdr_encode_hyper(p, be->be_f_offset << SECTOR_SHIFT);
+	return xdr_encode_hyper(p, be->be_length << SECTOR_SHIFT);
 }
 
 static int ext_tree_encode_commit(struct pnfs_block_layout *bl, __be32 *p,
@@ -489,19 +515,16 @@ static int ext_tree_encode_commit(struct pnfs_block_layout *bl, __be32 *p,
 			continue;
 
 		(*count)++;
-		if (*count * BL_EXTENT_SIZE > buffer_size) {
+		if (ext_tree_layoutupdate_size(bl, *count) > buffer_size) {
 			/* keep counting.. */
 			ret = -ENOSPC;
 			continue;
 		}
 
-		p = xdr_encode_opaque_fixed(p, be->be_device->deviceid.data,
-				NFS4_DEVICEID4_SIZE);
-		p = xdr_encode_hyper(p, be->be_f_offset << SECTOR_SHIFT);
-		p = xdr_encode_hyper(p, be->be_length << SECTOR_SHIFT);
-		p = xdr_encode_hyper(p, 0LL);
-		*p++ = cpu_to_be32(PNFS_BLOCK_READWRITE_DATA);
-
+		if (bl->bl_scsi_layout)
+			p = encode_scsi_range(be, p);
+		else
+			p = encode_block_extent(be, p);
 		be->be_tag = EXTENT_COMMITTING;
 	}
 	spin_unlock(&bl->bl_ext_lock);
@@ -530,7 +553,7 @@ retry:
 	if (unlikely(ret)) {
 		ext_tree_free_commitdata(arg, buffer_size);
 
-		buffer_size = sizeof(__be32) + BL_EXTENT_SIZE * count;
+		buffer_size = ext_tree_layoutupdate_size(bl, count);
 		count = 0;
 
 		arg->layoutupdate_pages =
@@ -549,16 +572,18 @@ retry:
 	}
 
 	*start_p = cpu_to_be32(count);
-	arg->layoutupdate_len = sizeof(__be32) + BL_EXTENT_SIZE * count;
+	arg->layoutupdate_len = ext_tree_layoutupdate_size(bl, count);
 
 	if (unlikely(arg->layoutupdate_pages != &arg->layoutupdate_page)) {
-		__be32 *p = start_p;
+		void *p = start_p, *end = p + arg->layoutupdate_len;
+		struct page *page = NULL;
 		int i = 0;
 
-		for (p = start_p;
-		     p < start_p + arg->layoutupdate_len;
-		     p += PAGE_SIZE) {
-			arg->layoutupdate_pages[i++] = vmalloc_to_page(p);
+		arg->start_p = start_p;
+		for ( ; p < end; p += PAGE_SIZE) {
+			page = vmalloc_to_page(p);
+			arg->layoutupdate_pages[i++] = page;
+			get_page(page);
 		}
 	}
 

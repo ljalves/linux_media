@@ -36,7 +36,7 @@
 #include <linux/kthread.h>
 #include <linux/freezer.h>
 
-#include <media/tvaudio.h>
+#include <media/i2c/tvaudio.h>
 #include <media/v4l2-device.h>
 #include <media/v4l2-ctrls.h>
 
@@ -2051,7 +2051,6 @@ MODULE_DEVICE_TABLE(i2c, tvaudio_id);
 
 static struct i2c_driver tvaudio_driver = {
 	.driver = {
-		.owner	= THIS_MODULE,
 		.name	= "tvaudio",
 	},
 	.probe		= tvaudio_probe,

@@ -36,11 +36,11 @@
 #define REMOTEPROC_H
 
 #include <linux/types.h>
-#include <linux/klist.h>
 #include <linux/mutex.h>
 #include <linux/virtio.h>
 #include <linux/completion.h>
 #include <linux/idr.h>
+#include <linux/of.h>
 
 /**
  * struct resource_table - firmware resource table header
@@ -330,11 +330,13 @@ struct rproc;
  * @start:	power on the device and boot it
  * @stop:	power off the device
  * @kick:	kick a virtqueue (virtqueue id given as a parameter)
+ * @da_to_va:	optional platform hook to perform address translations
  */
 struct rproc_ops {
 	int (*start)(struct rproc *rproc);
 	int (*stop)(struct rproc *rproc);
 	void (*kick)(struct rproc *rproc, int vqid);
+	void * (*da_to_va)(struct rproc *rproc, u64 da, int len);
 };
 
 /**
@@ -363,6 +365,8 @@ enum rproc_state {
 /**
  * enum rproc_crash_type - remote processor crash types
  * @RPROC_MMUFAULT:	iommu fault
+ * @RPROC_WATCHDOG:	watchdog bite
+ * @RPROC_FATAL_ERROR	fatal error
  *
  * Each element of the enum is used as an array index. So that, the value of
  * the elements should be always something sane.
@@ -371,11 +375,13 @@ enum rproc_state {
  */
 enum rproc_crash_type {
 	RPROC_MMUFAULT,
+	RPROC_WATCHDOG,
+	RPROC_FATAL_ERROR,
 };
 
 /**
  * struct rproc - represents a physical remote processor device
- * @node: klist node of this rproc object
+ * @node: list node of this rproc object
  * @domain: iommu domain
  * @name: human readable name of the rproc
  * @firmware: name of firmware file to be loaded
@@ -407,7 +413,7 @@ enum rproc_crash_type {
  * @has_iommu: flag to indicate if remote processor is behind an MMU
  */
 struct rproc {
-	struct klist_node node;
+	struct list_head node;
 	struct iommu_domain *domain;
 	const char *name;
 	const char *firmware;
@@ -481,6 +487,7 @@ struct rproc_vdev {
 	u32 rsc_offset;
 };
 
+struct rproc *rproc_get_by_phandle(phandle phandle);
 struct rproc *rproc_alloc(struct device *dev, const char *name,
 				const struct rproc_ops *ops,
 				const char *firmware, int len);

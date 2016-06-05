@@ -242,7 +242,7 @@ static int tbs5925_read_mac_address(struct dvb_usb_device *d, u8 mac[6])
 };
 
 static int tbs5925_set_voltage(struct dvb_frontend *fe, 
-						fe_sec_voltage_t voltage)
+				enum fe_sec_voltage voltage)
 {
 	static u8 command_13v[1] = {0x00};
 	static u8 command_18v[1] = {0x01};

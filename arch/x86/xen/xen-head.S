@@ -26,7 +26,7 @@
 		      (1 << XENFEAT_auto_translated_physmap) | \
 		      (1 << XENFEAT_supervisor_mode_kernel) | \
 		      (1 << XENFEAT_hvm_callback_vector))
-/* The XENFEAT_writable_page_tables is not stricly neccessary as we set that
+/* The XENFEAT_writable_page_tables is not stricly necessary as we set that
  * up regardless whether this CONFIG option is enabled or not, but it
  * clarifies what the right flags need to be.
  */
@@ -38,13 +38,18 @@
 	__INIT
 ENTRY(startup_xen)
 	cld
-#ifdef CONFIG_X86_32
-	mov %esi,xen_start_info
-	mov $init_thread_union+THREAD_SIZE,%esp
-#else
-	mov %rsi,xen_start_info
-	mov $init_thread_union+THREAD_SIZE,%rsp
-#endif
+
+	/* Clear .bss */
+	xor %eax,%eax
+	mov $__bss_start, %_ASM_DI
+	mov $__bss_stop, %_ASM_CX
+	sub %_ASM_DI, %_ASM_CX
+	shr $__ASM_SEL(2, 3), %_ASM_CX
+	rep __ASM_SIZE(stos)
+
+	mov %_ASM_SI, xen_start_info
+	mov $init_thread_union+THREAD_SIZE, %_ASM_SP
+
 	jmp xen_start_kernel
 
 	__FINIT
@@ -104,6 +109,8 @@ ENTRY(hypercall_page)
 	ELFNOTE(Xen, XEN_ELFNOTE_VIRT_BASE,      _ASM_PTR __PAGE_OFFSET)
 #else
 	ELFNOTE(Xen, XEN_ELFNOTE_VIRT_BASE,      _ASM_PTR __START_KERNEL_map)
+	/* Map the p2m table to a 512GB-aligned user address. */
+	ELFNOTE(Xen, XEN_ELFNOTE_INIT_P2M,       .quad PGDIR_SIZE)
 #endif
 	ELFNOTE(Xen, XEN_ELFNOTE_ENTRY,          _ASM_PTR startup_xen)
 	ELFNOTE(Xen, XEN_ELFNOTE_HYPERCALL_PAGE, _ASM_PTR hypercall_page)

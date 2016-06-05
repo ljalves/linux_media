@@ -14,6 +14,7 @@
  */
 
 #include "skeleton.dtsi"
+#include "exynos-syscon-restart.dtsi"
 
 / {
 	interrupt-parent = <&gic>;
@@ -28,6 +29,11 @@
 	chipid@10000000 {
 		compatible = "samsung,exynos4210-chipid";
 		reg = <0x10000000 0x100>;
+	};
+
+	memory-controller@12250000 {
+		compatible = "samsung,exynos4210-srom";
+		reg = <0x12250000 0x14>;
 	};
 
 	combiner: interrupt-controller@10440000 {
@@ -81,14 +87,14 @@
 		interrupts = <0 54 0>;
 	};
 
-	rtc@101E0000 {
+	rtc: rtc@101E0000 {
 		compatible = "samsung,s3c6410-rtc";
 		reg = <0x101E0000 0x100>;
 		interrupts = <0 43 0>, <0 44 0>;
 		status = "disabled";
 	};
 
-	fimd@14400000 {
+	fimd: fimd@14400000 {
 		compatible = "samsung,exynos5250-fimd";
 		interrupt-parent = <&combiner>;
 		reg = <0x14400000 0x40000>;
@@ -98,7 +104,7 @@
 		status = "disabled";
 	};
 
-	dp-controller@145B0000 {
+	dp: dp-controller@145B0000 {
 		compatible = "samsung,exynos5-dp";
 		reg = <0x145B0000 0x1000>;
 		interrupts = <10 3>;

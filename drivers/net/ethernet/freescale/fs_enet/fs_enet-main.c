@@ -86,7 +86,7 @@ static int fs_enet_rx_napi(struct napi_struct *napi, int budget)
 	struct net_device *dev = fep->ndev;
 	const struct fs_platform_info *fpi = fep->fpi;
 	cbd_t __iomem *bdp;
-	struct sk_buff *skb, *skbn, *skbt;
+	struct sk_buff *skb, *skbn;
 	int received = 0;
 	u16 pkt_len, sc;
 	int curidx;
@@ -161,10 +161,7 @@ static int fs_enet_rx_napi(struct napi_struct *napi, int budget)
 					skb_reserve(skbn, 2);	/* align IP header */
 					skb_copy_from_linear_data(skb,
 						      skbn->data, pkt_len);
-					/* swap */
-					skbt = skb;
-					skb = skbn;
-					skbn = skbt;
+					swap(skb, skbn);
 				}
 			} else {
 				skbn = netdev_alloc_skb(dev, ENET_RX_FRSIZE);
@@ -490,6 +487,9 @@ static struct sk_buff *tx_skb_align_workaround(struct net_device *dev,
 {
 	struct sk_buff *new_skb;
 
+	if (skb_linearize(skb))
+		return NULL;
+
 	/* Alloc new skb */
 	new_skb = netdev_alloc_skb(dev, skb->len + 4);
 	if (!new_skb)
@@ -515,12 +515,27 @@ static int fs_enet_start_xmit(struct sk_buff *skb, struct net_device *dev)
 	cbd_t __iomem *bdp;
 	int curidx;
 	u16 sc;
-	int nr_frags = skb_shinfo(skb)->nr_frags;
+	int nr_frags;
 	skb_frag_t *frag;
 	int len;
-
 #ifdef CONFIG_FS_ENET_MPC5121_FEC
-	if (((unsigned long)skb->data) & 0x3) {
+	int is_aligned = 1;
+	int i;
+
+	if (!IS_ALIGNED((unsigned long)skb->data, 4)) {
+		is_aligned = 0;
+	} else {
+		nr_frags = skb_shinfo(skb)->nr_frags;
+		frag = skb_shinfo(skb)->frags;
+		for (i = 0; i < nr_frags; i++, frag++) {
+			if (!IS_ALIGNED(frag->page_offset, 4)) {
+				is_aligned = 0;
+				break;
+			}
+		}
+	}
+
+	if (!is_aligned) {
 		skb = tx_skb_align_workaround(dev, skb);
 		if (!skb) {
 			/*
@@ -532,6 +547,7 @@ static int fs_enet_start_xmit(struct sk_buff *skb, struct net_device *dev)
 		}
 	}
 #endif
+
 	spin_lock(&fep->tx_lock);
 
 	/*
@@ -539,6 +555,7 @@ static int fs_enet_start_xmit(struct sk_buff *skb, struct net_device *dev)
 	 */
 	bdp = fep->cur_tx;
 
+	nr_frags = skb_shinfo(skb)->nr_frags;
 	if (fep->tx_free <= nr_frags || (CBDR_SC(bdp) & BD_ENET_TX_READY)) {
 		netif_stop_queue(dev);
 		spin_unlock(&fep->tx_lock);
@@ -569,7 +586,8 @@ static int fs_enet_start_xmit(struct sk_buff *skb, struct net_device *dev)
 	frag = skb_shinfo(skb)->frags;
 	while (nr_frags) {
 		CBDC_SC(bdp,
-			BD_ENET_TX_STATS | BD_ENET_TX_LAST | BD_ENET_TX_TC);
+			BD_ENET_TX_STATS | BD_ENET_TX_INTR | BD_ENET_TX_LAST |
+			BD_ENET_TX_TC);
 		CBDS_SC(bdp, BD_ENET_TX_READY);
 
 		if ((CBDR_SC(bdp) & BD_ENET_TX_WRAP) == 0)
@@ -634,13 +652,13 @@ static void fs_timeout(struct net_device *dev)
 	spin_lock_irqsave(&fep->lock, flags);
 
 	if (dev->flags & IFF_UP) {
-		phy_stop(fep->phydev);
+		phy_stop(dev->phydev);
 		(*fep->ops->stop)(dev);
 		(*fep->ops->restart)(dev);
-		phy_start(fep->phydev);
+		phy_start(dev->phydev);
 	}
 
-	phy_start(fep->phydev);
+	phy_start(dev->phydev);
 	wake = fep->tx_free && !(CBDR_SC(fep->cur_tx) & BD_ENET_TX_READY);
 	spin_unlock_irqrestore(&fep->lock, flags);
 
@@ -654,7 +672,7 @@ static void fs_timeout(struct net_device *dev)
 static void generic_adjust_link(struct  net_device *dev)
 {
 	struct fs_enet_private *fep = netdev_priv(dev);
-	struct phy_device *phydev = fep->phydev;
+	struct phy_device *phydev = dev->phydev;
 	int new_state = 0;
 
 	if (phydev->link) {
@@ -723,8 +741,6 @@ static int fs_init_phy(struct net_device *dev)
 		return -ENODEV;
 	}
 
-	fep->phydev = phydev;
-
 	return 0;
 }
 
@@ -758,7 +774,7 @@ static int fs_enet_open(struct net_device *dev)
 		napi_disable(&fep->napi_tx);
 		return err;
 	}
-	phy_start(fep->phydev);
+	phy_start(dev->phydev);
 
 	netif_start_queue(dev);
 
@@ -774,7 +790,7 @@ static int fs_enet_close(struct net_device *dev)
 	netif_carrier_off(dev);
 	napi_disable(&fep->napi);
 	napi_disable(&fep->napi_tx);
-	phy_stop(fep->phydev);
+	phy_stop(dev->phydev);
 
 	spin_lock_irqsave(&fep->lock, flags);
 	spin_lock(&fep->tx_lock);
@@ -783,8 +799,7 @@ static int fs_enet_close(struct net_device *dev)
 	spin_unlock_irqrestore(&fep->lock, flags);
 
 	/* release any irqs */
-	phy_disconnect(fep->phydev);
-	fep->phydev = NULL;
+	phy_disconnect(dev->phydev);
 	free_irq(fep->interrupt, dev);
 
 	return 0;
@@ -829,26 +844,6 @@ static void fs_get_regs(struct net_device *dev, struct ethtool_regs *regs,
 		regs->version = 0;
 }
 
-static int fs_get_settings(struct net_device *dev, struct ethtool_cmd *cmd)
-{
-	struct fs_enet_private *fep = netdev_priv(dev);
-
-	if (!fep->phydev)
-		return -ENODEV;
-
-	return phy_ethtool_gset(fep->phydev, cmd);
-}
-
-static int fs_set_settings(struct net_device *dev, struct ethtool_cmd *cmd)
-{
-	struct fs_enet_private *fep = netdev_priv(dev);
-
-	if (!fep->phydev)
-		return -ENODEV;
-
-	return phy_ethtool_sset(fep->phydev, cmd);
-}
-
 static int fs_nway_reset(struct net_device *dev)
 {
 	return 0;
@@ -869,24 +864,22 @@ static void fs_set_msglevel(struct net_device *dev, u32 value)
 static const struct ethtool_ops fs_ethtool_ops = {
 	.get_drvinfo = fs_get_drvinfo,
 	.get_regs_len = fs_get_regs_len,
-	.get_settings = fs_get_settings,
-	.set_settings = fs_set_settings,
 	.nway_reset = fs_nway_reset,
 	.get_link = ethtool_op_get_link,
 	.get_msglevel = fs_get_msglevel,
 	.set_msglevel = fs_set_msglevel,
 	.get_regs = fs_get_regs,
 	.get_ts_info = ethtool_op_get_ts_info,
+	.get_link_ksettings = phy_ethtool_get_link_ksettings,
+	.set_link_ksettings = phy_ethtool_set_link_ksettings,
 };
 
 static int fs_ioctl(struct net_device *dev, struct ifreq *rq, int cmd)
 {
-	struct fs_enet_private *fep = netdev_priv(dev);
-
 	if (!netif_running(dev))
 		return -EINVAL;
 
-	return phy_mii_ioctl(fep->phydev, rq, cmd);
+	return phy_mii_ioctl(dev->phydev, rq, cmd);
 }
 
 extern int fs_mii_connect(struct net_device *dev);
@@ -1032,7 +1025,7 @@ static int fs_enet_probe(struct platform_device *ofdev)
 	ndev->netdev_ops = &fs_enet_netdev_ops;
 	ndev->watchdog_timeo = 2 * HZ;
 	netif_napi_add(ndev, &fep->napi, fs_enet_rx_napi, fpi->napi_weight);
-	netif_napi_add(ndev, &fep->napi_tx, fs_enet_tx_napi, 2);
+	netif_tx_napi_add(ndev, &fep->napi_tx, fs_enet_tx_napi, 2);
 
 	ndev->ethtool_ops = &fs_ethtool_ops;
 

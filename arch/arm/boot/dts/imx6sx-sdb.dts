@@ -18,12 +18,14 @@
 		996000  1250000
 		792000  1175000
 		396000  1175000
+		198000  1175000
 		>;
 	fsl,soc-operating-points = <
 		/* ARM kHz      SOC uV */
 		996000	1250000
 		792000	1175000
 		396000	1175000
+		198000  1175000
 	>;
 };
 
@@ -130,7 +132,7 @@
 	flash0: n25q256a@0 {
 		#address-cells = <1>;
 		#size-cells = <1>;
-		compatible = "micron,n25q256a";
+		compatible = "micron,n25q256a", "jedec,spi-nor";
 		spi-max-frequency = <29000000>;
 		reg = <0>;
 	};
@@ -138,7 +140,7 @@
 	flash1: n25q256a@1 {
 		#address-cells = <1>;
 		#size-cells = <1>;
-		compatible = "micron,n25q256a";
+		compatible = "micron,n25q256a", "jedec,spi-nor";
 		spi-max-frequency = <29000000>;
 		reg = <1>;
 	};

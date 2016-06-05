@@ -302,9 +302,10 @@ static void sg_complete(struct urb *urb)
 		 */
 		spin_unlock(&io->lock);
 		for (i = 0, found = 0; i < io->entries; i++) {
-			if (!io->urbs[i] || !io->urbs[i]->dev)
+			if (!io->urbs[i])
 				continue;
 			if (found) {
+				usb_block_urb(io->urbs[i]);
 				retval = usb_unlink_urb(io->urbs[i]);
 				if (retval != -EINPROGRESS &&
 				    retval != -ENODEV &&
@@ -515,12 +516,10 @@ void usb_sg_wait(struct usb_sg_request *io)
 		int retval;
 
 		io->urbs[i]->dev = io->dev;
-		retval = usb_submit_urb(io->urbs[i], GFP_ATOMIC);
-
-		/* after we submit, let completions or cancellations fire;
-		 * we handshake using io->status.
-		 */
 		spin_unlock_irq(&io->lock);
+
+		retval = usb_submit_urb(io->urbs[i], GFP_NOIO);
+
 		switch (retval) {
 			/* maybe we retrying will recover */
 		case -ENXIO:	/* hc didn't queue this one */
@@ -578,31 +577,28 @@ EXPORT_SYMBOL_GPL(usb_sg_wait);
 void usb_sg_cancel(struct usb_sg_request *io)
 {
 	unsigned long flags;
+	int i, retval;
 
 	spin_lock_irqsave(&io->lock, flags);
-
-	/* shut everything down, if it didn't already */
-	if (!io->status) {
-		int i;
-
-		io->status = -ECONNRESET;
-		spin_unlock(&io->lock);
-		for (i = 0; i < io->entries; i++) {
-			int retval;
-
-			if (!io->urbs[i]->dev)
-				continue;
-			retval = usb_unlink_urb(io->urbs[i]);
-			if (retval != -EINPROGRESS
-					&& retval != -ENODEV
-					&& retval != -EBUSY
-					&& retval != -EIDRM)
-				dev_warn(&io->dev->dev, "%s, unlink --> %d\n",
-					__func__, retval);
-		}
-		spin_lock(&io->lock);
+	if (io->status) {
+		spin_unlock_irqrestore(&io->lock, flags);
+		return;
 	}
+	/* shut everything down */
+	io->status = -ECONNRESET;
 	spin_unlock_irqrestore(&io->lock, flags);
+
+	for (i = io->entries - 1; i >= 0; --i) {
+		usb_block_urb(io->urbs[i]);
+
+		retval = usb_unlink_urb(io->urbs[i]);
+		if (retval != -EINPROGRESS
+		    && retval != -ENODEV
+		    && retval != -EBUSY
+		    && retval != -EIDRM)
+			dev_warn(&io->dev->dev, "%s, unlink --> %d\n",
+				 __func__, retval);
+	}
 }
 EXPORT_SYMBOL_GPL(usb_sg_cancel);
 
@@ -1387,8 +1383,6 @@ int usb_set_interface(struct usb_device *dev, int interface, int alternate)
 	 * new altsetting.
 	 */
 	if (manual) {
-		int i;
-
 		for (i = 0; i < alt->desc.bNumEndpoints; i++) {
 			epaddr = alt->endpoint[i].desc.bEndpointAddress;
 			pipe = __create_pipe(dev,
@@ -1553,6 +1547,44 @@ static void usb_release_interface(struct device *dev)
 	kref_put(&intfc->ref, usb_release_interface_cache);
 	usb_put_dev(interface_to_usbdev(intf));
 	kfree(intf);
+}
+
+/*
+ * usb_deauthorize_interface - deauthorize an USB interface
+ *
+ * @intf: USB interface structure
+ */
+void usb_deauthorize_interface(struct usb_interface *intf)
+{
+	struct device *dev = &intf->dev;
+
+	device_lock(dev->parent);
+
+	if (intf->authorized) {
+		device_lock(dev);
+		intf->authorized = 0;
+		device_unlock(dev);
+
+		usb_forced_unbind_intf(intf);
+	}
+
+	device_unlock(dev->parent);
+}
+
+/*
+ * usb_authorize_interface - authorize an USB interface
+ *
+ * @intf: USB interface structure
+ */
+void usb_authorize_interface(struct usb_interface *intf)
+{
+	struct device *dev = &intf->dev;
+
+	if (!intf->authorized) {
+		device_lock(dev);
+		intf->authorized = 1; /* authorize interface */
+		device_unlock(dev);
+	}
 }
 
 static int usb_if_uevent(struct device *dev, struct kobj_uevent_env *env)
@@ -1807,6 +1839,7 @@ free_interfaces:
 		intfc = cp->intf_cache[i];
 		intf->altsetting = intfc->altsetting;
 		intf->num_altsetting = intfc->num_altsetting;
+		intf->authorized = !!HCD_INTF_AUTHORIZED(hcd);
 		kref_get(&intfc->ref);
 
 		alt = usb_altnum_to_altsetting(intf, 0);

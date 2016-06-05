@@ -156,10 +156,6 @@ static void vfp_thread_copy(struct thread_info *thread)
  *   - we could be preempted if tree preempt rcu is enabled, so
  *	it is unsafe to use thread->cpu.
  *  THREAD_NOTIFY_EXIT
- *   - the thread (v) will be running on the local CPU, so
- *	v === current_thread_info()
- *   - thread->cpu is the local CPU number at the time it is accessed,
- *	but may change at any time.
  *   - we could be preempted if tree preempt rcu is enabled, so
  *	it is unsafe to use thread->cpu.
  */
@@ -443,6 +439,19 @@ static void vfp_enable(void *unused)
 	 * Enable full access to VFP (cp10 and cp11)
 	 */
 	set_copro_access(access | CPACC_FULL(10) | CPACC_FULL(11));
+}
+
+/* Called by platforms on which we want to disable VFP because it may not be
+ * present on all CPUs within a SMP complex. Needs to be called prior to
+ * vfp_init().
+ */
+void vfp_disable(void)
+{
+	if (VFP_arch) {
+		pr_debug("%s: should be called prior to vfp_init\n", __func__);
+		return;
+	}
+	VFP_arch = 1;
 }
 
 #ifdef CONFIG_CPU_PM

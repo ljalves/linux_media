@@ -16,6 +16,10 @@
 #ifndef __ASM_HW_BREAKPOINT_H
 #define __ASM_HW_BREAKPOINT_H
 
+#include <asm/cputype.h>
+#include <asm/cpufeature.h>
+#include <asm/virt.h>
+
 #ifdef __KERNEL__
 
 struct arch_hw_breakpoint_ctrl {
@@ -32,10 +36,21 @@ struct arch_hw_breakpoint {
 	struct arch_hw_breakpoint_ctrl ctrl;
 };
 
+/* Privilege Levels */
+#define AARCH64_BREAKPOINT_EL1	1
+#define AARCH64_BREAKPOINT_EL0	2
+
+#define DBG_HMC_HYP		(1 << 13)
+
 static inline u32 encode_ctrl_reg(struct arch_hw_breakpoint_ctrl ctrl)
 {
-	return (ctrl.len << 5) | (ctrl.type << 3) | (ctrl.privilege << 1) |
+	u32 val = (ctrl.len << 5) | (ctrl.type << 3) | (ctrl.privilege << 1) |
 		ctrl.enabled;
+
+	if (is_kernel_in_hyp_mode() && ctrl.privilege == AARCH64_BREAKPOINT_EL1)
+		val |= DBG_HMC_HYP;
+
+	return val;
 }
 
 static inline void decode_ctrl_reg(u32 reg,
@@ -57,10 +72,6 @@ static inline void decode_ctrl_reg(u32 reg,
 #define ARM_BREAKPOINT_LOAD	1
 #define ARM_BREAKPOINT_STORE	2
 #define AARCH64_ESR_ACCESS_MASK	(1 << 6)
-
-/* Privilege Levels */
-#define AARCH64_BREAKPOINT_EL1	1
-#define AARCH64_BREAKPOINT_EL0	2
 
 /* Lengths */
 #define ARM_BREAKPOINT_LEN_1	0x1
@@ -131,6 +142,24 @@ static inline void ptrace_hw_copy_thread(struct task_struct *task)
 #endif
 
 extern struct pmu perf_ops_bp;
+
+/* Determine number of BRP registers available. */
+static inline int get_num_brps(void)
+{
+	u64 dfr0 = read_system_reg(SYS_ID_AA64DFR0_EL1);
+	return 1 +
+		cpuid_feature_extract_unsigned_field(dfr0,
+						ID_AA64DFR0_BRPS_SHIFT);
+}
+
+/* Determine number of WRP registers available. */
+static inline int get_num_wrps(void)
+{
+	u64 dfr0 = read_system_reg(SYS_ID_AA64DFR0_EL1);
+	return 1 +
+		cpuid_feature_extract_unsigned_field(dfr0,
+						ID_AA64DFR0_WRPS_SHIFT);
+}
 
 #endif	/* __KERNEL__ */
 #endif	/* __ASM_BREAKPOINT_H */

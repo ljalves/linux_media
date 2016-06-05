@@ -35,7 +35,7 @@ struct af9033_dev {
 	bool ts_mode_parallel;
 	bool ts_mode_serial;
 
-	fe_status_t fe_status;
+	enum fe_status fe_status;
 	u64 post_bit_error_prev; /* for old read_ber we return (curr - prev) */
 	u64 post_bit_error;
 	u64 post_bit_count;
@@ -691,10 +691,10 @@ err:
 	return ret;
 }
 
-static int af9033_get_frontend(struct dvb_frontend *fe)
+static int af9033_get_frontend(struct dvb_frontend *fe,
+			       struct dtv_frontend_properties *c)
 {
 	struct af9033_dev *dev = fe->demodulator_priv;
-	struct dtv_frontend_properties *c = &fe->dtv_property_cache;
 	int ret;
 	u8 buf[8];
 
@@ -818,7 +818,7 @@ err:
 	return ret;
 }
 
-static int af9033_read_status(struct dvb_frontend *fe, fe_status_t *status)
+static int af9033_read_status(struct dvb_frontend *fe, enum fe_status *status)
 {
 	struct af9033_dev *dev = fe->demodulator_priv;
 	int ret;
@@ -1372,6 +1372,9 @@ static int af9033_remove(struct i2c_client *client)
 
 	dev_dbg(&dev->client->dev, "\n");
 
+	/* stop statistics polling */
+	cancel_delayed_work_sync(&dev->stat_work);
+
 	dev->fe.ops.release = NULL;
 	dev->fe.demodulator_priv = NULL;
 	kfree(dev);
@@ -1387,7 +1390,6 @@ MODULE_DEVICE_TABLE(i2c, af9033_id_table);
 
 static struct i2c_driver af9033_driver = {
 	.driver = {
-		.owner	= THIS_MODULE,
 		.name	= "af9033",
 	},
 	.probe		= af9033_probe,

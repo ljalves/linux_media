@@ -69,6 +69,7 @@
 #include <asm/kvm_ppc.h>
 #include <asm/hugetlb.h>
 #include <asm/epapr_hcalls.h>
+#include <asm/livepatch.h>
 
 #ifdef DEBUG
 #define DBG(fmt...) udbg_printf(fmt)
@@ -107,6 +108,14 @@ static void setup_tlb_core_data(void)
 
 	for_each_possible_cpu(cpu) {
 		int first = cpu_first_thread_sibling(cpu);
+
+		/*
+		 * If we boot via kdump on a non-primary thread,
+		 * make sure we point at the thread that actually
+		 * set up this TLB.
+		 */
+		if (cpu_first_thread_sibling(boot_cpuid) == first)
+			first = boot_cpuid;
 
 		paca[cpu].tcd_ptr = &paca[first].tcd;
 
@@ -247,9 +256,6 @@ void __init early_setup(unsigned long dt_ptr)
 	setup_paca(&boot_paca);
 	fixup_boot_paca();
 
-	/* Initialize lockdep early or else spinlocks will blow */
-	lockdep_init();
-
 	/* -------- printk is now safe to use ------- */
 
 	/* Enable early debugging if any specified (see udbg.h) */
@@ -332,10 +338,25 @@ void early_setup_secondary(void)
 #endif /* CONFIG_SMP */
 
 #if defined(CONFIG_SMP) || defined(CONFIG_KEXEC)
+static bool use_spinloop(void)
+{
+	if (!IS_ENABLED(CONFIG_PPC_BOOK3E))
+		return true;
+
+	/*
+	 * When book3e boots from kexec, the ePAPR spin table does
+	 * not get used.
+	 */
+	return of_property_read_bool(of_chosen, "linux,booted-from-kexec");
+}
+
 void smp_release_cpus(void)
 {
 	unsigned long *ptr;
 	int i;
+
+	if (!use_spinloop())
+		return;
 
 	DBG(" -> smp_release_cpus()\n");
 
@@ -516,14 +537,15 @@ void __init setup_system(void)
 	 * Freescale Book3e parts spin in a loop provided by firmware,
 	 * so smp_release_cpus() does nothing for them
 	 */
-#if defined(CONFIG_SMP) && !defined(CONFIG_PPC_FSL_BOOK3E)
+#if defined(CONFIG_SMP)
 	/* Release secondary cpus out of their spinloops at 0x60 now that
 	 * we can map physical -> logical CPU ids
 	 */
 	smp_release_cpus();
 #endif
 
-	pr_info("Starting Linux PPC64 %s\n", init_utsname()->version);
+	pr_info("Starting Linux %s %s\n", init_utsname()->machine,
+		 init_utsname()->version);
 
 	pr_info("-----------------------------------------------------\n");
 	pr_info("ppc64_pft_size    = 0x%llx\n", ppc64_pft_size);
@@ -646,16 +668,16 @@ static void __init emergency_stack_init(void)
 	limit = min(safe_stack_limit(), ppc64_rma_size);
 
 	for_each_possible_cpu(i) {
-		unsigned long sp;
-		sp  = memblock_alloc_base(THREAD_SIZE, THREAD_SIZE, limit);
-		sp += THREAD_SIZE;
-		paca[i].emergency_sp = __va(sp);
+		struct thread_info *ti;
+		ti = __va(memblock_alloc_base(THREAD_SIZE, THREAD_SIZE, limit));
+		klp_init_thread_info(ti);
+		paca[i].emergency_sp = (void *)ti + THREAD_SIZE;
 
 #ifdef CONFIG_PPC_BOOK3S_64
 		/* emergency stack for machine check exception handling. */
-		sp  = memblock_alloc_base(THREAD_SIZE, THREAD_SIZE, limit);
-		sp += THREAD_SIZE;
-		paca[i].mc_emergency_sp = __va(sp);
+		ti = __va(memblock_alloc_base(THREAD_SIZE, THREAD_SIZE, limit));
+		klp_init_thread_info(ti);
+		paca[i].mc_emergency_sp = (void *)ti + THREAD_SIZE;
 #endif
 	}
 }
@@ -679,12 +701,17 @@ void __init setup_arch(char **cmdline_p)
 	if (ppc_md.panic)
 		setup_panic();
 
+	klp_init_thread_info(&init_thread_info);
+
 	init_mm.start_code = (unsigned long)_stext;
 	init_mm.end_code = (unsigned long) _etext;
 	init_mm.end_data = (unsigned long) _edata;
 	init_mm.brk = klimit;
 #ifdef CONFIG_PPC_64K_PAGES
 	init_mm.context.pte_frag = NULL;
+#endif
+#ifdef CONFIG_SPAPR_TCE_IOMMU
+	mm_iommu_init(&init_mm.context);
 #endif
 	irqstack_early_init();
 	exc_lvl_early_init();

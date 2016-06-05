@@ -13,7 +13,6 @@
 
 #include <linux/module.h>
 #include <linux/moduleparam.h>
-#include <linux/version.h>
 #include <linux/kernel.h>
 #include <linux/init.h>
 #include <linux/delay.h>
@@ -75,33 +74,8 @@ static const struct reg_default cs35l32_reg_defaults[] = {
 static bool cs35l32_readable_register(struct device *dev, unsigned int reg)
 {
 	switch (reg) {
-	case CS35L32_DEVID_AB:
-	case CS35L32_DEVID_CD:
-	case CS35L32_DEVID_E:
-	case CS35L32_FAB_ID:
-	case CS35L32_REV_ID:
-	case CS35L32_PWRCTL1:
-	case CS35L32_PWRCTL2:
-	case CS35L32_CLK_CTL:
-	case CS35L32_BATT_THRESHOLD:
-	case CS35L32_VMON:
-	case CS35L32_BST_CPCP_CTL:
-	case CS35L32_IMON_SCALING:
-	case CS35L32_AUDIO_LED_MNGR:
-	case CS35L32_ADSP_CTL:
-	case CS35L32_CLASSD_CTL:
-	case CS35L32_PROTECT_CTL:
-	case CS35L32_INT_MASK_1:
-	case CS35L32_INT_MASK_2:
-	case CS35L32_INT_MASK_3:
-	case CS35L32_INT_STATUS_1:
-	case CS35L32_INT_STATUS_2:
-	case CS35L32_INT_STATUS_3:
-	case CS35L32_LED_STATUS:
-	case CS35L32_FLASH_MODE:
-	case CS35L32_MOVIE_MODE:
-	case CS35L32_FLASH_TIMER:
-	case CS35L32_FLASH_INHIBIT:
+	case CS35L32_DEVID_AB ... CS35L32_AUDIO_LED_MNGR:
+	case CS35L32_ADSP_CTL ... CS35L32_FLASH_INHIBIT:
 		return true;
 	default:
 		return false;
@@ -111,15 +85,8 @@ static bool cs35l32_readable_register(struct device *dev, unsigned int reg)
 static bool cs35l32_volatile_register(struct device *dev, unsigned int reg)
 {
 	switch (reg) {
-	case CS35L32_DEVID_AB:
-	case CS35L32_DEVID_CD:
-	case CS35L32_DEVID_E:
-	case CS35L32_FAB_ID:
-	case CS35L32_REV_ID:
-	case CS35L32_INT_STATUS_1:
-	case CS35L32_INT_STATUS_2:
-	case CS35L32_INT_STATUS_3:
-	case CS35L32_LED_STATUS:
+	case CS35L32_DEVID_AB ... CS35L32_REV_ID:
+	case CS35L32_INT_STATUS_1 ... CS35L32_LED_STATUS:
 		return true;
 	default:
 		return false;
@@ -129,10 +96,7 @@ static bool cs35l32_volatile_register(struct device *dev, unsigned int reg)
 static bool cs35l32_precious_register(struct device *dev, unsigned int reg)
 {
 	switch (reg) {
-	case CS35L32_INT_STATUS_1:
-	case CS35L32_INT_STATUS_2:
-	case CS35L32_INT_STATUS_3:
-	case CS35L32_LED_STATUS:
+	case CS35L32_INT_STATUS_1 ... CS35L32_LED_STATUS:
 		return true;
 	default:
 		return false;
@@ -277,7 +241,7 @@ static const struct snd_soc_codec_driver soc_codec_dev_cs35l32 = {
 };
 
 /* Current and threshold powerup sequence Pg37 in datasheet */
-static const struct reg_default cs35l32_monitor_patch[] = {
+static const struct reg_sequence cs35l32_monitor_patch[] = {
 
 	{ 0x00, 0x99 },
 	{ 0x48, 0x17 },
@@ -310,7 +274,9 @@ static int cs35l32_handle_of_data(struct i2c_client *i2c_client,
 	if (of_property_read_u32(np, "cirrus,sdout-share", &val) >= 0)
 		pdata->sdout_share = val;
 
-	of_property_read_u32(np, "cirrus,boost-manager", &val);
+	if (of_property_read_u32(np, "cirrus,boost-manager", &val))
+		val = -1u;
+
 	switch (val) {
 	case CS35L32_BOOST_MGR_AUTO:
 	case CS35L32_BOOST_MGR_AUTO_AUDIO:
@@ -318,13 +284,15 @@ static int cs35l32_handle_of_data(struct i2c_client *i2c_client,
 	case CS35L32_BOOST_MGR_FIXED:
 		pdata->boost_mng = val;
 		break;
+	case -1u:
 	default:
 		dev_err(&i2c_client->dev,
 			"Wrong cirrus,boost-manager DT value %d\n", val);
 		pdata->boost_mng = CS35L32_BOOST_MGR_BYPASS;
 	}
 
-	of_property_read_u32(np, "cirrus,sdout-datacfg", &val);
+	if (of_property_read_u32(np, "cirrus,sdout-datacfg", &val))
+		val = -1u;
 	switch (val) {
 	case CS35L32_DATA_CFG_LR_VP:
 	case CS35L32_DATA_CFG_LR_STAT:
@@ -332,13 +300,15 @@ static int cs35l32_handle_of_data(struct i2c_client *i2c_client,
 	case CS35L32_DATA_CFG_LR_VPSTAT:
 		pdata->sdout_datacfg = val;
 		break;
+	case -1u:
 	default:
 		dev_err(&i2c_client->dev,
 			"Wrong cirrus,sdout-datacfg DT value %d\n", val);
 		pdata->sdout_datacfg = CS35L32_DATA_CFG_LR;
 	}
 
-	of_property_read_u32(np, "cirrus,battery-threshold", &val);
+	if (of_property_read_u32(np, "cirrus,battery-threshold", &val))
+		val = -1u;
 	switch (val) {
 	case CS35L32_BATT_THRESH_3_1V:
 	case CS35L32_BATT_THRESH_3_2V:
@@ -346,13 +316,15 @@ static int cs35l32_handle_of_data(struct i2c_client *i2c_client,
 	case CS35L32_BATT_THRESH_3_4V:
 		pdata->batt_thresh = val;
 		break;
+	case -1u:
 	default:
 		dev_err(&i2c_client->dev,
 			"Wrong cirrus,battery-threshold DT value %d\n", val);
 		pdata->batt_thresh = CS35L32_BATT_THRESH_3_3V;
 	}
 
-	of_property_read_u32(np, "cirrus,battery-recovery", &val);
+	if (of_property_read_u32(np, "cirrus,battery-recovery", &val))
+		val = -1u;
 	switch (val) {
 	case CS35L32_BATT_RECOV_3_1V:
 	case CS35L32_BATT_RECOV_3_2V:
@@ -362,6 +334,7 @@ static int cs35l32_handle_of_data(struct i2c_client *i2c_client,
 	case CS35L32_BATT_RECOV_3_6V:
 		pdata->batt_recov = val;
 		break;
+	case -1u:
 	default:
 		dev_err(&i2c_client->dev,
 			"Wrong cirrus,battery-recovery DT value %d\n", val);
@@ -442,8 +415,7 @@ static int cs35l32_i2c_probe(struct i2c_client *i2c_client,
 	if (IS_ERR(cs35l32->reset_gpio))
 		return PTR_ERR(cs35l32->reset_gpio);
 
-	if (cs35l32->reset_gpio)
-		gpiod_set_value_cansleep(cs35l32->reset_gpio, 1);
+	gpiod_set_value_cansleep(cs35l32->reset_gpio, 1);
 
 	/* initialize codec */
 	ret = regmap_read(cs35l32->regmap, CS35L32_DEVID_AB, &reg);
@@ -537,8 +509,7 @@ static int cs35l32_i2c_remove(struct i2c_client *i2c_client)
 	snd_soc_unregister_codec(&i2c_client->dev);
 
 	/* Hold down reset */
-	if (cs35l32->reset_gpio)
-		gpiod_set_value_cansleep(cs35l32->reset_gpio, 0);
+	gpiod_set_value_cansleep(cs35l32->reset_gpio, 0);
 
 	return 0;
 }
@@ -552,8 +523,7 @@ static int cs35l32_runtime_suspend(struct device *dev)
 	regcache_mark_dirty(cs35l32->regmap);
 
 	/* Hold down reset */
-	if (cs35l32->reset_gpio)
-		gpiod_set_value_cansleep(cs35l32->reset_gpio, 0);
+	gpiod_set_value_cansleep(cs35l32->reset_gpio, 0);
 
 	/* remove power */
 	regulator_bulk_disable(ARRAY_SIZE(cs35l32->supplies),
@@ -576,8 +546,7 @@ static int cs35l32_runtime_resume(struct device *dev)
 		return ret;
 	}
 
-	if (cs35l32->reset_gpio)
-		gpiod_set_value_cansleep(cs35l32->reset_gpio, 1);
+	gpiod_set_value_cansleep(cs35l32->reset_gpio, 1);
 
 	regcache_cache_only(cs35l32->regmap, false);
 	regcache_sync(cs35l32->regmap);
@@ -608,7 +577,6 @@ MODULE_DEVICE_TABLE(i2c, cs35l32_id);
 static struct i2c_driver cs35l32_i2c_driver = {
 	.driver = {
 		   .name = "cs35l32",
-		   .owner = THIS_MODULE,
 		   .pm = &cs35l32_runtime_pm,
 		   .of_match_table = cs35l32_of_match,
 		   },

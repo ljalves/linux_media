@@ -66,6 +66,7 @@
 #include <asm/udbg.h>
 #include <asm/smp.h>
 #include <asm/debug.h>
+#include <asm/livepatch.h>
 
 #ifdef CONFIG_PPC64
 #include <asm/paca.h>
@@ -441,7 +442,7 @@ void migrate_irqs(void)
 
 		chip = irq_data_get_irq_chip(data);
 
-		cpumask_and(mask, data->affinity, map);
+		cpumask_and(mask, irq_data_get_affinity_mask(data), map);
 		if (cpumask_any(mask) >= nr_cpu_ids) {
 			pr_warn("Breaking affinity for irq %i\n", irq);
 			cpumask_copy(mask, map);
@@ -607,10 +608,12 @@ void irq_ctx_init(void)
 		memset((void *)softirq_ctx[i], 0, THREAD_SIZE);
 		tp = softirq_ctx[i];
 		tp->cpu = i;
+		klp_init_thread_info(tp);
 
 		memset((void *)hardirq_ctx[i], 0, THREAD_SIZE);
 		tp = hardirq_ctx[i];
 		tp->cpu = i;
+		klp_init_thread_info(tp);
 	}
 }
 

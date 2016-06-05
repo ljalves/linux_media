@@ -11,6 +11,7 @@
  *  it under the terms of the GNU General Public License version 2 as
  *  published by the Free Software Foundation.
  */
+#include <linux/clkdev.h>
 #include <linux/gpio.h>
 #include <linux/gpio/machine.h>
 #include <linux/module.h>
@@ -46,18 +47,17 @@
 
 #include <asm/hardware/sa1111.h>
 
-#include <mach/pxa25x.h>
+#include "pxa25x.h"
 #include <mach/audio.h>
 #include <mach/lubbock.h>
-#include <mach/udc.h>
+#include "udc.h"
 #include <linux/platform_data/irda-pxaficp.h>
 #include <linux/platform_data/video-pxafb.h>
 #include <linux/platform_data/mmc-pxamci.h>
-#include <mach/pm.h>
+#include "pm.h"
 #include <mach/smemc.h>
 
 #include "generic.h"
-#include "clock.h"
 #include "devices.h"
 
 static unsigned long lubbock_pin_config[] __initdata = {
@@ -101,6 +101,9 @@ static unsigned long lubbock_pin_config[] __initdata = {
 	/* MMC */
 	GPIO6_MMC_CLK,
 	GPIO8_MMC_CS0,
+
+	/* SA1111 chip */
+	GPIO11_3_6MHz,
 
 	/* wakeup */
 	GPIO1_GPIO | WAKEUP_ON_EDGE_RISE,

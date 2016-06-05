@@ -25,6 +25,7 @@
 
 #include <media/v4l2-common.h>
 #include <media/videobuf-vmalloc.h>
+#include <media/tuner.h>
 
 #include "xc5000.h"
 #include "s5h1432.h"
@@ -630,10 +631,15 @@ static int register_dvb(struct cx231xx_dvb *dvb,
 
 	/* register network adapter */
 	dvb_net_init(&dvb->adapter, &dvb->net, &dvb->demux.dmx);
-	dvb_create_media_graph(&dvb->adapter);
+	result = dvb_create_media_graph(&dvb->adapter,
+					dev->tuner_type == TUNER_ABSENT);
+	if (result < 0)
+		goto fail_create_graph;
 
 	return 0;
 
+fail_create_graph:
+	dvb_net_release(&dvb->net);
 fail_fe_conn:
 	dvb->demux.dmx.remove_frontend(&dvb->demux.dmx, &dvb->fe_mem);
 fail_fe_mem:
@@ -808,7 +814,7 @@ static int dvb_init(struct cx231xx *dev)
 
 		dev->dvb[i]->frontend = dvb_attach(lgdt3305_attach,
 						&hcw_lgdt3305_config,
-						tuner_i2c);
+						demod_i2c);
 
 		if (dev->dvb[i]->frontend == NULL) {
 			dev_err(dev->dev,
@@ -829,7 +835,7 @@ static int dvb_init(struct cx231xx *dev)
 
 		dev->dvb[i]->frontend = dvb_attach(si2165_attach,
 			&hauppauge_930C_HD_1113xx_si2165_config,
-			tuner_i2c
+			demod_i2c
 			);
 
 		if (dev->dvb[i]->frontend == NULL) {
@@ -862,7 +868,7 @@ static int dvb_init(struct cx231xx *dev)
 
 		dev->dvb[i]->frontend = dvb_attach(si2165_attach,
 			&pctv_quatro_stick_1114xx_si2165_config,
-			tuner_i2c
+			demod_i2c
 			);
 
 		if (dev->dvb[i]->frontend == NULL) {
@@ -880,6 +886,9 @@ static int dvb_init(struct cx231xx *dev)
 		/* attach tuner */
 		memset(&si2157_config, 0, sizeof(si2157_config));
 		si2157_config.fe = dev->dvb[i]->frontend;
+#ifdef CONFIG_MEDIA_CONTROLLER_DVB
+		si2157_config.mdev = dev->media_dev;
+#endif
 		si2157_config.if_port = 1;
 		si2157_config.inversion = true;
 		strlcpy(info.type, "si2157", I2C_NAME_SIZE);
@@ -918,7 +927,7 @@ static int dvb_init(struct cx231xx *dev)
 
 		dev->dvb[i]->frontend = dvb_attach(lgdt3306a_attach,
 			&hauppauge_955q_lgdt3306a_config,
-			tuner_i2c
+			demod_i2c
 			);
 
 		if (dev->dvb[i]->frontend == NULL) {
@@ -936,6 +945,9 @@ static int dvb_init(struct cx231xx *dev)
 		/* attach tuner */
 		memset(&si2157_config, 0, sizeof(si2157_config));
 		si2157_config.fe = dev->dvb[i]->frontend;
+#ifdef CONFIG_MEDIA_CONTROLLER_DVB
+		si2157_config.mdev = dev->media_dev;
+#endif
 		si2157_config.if_port = 1;
 		si2157_config.inversion = true;
 		strlcpy(info.type, "si2157", I2C_NAME_SIZE);

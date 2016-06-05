@@ -43,7 +43,7 @@
 #include "sa.h"
 
 static void mcast_add_one(struct ib_device *device);
-static void mcast_remove_one(struct ib_device *device);
+static void mcast_remove_one(struct ib_device *device, void *client_data);
 
 static struct ib_client mcast_client = {
 	.name   = "ib_multicast",
@@ -93,6 +93,18 @@ enum {
 
 struct mcast_member;
 
+/*
+* There are 4 types of join states:
+* FullMember, NonMember, SendOnlyNonMember, SendOnlyFullMember.
+*/
+enum {
+	FULLMEMBER_JOIN,
+	NONMEMBER_JOIN,
+	SENDONLY_NONMEBER_JOIN,
+	SENDONLY_FULLMEMBER_JOIN,
+	NUM_JOIN_MEMBERSHIP_TYPES,
+};
+
 struct mcast_group {
 	struct ib_sa_mcmember_rec rec;
 	struct rb_node		node;
@@ -102,7 +114,7 @@ struct mcast_group {
 	struct list_head	pending_list;
 	struct list_head	active_list;
 	struct mcast_member	*last_join;
-	int			members[3];
+	int			members[NUM_JOIN_MEMBERSHIP_TYPES];
 	atomic_t		refcount;
 	enum mcast_group_state	state;
 	struct ib_sa_query	*query;
@@ -220,8 +232,9 @@ static void queue_join(struct mcast_member *member)
 }
 
 /*
- * A multicast group has three types of members: full member, non member, and
- * send only member.  We need to keep track of the number of members of each
+ * A multicast group has four types of members: full member, non member,
+ * sendonly non member and sendonly full member.
+ * We need to keep track of the number of members of each
  * type based on their join state.  Adjust the number of members the belong to
  * the specified join states.
  */
@@ -229,7 +242,7 @@ static void adjust_membership(struct mcast_group *group, u8 join_state, int inc)
 {
 	int i;
 
-	for (i = 0; i < 3; i++, join_state >>= 1)
+	for (i = 0; i < NUM_JOIN_MEMBERSHIP_TYPES; i++, join_state >>= 1)
 		if (join_state & 0x1)
 			group->members[i] += inc;
 }
@@ -245,7 +258,7 @@ static u8 get_leave_state(struct mcast_group *group)
 	u8 leave_state = 0;
 	int i;
 
-	for (i = 0; i < 3; i++)
+	for (i = 0; i < NUM_JOIN_MEMBERSHIP_TYPES; i++)
 		if (!group->members[i])
 			leave_state |= (0x1 << i);
 
@@ -723,13 +736,27 @@ EXPORT_SYMBOL(ib_sa_get_mcmember_rec);
 
 int ib_init_ah_from_mcmember(struct ib_device *device, u8 port_num,
 			     struct ib_sa_mcmember_rec *rec,
+			     struct net_device *ndev,
+			     enum ib_gid_type gid_type,
 			     struct ib_ah_attr *ah_attr)
 {
 	int ret;
 	u16 gid_index;
 	u8 p;
 
-	ret = ib_find_cached_gid(device, &rec->port_gid, &p, &gid_index);
+	if (rdma_protocol_roce(device, port_num)) {
+		ret = ib_find_cached_gid_by_port(device, &rec->port_gid,
+						 gid_type, port_num,
+						 ndev,
+						 &gid_index);
+	} else if (rdma_protocol_ib(device, port_num)) {
+		ret = ib_find_cached_gid(device, &rec->port_gid,
+					 IB_GID_TYPE_IB, NULL, &p,
+					 &gid_index);
+	} else {
+		ret = -EINVAL;
+	}
+
 	if (ret)
 		return ret;
 
@@ -780,8 +807,7 @@ static void mcast_event_handler(struct ib_event_handler *handler,
 	int index;
 
 	dev = container_of(handler, struct mcast_device, event_handler);
-	if (rdma_port_get_link_layer(dev->device, event->element.port_num) !=
-	    IB_LINK_LAYER_INFINIBAND)
+	if (!rdma_cap_ib_mcast(dev->device, event->element.port_num))
 		return;
 
 	index = event->element.port_num - dev->start_port;
@@ -808,24 +834,16 @@ static void mcast_add_one(struct ib_device *device)
 	int i;
 	int count = 0;
 
-	if (rdma_node_get_transport(device->node_type) != RDMA_TRANSPORT_IB)
-		return;
-
 	dev = kmalloc(sizeof *dev + device->phys_port_cnt * sizeof *port,
 		      GFP_KERNEL);
 	if (!dev)
 		return;
 
-	if (device->node_type == RDMA_NODE_IB_SWITCH)
-		dev->start_port = dev->end_port = 0;
-	else {
-		dev->start_port = 1;
-		dev->end_port = device->phys_port_cnt;
-	}
+	dev->start_port = rdma_start_port(device);
+	dev->end_port = rdma_end_port(device);
 
 	for (i = 0; i <= dev->end_port - dev->start_port; i++) {
-		if (rdma_port_get_link_layer(device, dev->start_port + i) !=
-		    IB_LINK_LAYER_INFINIBAND)
+		if (!rdma_cap_ib_mcast(device, dev->start_port + i))
 			continue;
 		port = &dev->port[i];
 		port->dev = dev;
@@ -849,13 +867,12 @@ static void mcast_add_one(struct ib_device *device)
 	ib_register_event_handler(&dev->event_handler);
 }
 
-static void mcast_remove_one(struct ib_device *device)
+static void mcast_remove_one(struct ib_device *device, void *client_data)
 {
-	struct mcast_device *dev;
+	struct mcast_device *dev = client_data;
 	struct mcast_port *port;
 	int i;
 
-	dev = ib_get_client_data(device, &mcast_client);
 	if (!dev)
 		return;
 
@@ -863,8 +880,7 @@ static void mcast_remove_one(struct ib_device *device)
 	flush_workqueue(mcast_wq);
 
 	for (i = 0; i <= dev->end_port - dev->start_port; i++) {
-		if (rdma_port_get_link_layer(device, dev->start_port + i) ==
-		    IB_LINK_LAYER_INFINIBAND) {
+		if (rdma_cap_ib_mcast(device, dev->start_port + i)) {
 			port = &dev->port[i];
 			deref_port(port);
 			wait_for_completion(&port->comp);

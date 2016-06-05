@@ -75,6 +75,16 @@ int ieee754sp_cmp(union ieee754sp x, union ieee754sp y, int cop, int sig);
 
 union ieee754sp ieee754sp_sqrt(union ieee754sp x);
 
+union ieee754sp ieee754sp_maddf(union ieee754sp z, union ieee754sp x,
+				union ieee754sp y);
+union ieee754sp ieee754sp_msubf(union ieee754sp z, union ieee754sp x,
+				union ieee754sp y);
+int ieee754sp_2008class(union ieee754sp x);
+union ieee754sp ieee754sp_fmin(union ieee754sp x, union ieee754sp y);
+union ieee754sp ieee754sp_fmina(union ieee754sp x, union ieee754sp y);
+union ieee754sp ieee754sp_fmax(union ieee754sp x, union ieee754sp y);
+union ieee754sp ieee754sp_fmaxa(union ieee754sp x, union ieee754sp y);
+
 /*
  * double precision (often aka double)
 */
@@ -99,6 +109,15 @@ int ieee754dp_cmp(union ieee754dp x, union ieee754dp y, int cop, int sig);
 
 union ieee754dp ieee754dp_sqrt(union ieee754dp x);
 
+union ieee754dp ieee754dp_maddf(union ieee754dp z, union ieee754dp x,
+				union ieee754dp y);
+union ieee754dp ieee754dp_msubf(union ieee754dp z, union ieee754dp x,
+				union ieee754dp y);
+int ieee754dp_2008class(union ieee754dp x);
+union ieee754dp ieee754dp_fmin(union ieee754dp x, union ieee754dp y);
+union ieee754dp ieee754dp_fmina(union ieee754dp x, union ieee754dp y);
+union ieee754dp ieee754dp_fmax(union ieee754dp x, union ieee754dp y);
+union ieee754dp ieee754dp_fmaxa(union ieee754dp x, union ieee754dp y);
 
 
 /* 5 types of floating point number
@@ -202,15 +221,16 @@ union ieee754dp ieee754dp_dump(char *s, union ieee754dp x);
 #define IEEE754_SPCVAL_NTEN		5	/* -10.0 */
 #define IEEE754_SPCVAL_PINFINITY	6	/* +inf */
 #define IEEE754_SPCVAL_NINFINITY	7	/* -inf */
-#define IEEE754_SPCVAL_INDEF		8	/* quiet NaN */
-#define IEEE754_SPCVAL_PMAX		9	/* +max norm */
-#define IEEE754_SPCVAL_NMAX		10	/* -max norm */
-#define IEEE754_SPCVAL_PMIN		11	/* +min norm */
-#define IEEE754_SPCVAL_NMIN		12	/* -min norm */
-#define IEEE754_SPCVAL_PMIND		13	/* +min denorm */
-#define IEEE754_SPCVAL_NMIND		14	/* -min denorm */
-#define IEEE754_SPCVAL_P1E31		15	/* + 1.0e31 */
-#define IEEE754_SPCVAL_P1E63		16	/* + 1.0e63 */
+#define IEEE754_SPCVAL_INDEF_LEG	8	/* legacy quiet NaN */
+#define IEEE754_SPCVAL_INDEF_2008	9	/* IEEE 754-2008 quiet NaN */
+#define IEEE754_SPCVAL_PMAX		10	/* +max norm */
+#define IEEE754_SPCVAL_NMAX		11	/* -max norm */
+#define IEEE754_SPCVAL_PMIN		12	/* +min norm */
+#define IEEE754_SPCVAL_NMIN		13	/* -min norm */
+#define IEEE754_SPCVAL_PMIND		14	/* +min denorm */
+#define IEEE754_SPCVAL_NMIND		15	/* -min denorm */
+#define IEEE754_SPCVAL_P1E31		16	/* + 1.0e31 */
+#define IEEE754_SPCVAL_P1E63		17	/* + 1.0e63 */
 
 extern const union ieee754dp __ieee754dp_spcvals[];
 extern const union ieee754sp __ieee754sp_spcvals[];
@@ -224,7 +244,8 @@ extern const union ieee754sp __ieee754sp_spcvals[];
 #define ieee754dp_zero(sn)	(ieee754dp_spcvals[IEEE754_SPCVAL_PZERO+(sn)])
 #define ieee754dp_one(sn)	(ieee754dp_spcvals[IEEE754_SPCVAL_PONE+(sn)])
 #define ieee754dp_ten(sn)	(ieee754dp_spcvals[IEEE754_SPCVAL_PTEN+(sn)])
-#define ieee754dp_indef()	(ieee754dp_spcvals[IEEE754_SPCVAL_INDEF])
+#define ieee754dp_indef()	(ieee754dp_spcvals[IEEE754_SPCVAL_INDEF_LEG + \
+						   ieee754_csr.nan2008])
 #define ieee754dp_max(sn)	(ieee754dp_spcvals[IEEE754_SPCVAL_PMAX+(sn)])
 #define ieee754dp_min(sn)	(ieee754dp_spcvals[IEEE754_SPCVAL_PMIN+(sn)])
 #define ieee754dp_mind(sn)	(ieee754dp_spcvals[IEEE754_SPCVAL_PMIND+(sn)])
@@ -235,7 +256,8 @@ extern const union ieee754sp __ieee754sp_spcvals[];
 #define ieee754sp_zero(sn)	(ieee754sp_spcvals[IEEE754_SPCVAL_PZERO+(sn)])
 #define ieee754sp_one(sn)	(ieee754sp_spcvals[IEEE754_SPCVAL_PONE+(sn)])
 #define ieee754sp_ten(sn)	(ieee754sp_spcvals[IEEE754_SPCVAL_PTEN+(sn)])
-#define ieee754sp_indef()	(ieee754sp_spcvals[IEEE754_SPCVAL_INDEF])
+#define ieee754sp_indef()	(ieee754sp_spcvals[IEEE754_SPCVAL_INDEF_LEG + \
+						   ieee754_csr.nan2008])
 #define ieee754sp_max(sn)	(ieee754sp_spcvals[IEEE754_SPCVAL_PMAX+(sn)])
 #define ieee754sp_min(sn)	(ieee754sp_spcvals[IEEE754_SPCVAL_PMIN+(sn)])
 #define ieee754sp_mind(sn)	(ieee754sp_spcvals[IEEE754_SPCVAL_PMIND+(sn)])
@@ -247,12 +269,25 @@ extern const union ieee754sp __ieee754sp_spcvals[];
  */
 static inline int ieee754si_indef(void)
 {
-	return INT_MAX;
+	return ieee754_csr.nan2008 ? 0 : INT_MAX;
 }
 
 static inline s64 ieee754di_indef(void)
 {
-	return S64_MAX;
+	return ieee754_csr.nan2008 ? 0 : S64_MAX;
+}
+
+/*
+ * Overflow integer value
+ */
+static inline int ieee754si_overflow(int xs)
+{
+	return ieee754_csr.nan2008 && xs ? INT_MIN : INT_MAX;
+}
+
+static inline s64 ieee754di_overflow(int xs)
+{
+	return ieee754_csr.nan2008 && xs ? S64_MIN : S64_MAX;
 }
 
 /* result types for xctx.rt */

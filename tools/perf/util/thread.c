@@ -10,6 +10,8 @@
 #include "comm.h"
 #include "unwind.h"
 
+#include <api/fs/fs.h>
+
 int thread__init_map_groups(struct thread *thread, struct machine *machine)
 {
 	struct thread *leader;
@@ -18,9 +20,11 @@ int thread__init_map_groups(struct thread *thread, struct machine *machine)
 	if (pid == thread->tid || pid == -1) {
 		thread->mg = map_groups__new(machine);
 	} else {
-		leader = machine__findnew_thread(machine, pid, pid);
-		if (leader)
+		leader = __machine__findnew_thread(machine, pid, pid);
+		if (leader) {
 			thread->mg = map_groups__get(leader->mg);
+			thread__put(leader);
+		}
 	}
 
 	return thread->mg ? 0 : -1;
@@ -53,7 +57,8 @@ struct thread *thread__new(pid_t pid, pid_t tid)
 			goto err_thread;
 
 		list_add(&comm->list, &thread->comm_list);
-
+		atomic_set(&thread->refcnt, 1);
+		RB_CLEAR_NODE(&thread->rb_node);
 	}
 
 	return thread;
@@ -66,6 +71,8 @@ err_thread:
 void thread__delete(struct thread *thread)
 {
 	struct comm *comm, *tmp;
+
+	BUG_ON(!RB_EMPTY_NODE(&thread->rb_node));
 
 	thread_stack__free(thread);
 
@@ -84,13 +91,18 @@ void thread__delete(struct thread *thread)
 
 struct thread *thread__get(struct thread *thread)
 {
-	++thread->refcnt;
+	if (thread)
+		atomic_inc(&thread->refcnt);
 	return thread;
 }
 
 void thread__put(struct thread *thread)
 {
-	if (thread && --thread->refcnt == 0) {
+	if (thread && atomic_dec_and_test(&thread->refcnt)) {
+		/*
+		 * Remove it from the dead_threads list, as last reference
+		 * is gone.
+		 */
 		list_del_init(&thread->node);
 		thread__delete(thread);
 	}
@@ -143,6 +155,23 @@ int __thread__set_comm(struct thread *thread, const char *str, u64 timestamp,
 	return 0;
 }
 
+int thread__set_comm_from_proc(struct thread *thread)
+{
+	char path[64];
+	char *comm = NULL;
+	size_t sz;
+	int err = -1;
+
+	if (!(snprintf(path, sizeof(path), "%d/task/%d/comm",
+		       thread->pid_, thread->tid) >= (int)sizeof(path)) &&
+	    procfs__read_str(path, &comm, &sz) == 0) {
+		comm[sz - 1] = '\0';
+		err = thread__set_comm(thread, comm, 0);
+	}
+
+	return err;
+}
+
 const char *thread__comm_str(const struct thread *thread)
 {
 	const struct comm *comm = thread__comm(thread);
@@ -187,6 +216,12 @@ static int thread__clone_map_groups(struct thread *thread,
 	if (thread->pid_ == parent->pid_)
 		return 0;
 
+	if (thread->mg == parent->mg) {
+		pr_debug("broken map groups on thread %d/%d parent %d/%d\n",
+			 thread->pid_, thread->tid, parent->pid_, parent->tid);
+		return 0;
+	}
+
 	/* But this one is new process, copy maps. */
 	for (i = 0; i < MAP__NR_TYPES; ++i)
 		if (map_groups__clone(thread->mg, parent->mg, i) < 0)
@@ -217,7 +252,7 @@ void thread__find_cpumode_addr_location(struct thread *thread,
 					struct addr_location *al)
 {
 	size_t i;
-	const u8 const cpumodes[] = {
+	const u8 cpumodes[] = {
 		PERF_RECORD_MISC_USER,
 		PERF_RECORD_MISC_KERNEL,
 		PERF_RECORD_MISC_GUEST_USER,

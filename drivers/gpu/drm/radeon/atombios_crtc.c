@@ -25,6 +25,7 @@
  */
 #include <drm/drmP.h>
 #include <drm/drm_crtc_helper.h>
+#include <drm/drm_fb_helper.h>
 #include <drm/radeon_drm.h>
 #include <drm/drm_fixed.h>
 #include "radeon.h"
@@ -274,13 +275,15 @@ void atombios_crtc_dpms(struct drm_crtc *crtc, int mode)
 		if (ASIC_IS_DCE3(rdev) && !ASIC_IS_DCE6(rdev))
 			atombios_enable_crtc_memreq(crtc, ATOM_ENABLE);
 		atombios_blank_crtc(crtc, ATOM_DISABLE);
-		drm_vblank_post_modeset(dev, radeon_crtc->crtc_id);
+		if (dev->num_crtcs > radeon_crtc->crtc_id)
+			drm_vblank_on(dev, radeon_crtc->crtc_id);
 		radeon_crtc_load_lut(crtc);
 		break;
 	case DRM_MODE_DPMS_STANDBY:
 	case DRM_MODE_DPMS_SUSPEND:
 	case DRM_MODE_DPMS_OFF:
-		drm_vblank_pre_modeset(dev, radeon_crtc->crtc_id);
+		if (dev->num_crtcs > radeon_crtc->crtc_id)
+			drm_vblank_off(dev, radeon_crtc->crtc_id);
 		if (radeon_crtc->enabled)
 			atombios_blank_crtc(crtc, ATOM_ENABLE);
 		if (ASIC_IS_DCE3(rdev) && !ASIC_IS_DCE6(rdev))
@@ -580,9 +583,6 @@ static u32 atombios_adjust_pll(struct drm_crtc *crtc,
 		else
 			radeon_crtc->pll_flags |= RADEON_PLL_PREFER_LOW_REF_DIV;
 
-		/* if there is no audio, set MINM_OVER_MAXP  */
-		if (!drm_detect_monitor_audio(radeon_connector_edid(connector)))
-			radeon_crtc->pll_flags |= RADEON_PLL_PREFER_MINM_OVER_MAXP;
 		if (rdev->family < CHIP_RV770)
 			radeon_crtc->pll_flags |= RADEON_PLL_PREFER_MINM_OVER_MAXP;
 		/* use frac fb div on APUs */
@@ -1375,6 +1375,11 @@ static int dce4_crtc_do_set_base(struct drm_crtc *crtc,
 		break;
 	}
 
+	/* Make sure surface address is updated at vertical blank rather than
+	 * horizontal blank
+	 */
+	WREG32(EVERGREEN_GRPH_FLIP_CONTROL + radeon_crtc->crtc_offset, 0);
+
 	WREG32(EVERGREEN_GRPH_PRIMARY_SURFACE_ADDRESS_HIGH + radeon_crtc->crtc_offset,
 	       upper_32_bits(fb_location));
 	WREG32(EVERGREEN_GRPH_SECONDARY_SURFACE_ADDRESS_HIGH + radeon_crtc->crtc_offset,
@@ -1427,12 +1432,6 @@ static int dce4_crtc_do_set_base(struct drm_crtc *crtc,
 	WREG32(EVERGREEN_VIEWPORT_SIZE + radeon_crtc->crtc_offset,
 	       (viewport_w << 16) | viewport_h);
 
-	/* pageflip setup */
-	/* make sure flip is at vb rather than hb */
-	tmp = RREG32(EVERGREEN_GRPH_FLIP_CONTROL + radeon_crtc->crtc_offset);
-	tmp &= ~EVERGREEN_GRPH_SURFACE_UPDATE_H_RETRACE_EN;
-	WREG32(EVERGREEN_GRPH_FLIP_CONTROL + radeon_crtc->crtc_offset, tmp);
-
 	/* set pageflip to happen only at start of vblank interval (front porch) */
 	WREG32(EVERGREEN_MASTER_UPDATE_MODE + radeon_crtc->crtc_offset, 3);
 
@@ -1466,7 +1465,7 @@ static int avivo_crtc_do_set_base(struct drm_crtc *crtc,
 	uint64_t fb_location;
 	uint32_t fb_format, fb_pitch_pixels, tiling_flags;
 	u32 fb_swap = R600_D1GRPH_SWAP_ENDIAN_NONE;
-	u32 tmp, viewport_w, viewport_h;
+	u32 viewport_w, viewport_h;
 	int r;
 	bool bypass_lut = false;
 
@@ -1581,6 +1580,11 @@ static int avivo_crtc_do_set_base(struct drm_crtc *crtc,
 	else
 		WREG32(AVIVO_D2VGA_CONTROL, 0);
 
+	/* Make sure surface address is update at vertical blank rather than
+	 * horizontal blank
+	 */
+	WREG32(AVIVO_D1GRPH_FLIP_CONTROL + radeon_crtc->crtc_offset, 0);
+
 	if (rdev->family >= CHIP_RV770) {
 		if (radeon_crtc->crtc_id) {
 			WREG32(R700_D2GRPH_PRIMARY_SURFACE_ADDRESS_HIGH, upper_32_bits(fb_location));
@@ -1627,12 +1631,6 @@ static int avivo_crtc_do_set_base(struct drm_crtc *crtc,
 	WREG32(AVIVO_D1MODE_VIEWPORT_SIZE + radeon_crtc->crtc_offset,
 	       (viewport_w << 16) | viewport_h);
 
-	/* pageflip setup */
-	/* make sure flip is at vb rather than hb */
-	tmp = RREG32(AVIVO_D1GRPH_FLIP_CONTROL + radeon_crtc->crtc_offset);
-	tmp &= ~AVIVO_D1GRPH_SURFACE_UPDATE_H_RETRACE_EN;
-	WREG32(AVIVO_D1GRPH_FLIP_CONTROL + radeon_crtc->crtc_offset, tmp);
-
 	/* set pageflip to happen only at start of vblank interval (front porch) */
 	WREG32(AVIVO_D1MODE_MASTER_UPDATE_MODE + radeon_crtc->crtc_offset, 3);
 
@@ -1667,11 +1665,11 @@ int atombios_crtc_set_base(struct drm_crtc *crtc, int x, int y,
 }
 
 int atombios_crtc_set_base_atomic(struct drm_crtc *crtc,
-                                  struct drm_framebuffer *fb,
+				  struct drm_framebuffer *fb,
 				  int x, int y, enum mode_set_atomic state)
 {
-       struct drm_device *dev = crtc->dev;
-       struct radeon_device *rdev = dev->dev_private;
+	struct drm_device *dev = crtc->dev;
+	struct radeon_device *rdev = dev->dev_private;
 
 	if (ASIC_IS_DCE4(rdev))
 		return dce4_crtc_do_set_base(crtc, fb, x, y, 1);
@@ -1742,6 +1740,7 @@ static u32 radeon_get_pll_use_mask(struct drm_crtc *crtc)
 static int radeon_get_shared_dp_ppll(struct drm_crtc *crtc)
 {
 	struct drm_device *dev = crtc->dev;
+	struct radeon_device *rdev = dev->dev_private;
 	struct drm_crtc *test_crtc;
 	struct radeon_crtc *test_radeon_crtc;
 
@@ -1751,6 +1750,10 @@ static int radeon_get_shared_dp_ppll(struct drm_crtc *crtc)
 		test_radeon_crtc = to_radeon_crtc(test_crtc);
 		if (test_radeon_crtc->encoder &&
 		    ENCODER_MODE_IS_DP(atombios_get_encoder_mode(test_radeon_crtc->encoder))) {
+			/* PPLL2 is exclusive to UNIPHYA on DCE61 */
+			if (ASIC_IS_DCE61(rdev) && !ASIC_IS_DCE8(rdev) &&
+			    test_radeon_crtc->pll_id == ATOM_PPLL2)
+				continue;
 			/* for DP use the same PLL for all */
 			if (test_radeon_crtc->pll_id != ATOM_PPLL_INVALID)
 				return test_radeon_crtc->pll_id;
@@ -1772,6 +1775,7 @@ static int radeon_get_shared_nondp_ppll(struct drm_crtc *crtc)
 {
 	struct radeon_crtc *radeon_crtc = to_radeon_crtc(crtc);
 	struct drm_device *dev = crtc->dev;
+	struct radeon_device *rdev = dev->dev_private;
 	struct drm_crtc *test_crtc;
 	struct radeon_crtc *test_radeon_crtc;
 	u32 adjusted_clock, test_adjusted_clock;
@@ -1787,6 +1791,10 @@ static int radeon_get_shared_nondp_ppll(struct drm_crtc *crtc)
 		test_radeon_crtc = to_radeon_crtc(test_crtc);
 		if (test_radeon_crtc->encoder &&
 		    !ENCODER_MODE_IS_DP(atombios_get_encoder_mode(test_radeon_crtc->encoder))) {
+			/* PPLL2 is exclusive to UNIPHYA on DCE61 */
+			if (ASIC_IS_DCE61(rdev) && !ASIC_IS_DCE8(rdev) &&
+			    test_radeon_crtc->pll_id == ATOM_PPLL2)
+				continue;
 			/* check if we are already driving this connector with another crtc */
 			if (test_radeon_crtc->connector == radeon_crtc->connector) {
 				/* if we are, return that pll */

@@ -1981,12 +1981,7 @@ err:
 	dprintk(FE_DEBUG, 1, "ret=%d", ret);
 	return ret;
 }
-
-static int tda18273_set_state(struct dvb_frontend *fe, enum tuner_param param, struct tuner_state *state)
-{
-	return -EINVAL;
-}
-
+#if 0
 static int tda18273_get_state(struct dvb_frontend *fe, enum tuner_param param, struct tuner_state *state)
 {
 	struct tda18273_state *priv		= fe->tuner_priv;
@@ -2016,7 +2011,7 @@ static int tda18273_get_state(struct dvb_frontend *fe, enum tuner_param param, s
 	}
 	return ret;
 }
-
+#endif
 static int tda18273_set_params(struct dvb_frontend *fe)
 {
 	struct dtv_frontend_properties *c = &fe->dtv_property_cache;
@@ -2143,8 +2138,6 @@ static struct dvb_tuner_ops tda18273_ops = {
 //	.sleep			= tda18273_sleep,
 	.get_status		= tda18273_get_status,
 	.set_params		= tda18273_set_params,
-	.set_state		= tda18273_set_state,
-	.get_state		= tda18273_get_state,
 	.get_frequency		= tda18273_get_freq,
 	.get_bandwidth		= tda18273_get_bandwidth,
 	.get_if_frequency	= tda18273_get_if_freq,

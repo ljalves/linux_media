@@ -25,6 +25,14 @@ config DRM_MIPI_DSI
 	bool
 	depends on DRM
 
+config DRM_DP_AUX_CHARDEV
+	bool "DRM DP AUX Interface"
+	depends on DRM
+	help
+	  Choose this option to enable a /dev/drm_dp_auxN node that allows to
+	  read and write values to arbitrary DPCD registers on the DP aux
+	  channel.
+
 config DRM_KMS_HELPER
 	tristate
 	depends on DRM
@@ -37,8 +45,29 @@ config DRM_KMS_FB_HELPER
 	select FB
 	select FRAMEBUFFER_CONSOLE if !EXPERT
 	select FRAMEBUFFER_CONSOLE_DETECT_PRIMARY if FRAMEBUFFER_CONSOLE
+	select FB_SYS_FOPS
+	select FB_SYS_FILLRECT
+	select FB_SYS_COPYAREA
+	select FB_SYS_IMAGEBLIT
+	select FB_CFB_FILLRECT
+	select FB_CFB_COPYAREA
+	select FB_CFB_IMAGEBLIT
+	select FB_DEFERRED_IO
 	help
 	  FBDEV helpers for KMS drivers.
+
+config DRM_FBDEV_EMULATION
+	bool "Enable legacy fbdev support for your modesetting driver"
+	depends on DRM
+	select DRM_KMS_HELPER
+	select DRM_KMS_FB_HELPER
+	default y
+	help
+	  Choose this option if you have a need for the legacy fbdev
+	  support. Note that this support also provides the linux console
+	  support on top of your modesetting driver.
+
+	  If in doubt, say "Y".
 
 config DRM_LOAD_EDID_FIRMWARE
 	bool "Allow to specify an EDID data set instead of probing for it"
@@ -62,13 +91,13 @@ config DRM_TTM
 
 config DRM_GEM_CMA_HELPER
 	bool
-	depends on DRM && HAVE_DMA_ATTRS
+	depends on DRM
 	help
 	  Choose this if you need the GEM CMA helper functions
 
 config DRM_KMS_CMA_HELPER
 	bool
-	depends on DRM && HAVE_DMA_ATTRS
+	depends on DRM
 	select DRM_GEM_CMA_HELPER
 	select DRM_KMS_FB_HELPER
 	select FB_SYS_FILLRECT
@@ -79,14 +108,14 @@ config DRM_KMS_CMA_HELPER
 
 source "drivers/gpu/drm/i2c/Kconfig"
 
-source "drivers/gpu/drm/bridge/Kconfig"
-
 config DRM_TDFX
 	tristate "3dfx Banshee/Voodoo3+"
 	depends on DRM && PCI
 	help
 	  Choose this option if you have a 3dfx Banshee or Voodoo3 (or later),
 	  graphics card.  If M is selected, the module will be called tdfx.
+
+source "drivers/gpu/drm/arm/Kconfig"
 
 config DRM_R128
 	tristate "ATI Rage 128"
@@ -110,6 +139,7 @@ config DRM_RADEON
 	select POWER_SUPPLY
 	select HWMON
 	select BACKLIGHT_CLASS_DEVICE
+	select BACKLIGHT_LCD_SUPPORT
 	select INTERVAL_TREE
 	help
 	  Choose this option if you have an ATI Radeon graphics card.  There
@@ -119,6 +149,31 @@ config DRM_RADEON
 	  If M is selected, the module will be called radeon.
 
 source "drivers/gpu/drm/radeon/Kconfig"
+
+config DRM_AMDGPU
+	tristate "AMD GPU"
+	depends on DRM && PCI
+	select FB_CFB_FILLRECT
+	select FB_CFB_COPYAREA
+	select FB_CFB_IMAGEBLIT
+	select FW_LOADER
+        select DRM_KMS_HELPER
+	select DRM_KMS_FB_HELPER
+        select DRM_TTM
+	select POWER_SUPPLY
+	select HWMON
+	select BACKLIGHT_CLASS_DEVICE
+	select BACKLIGHT_LCD_SUPPORT
+	select INTERVAL_TREE
+	help
+	  Choose this option if you have a recent AMD Radeon graphics card.
+
+	  If M is selected, the module will be called amdgpu.
+
+source "drivers/gpu/drm/amd/amdgpu/Kconfig"
+source "drivers/gpu/drm/amd/powerplay/Kconfig"
+
+source "drivers/gpu/drm/amd/acp/Kconfig"
 
 source "drivers/gpu/drm/nouveau/Kconfig"
 
@@ -198,6 +253,8 @@ source "drivers/gpu/drm/rcar-du/Kconfig"
 
 source "drivers/gpu/drm/shmobile/Kconfig"
 
+source "drivers/gpu/drm/sun4i/Kconfig"
+
 source "drivers/gpu/drm/omapdrm/Kconfig"
 
 source "drivers/gpu/drm/tilcdc/Kconfig"
@@ -206,14 +263,30 @@ source "drivers/gpu/drm/qxl/Kconfig"
 
 source "drivers/gpu/drm/bochs/Kconfig"
 
+source "drivers/gpu/drm/virtio/Kconfig"
+
 source "drivers/gpu/drm/msm/Kconfig"
+
+source "drivers/gpu/drm/fsl-dcu/Kconfig"
 
 source "drivers/gpu/drm/tegra/Kconfig"
 
 source "drivers/gpu/drm/panel/Kconfig"
+
+source "drivers/gpu/drm/bridge/Kconfig"
 
 source "drivers/gpu/drm/sti/Kconfig"
 
 source "drivers/gpu/drm/amd/amdkfd/Kconfig"
 
 source "drivers/gpu/drm/imx/Kconfig"
+
+source "drivers/gpu/drm/vc4/Kconfig"
+
+source "drivers/gpu/drm/etnaviv/Kconfig"
+
+source "drivers/gpu/drm/arc/Kconfig"
+
+source "drivers/gpu/drm/hisilicon/Kconfig"
+
+source "drivers/gpu/drm/mediatek/Kconfig"

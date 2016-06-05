@@ -626,10 +626,10 @@ cifs_hl_exit:
 	return rc;
 }
 
-void *
-cifs_follow_link(struct dentry *direntry, struct nameidata *nd)
+const char *
+cifs_get_link(struct dentry *direntry, struct inode *inode,
+	      struct delayed_call *done)
 {
-	struct inode *inode = d_inode(direntry);
 	int rc = -ENOMEM;
 	unsigned int xid;
 	char *full_path = NULL;
@@ -639,20 +639,25 @@ cifs_follow_link(struct dentry *direntry, struct nameidata *nd)
 	struct cifs_tcon *tcon;
 	struct TCP_Server_Info *server;
 
+	if (!direntry)
+		return ERR_PTR(-ECHILD);
+
 	xid = get_xid();
 
 	tlink = cifs_sb_tlink(cifs_sb);
 	if (IS_ERR(tlink)) {
-		rc = PTR_ERR(tlink);
-		tlink = NULL;
-		goto out;
+		free_xid(xid);
+		return ERR_CAST(tlink);
 	}
 	tcon = tlink_tcon(tlink);
 	server = tcon->ses->server;
 
 	full_path = build_path_from_dentry(direntry);
-	if (!full_path)
-		goto out;
+	if (!full_path) {
+		free_xid(xid);
+		cifs_put_tlink(tlink);
+		return ERR_PTR(-ENOMEM);
+	}
 
 	cifs_dbg(FYI, "Full path: %s inode = 0x%p\n", full_path, inode);
 
@@ -670,17 +675,14 @@ cifs_follow_link(struct dentry *direntry, struct nameidata *nd)
 						&target_path, cifs_sb);
 
 	kfree(full_path);
-out:
+	free_xid(xid);
+	cifs_put_tlink(tlink);
 	if (rc != 0) {
 		kfree(target_path);
-		target_path = ERR_PTR(rc);
+		return ERR_PTR(rc);
 	}
-
-	free_xid(xid);
-	if (tlink)
-		cifs_put_tlink(tlink);
-	nd_set_link(nd, target_path);
-	return NULL;
+	set_delayed_call(done, kfree_link, target_path);
+	return target_path;
 }
 
 int
@@ -717,7 +719,8 @@ cifs_symlink(struct inode *inode, struct dentry *direntry, const char *symname)
 		rc = create_mf_symlink(xid, pTcon, cifs_sb, full_path, symname);
 	else if (pTcon->unix_ext)
 		rc = CIFSUnixCreateSymLink(xid, pTcon, full_path, symname,
-					   cifs_sb->local_nls);
+					   cifs_sb->local_nls,
+					   cifs_remap(cifs_sb));
 	/* else
 	   rc = CIFSCreateReparseSymLink(xid, pTcon, fromName, toName,
 					cifs_sb_target->local_nls); */

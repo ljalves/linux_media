@@ -44,6 +44,7 @@ struct mlx4_mod_stat_cfg {
 };
 
 struct mlx4_port_cap {
+	u8  link_state;
 	u8  supported_port_types;
 	u8  suggested_type;
 	u8  default_sense;
@@ -204,6 +205,7 @@ struct mlx4_init_hca_param {
 	u16 cqe_size; /* For use only when CQE stride feature enabled */
 	u16 eqe_size; /* For use only when EQE stride feature enabled */
 	u8 rss_ip_frags;
+	u8 phv_check_en; /* for QUERY_HCA */
 };
 
 struct mlx4_init_ib_param {

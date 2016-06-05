@@ -426,8 +426,25 @@ retry:
 						 pnum, vol_id, lnum);
 					err = -EBADMSG;
 				} else {
-					err = -EINVAL;
-					ubi_ro_mode(ubi);
+					/*
+					 * Ending up here in the non-Fastmap case
+					 * is a clear bug as the VID header had to
+					 * be present at scan time to have it referenced.
+					 * With fastmap the story is more complicated.
+					 * Fastmap has the mapping info without the need
+					 * of a full scan. So the LEB could have been
+					 * unmapped, Fastmap cannot know this and keeps
+					 * the LEB referenced.
+					 * This is valid and works as the layer above UBI
+					 * has to do bookkeeping about used/referenced
+					 * LEBs in any case.
+					 */
+					if (ubi->fast_attach) {
+						err = -EBADMSG;
+					} else {
+						err = -EINVAL;
+						ubi_ro_mode(ubi);
+					}
 				}
 			}
 			goto out_free;
@@ -1202,32 +1219,6 @@ int ubi_eba_copy_leb(struct ubi_device *ubi, int from, int to,
 		}
 
 		cond_resched();
-
-		/*
-		 * We've written the data and are going to read it back to make
-		 * sure it was written correctly.
-		 */
-		memset(ubi->peb_buf, 0xFF, aldata_size);
-		err = ubi_io_read_data(ubi, ubi->peb_buf, to, 0, aldata_size);
-		if (err) {
-			if (err != UBI_IO_BITFLIPS) {
-				ubi_warn(ubi, "error %d while reading data back from PEB %d",
-					 err, to);
-				if (is_error_sane(err))
-					err = MOVE_TARGET_RD_ERR;
-			} else
-				err = MOVE_TARGET_BITFLIPS;
-			goto out_unlock_buf;
-		}
-
-		cond_resched();
-
-		if (crc != crc32(UBI_CRC32_INIT, ubi->peb_buf, data_size)) {
-			ubi_warn(ubi, "read data back from PEB %d and it is different",
-				 to);
-			err = -EINVAL;
-			goto out_unlock_buf;
-		}
 	}
 
 	ubi_assert(vol->eba_tbl[lnum] == from);
@@ -1358,7 +1349,7 @@ int self_check_eba(struct ubi_device *ubi, struct ubi_attach_info *ai_fastmap,
 					continue;
 
 				ubi_err(ubi, "LEB:%i:%i is PEB:%i instead of %i!",
-					vol->vol_id, i, fm_eba[i][j],
+					vol->vol_id, j, fm_eba[i][j],
 					scan_eba[i][j]);
 				ubi_assert(0);
 			}

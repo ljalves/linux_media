@@ -225,7 +225,8 @@ static int tbsqboxs1_read_mac_address(struct dvb_usb_device *d, u8 mac[6])
 	return 0;
 };
 
-static int tbsqboxs1_set_voltage(struct dvb_frontend *fe, fe_sec_voltage_t voltage)
+static int tbsqboxs1_set_voltage(struct dvb_frontend *fe,
+				enum fe_sec_voltage voltage)
 {
 	static u8 command_13v[1] = {0x00};
 	static u8 command_18v[1] = {0x01};

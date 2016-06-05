@@ -20,7 +20,7 @@
 #include <media/v4l2-ctrls.h>
 #include <media/v4l2-mediabus.h>
 #include <media/v4l2-image-sizes.h>
-#include <media/ov7670.h>
+#include <media/i2c/ov7670.h>
 
 MODULE_AUTHOR("Jonathan Corbet <corbet@lwn.net>");
 MODULE_DESCRIPTION("A low-level driver for OmniVision ov7670 sensors");
@@ -1674,7 +1674,6 @@ MODULE_DEVICE_TABLE(i2c, ov7670_id);
 
 static struct i2c_driver ov7670_driver = {
 	.driver = {
-		.owner	= THIS_MODULE,
 		.name	= "ov7670",
 	},
 	.probe		= ov7670_probe,

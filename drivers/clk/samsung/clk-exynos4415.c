@@ -9,8 +9,6 @@
  * Common Clock Framework support for Exynos4415 SoC.
  */
 
-#include <linux/clk.h>
-#include <linux/clkdev.h>
 #include <linux/clk-provider.h>
 #include <linux/of.h>
 #include <linux/of_address.h>
@@ -276,7 +274,7 @@ static struct samsung_fixed_factor_clock exynos4415_fixed_factor_clks[] __initda
 };
 
 static struct samsung_fixed_rate_clock exynos4415_fixed_rate_clks[] __initdata = {
-	FRATE(CLK_SCLK_HDMIPHY, "sclk_hdmiphy", NULL, CLK_IS_ROOT, 27000000),
+	FRATE(CLK_SCLK_HDMIPHY, "sclk_hdmiphy", NULL, 0, 27000000),
 };
 
 static struct samsung_mux_clock exynos4415_mux_clks[] __initdata = {

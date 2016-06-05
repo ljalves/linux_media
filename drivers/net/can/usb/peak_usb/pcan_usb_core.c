@@ -274,7 +274,7 @@ static void peak_usb_write_bulk_callback(struct urb *urb)
 		netdev->stats.tx_bytes += context->data_len;
 
 		/* prevent tx timeout */
-		netdev->trans_start = jiffies;
+		netif_trans_update(netdev);
 		break;
 
 	default:
@@ -373,7 +373,7 @@ static netdev_tx_t peak_usb_ndo_start_xmit(struct sk_buff *skb,
 			stats->tx_dropped++;
 		}
 	} else {
-		netdev->trans_start = jiffies;
+		netif_trans_update(netdev);
 
 		/* slow down tx path */
 		if (atomic_read(&dev->active_tx_urbs) >= PCAN_USB_MAX_TX_URBS)
@@ -792,9 +792,9 @@ static int peak_usb_create_dev(const struct peak_usb_adapter *peak_usb_adapter,
 	dev->ep_msg_out = peak_usb_adapter->ep_msg_out[ctrl_idx];
 
 	dev->can.clock = peak_usb_adapter->clock;
-	dev->can.bittiming_const = &peak_usb_adapter->bittiming_const;
+	dev->can.bittiming_const = peak_usb_adapter->bittiming_const;
 	dev->can.do_set_bittiming = peak_usb_set_bittiming;
-	dev->can.data_bittiming_const = &peak_usb_adapter->data_bittiming_const;
+	dev->can.data_bittiming_const = peak_usb_adapter->data_bittiming_const;
 	dev->can.do_set_data_bittiming = peak_usb_set_data_bittiming;
 	dev->can.do_set_mode = peak_usb_set_mode;
 	dev->can.do_get_berr_counter = peak_usb_adapter->do_get_berr_counter;

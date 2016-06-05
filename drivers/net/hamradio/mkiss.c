@@ -519,7 +519,7 @@ static void ax_encaps(struct net_device *dev, unsigned char *icp, int len)
 	dev->stats.tx_packets++;
 	dev->stats.tx_bytes += actual;
 
-	ax->dev->trans_start = jiffies;
+	netif_trans_update(ax->dev);
 	ax->xleft = count - actual;
 	ax->xhead = ax->xbuff + actual;
 }
@@ -542,7 +542,7 @@ static netdev_tx_t ax_xmit(struct sk_buff *skb, struct net_device *dev)
 		 * May be we must check transmitter timeout here ?
 		 *      14 Oct 1994 Dmitry Gorodchanin.
 		 */
-		if (time_before(jiffies, dev->trans_start + 20 * HZ)) {
+		if (time_before(jiffies, dev_trans_start(dev) + 20 * HZ)) {
 			/* 20 sec timeout not reached */
 			return NETDEV_TX_BUSY;
 		}
@@ -728,11 +728,12 @@ static int mkiss_open(struct tty_struct *tty)
 	dev->type = ARPHRD_AX25;
 
 	/* Perform the low-level AX25 initialization. */
-	if ((err = ax_open(ax->dev))) {
+	err = ax_open(ax->dev);
+	if (err)
 		goto out_free_netdev;
-	}
 
-	if (register_netdev(dev))
+	err = register_netdev(dev);
+	if (err)
 		goto out_free_buffers;
 
 	/* after register_netdev() - because else printk smashes the kernel */
@@ -796,14 +797,19 @@ static void mkiss_close(struct tty_struct *tty)
 	 */
 	if (!atomic_dec_and_test(&ax->refcnt))
 		down(&ax->dead_sem);
-
-	unregister_netdev(ax->dev);
+	/*
+	 * Halt the transmit queue so that a new transmit cannot scribble
+	 * on our buffers
+	 */
+	netif_stop_queue(ax->dev);
 
 	/* Free all AX25 frame buffers. */
 	kfree(ax->rbuff);
 	kfree(ax->xbuff);
 
 	ax->tty = NULL;
+
+	unregister_netdev(ax->dev);
 }
 
 /* Perform I/O control on an active ax25 channel. */

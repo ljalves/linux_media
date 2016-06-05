@@ -323,7 +323,7 @@ static struct saa716x_config saa716x_vp3071_config = {
 #define SAA716x_MODEL_TWINHAN_VP1028	"Twinhan/Azurewave VP-1028"
 #define SAA716x_DEV_TWINHAN_VP1028	"DVB-S"
 
-static int vp1028_dvbs_set_voltage(struct dvb_frontend *fe, fe_sec_voltage_t voltage)
+static int vp1028_dvbs_set_voltage(struct dvb_frontend *fe, enum fe_sec_voltage voltage)
 {
 	struct saa716x_dev *saa716x = fe->dvb->priv;
 

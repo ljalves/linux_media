@@ -21,11 +21,18 @@ endif
 
 build-dir := $(srctree)/tools/build
 
+# Define $(fixdep) for dep-cmd function
+ifeq ($(OUTPUT),)
+  fixdep := $(build-dir)/fixdep
+else
+  fixdep := $(OUTPUT)/fixdep
+endif
+
 # Generic definitions
 include $(build-dir)/Build.include
 
 # do not force detected configuration
--include .config-detected
+-include $(OUTPUT).config-detected
 
 # Init all relevant variables used in build files so
 # 1) they have correct type
@@ -37,7 +44,7 @@ subdir-obj-y :=
 
 # Build definitions
 build-file := $(dir)/Build
-include $(build-file)
+-include $(build-file)
 
 quiet_cmd_flex  = FLEX     $@
 quiet_cmd_bison = BISON    $@
@@ -51,17 +58,19 @@ quiet_cmd_mkdir = MKDIR    $(dir $@)
 quiet_cmd_cc_o_c = CC       $@
       cmd_cc_o_c = $(CC) $(c_flags) -c -o $@ $<
 
-quiet_cmd_cc_i_c = CPP      $@
-      cmd_cc_i_c = $(CC) $(c_flags) -E -o $@ $<
+quiet_cmd_cpp_i_c = CPP      $@
+      cmd_cpp_i_c = $(CC) $(c_flags) -E -o $@ $<
 
 quiet_cmd_cc_s_c = AS       $@
       cmd_cc_s_c = $(CC) $(c_flags) -S -o $@ $<
+
+quiet_cmd_gen = GEN      $@
 
 # Link agregate command
 # If there's nothing to link, create empty $@ object.
 quiet_cmd_ld_multi = LD       $@
       cmd_ld_multi = $(if $(strip $(obj-y)),\
-		       $(LD) -r -o $@ $(obj-y),rm -f $@; $(AR) rcs $@)
+		       $(LD) -r -o $@  $(filter $(obj-y),$^),rm -f $@; $(AR) rcs $@)
 
 # Build rules
 $(OUTPUT)%.o: %.c FORCE
@@ -74,11 +83,11 @@ $(OUTPUT)%.o: %.S FORCE
 
 $(OUTPUT)%.i: %.c FORCE
 	$(call rule_mkdir)
-	$(call if_changed_dep,cc_i_c)
+	$(call if_changed_dep,cpp_i_c)
 
-$(OUTPUT)%.i: %.S FORCE
+$(OUTPUT)%.s: %.S FORCE
 	$(call rule_mkdir)
-	$(call if_changed_dep,cc_i_c)
+	$(call if_changed_dep,cpp_i_c)
 
 $(OUTPUT)%.s: %.c FORCE
 	$(call rule_mkdir)
@@ -94,12 +103,12 @@ obj-y        := $(patsubst %/, %/$(obj)-in.o, $(obj-y))
 subdir-obj-y := $(filter %/$(obj)-in.o, $(obj-y))
 
 # '$(OUTPUT)/dir' prefix to all objects
-prefix       := $(subst ./,,$(OUTPUT)$(dir)/)
-obj-y        := $(addprefix $(prefix),$(obj-y))
-subdir-obj-y := $(addprefix $(prefix),$(subdir-obj-y))
+objprefix    := $(subst ./,,$(OUTPUT)$(dir)/)
+obj-y        := $(addprefix $(objprefix),$(obj-y))
+subdir-obj-y := $(addprefix $(objprefix),$(subdir-obj-y))
 
 # Final '$(obj)-in.o' object
-in-target := $(prefix)$(obj)-in.o
+in-target := $(objprefix)$(obj)-in.o
 
 PHONY += $(subdir-y)
 

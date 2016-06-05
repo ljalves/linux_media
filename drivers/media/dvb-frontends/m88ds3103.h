@@ -1,5 +1,5 @@
 /*
- * Montage M88DS3103 demodulator driver
+ * Montage Technology M88DS3103/M88RS6000 demodulator driver
  *
  * Copyright (C) 2013 Antti Palosaari <crope@iki.fi>
  *
@@ -178,6 +178,7 @@ extern struct dvb_frontend *m88ds3103_attach(
 		const struct m88ds3103_config *config,
 		struct i2c_adapter *i2c,
 		struct i2c_adapter **tuner_i2c);
+extern int m88ds3103_get_agc_pwm(struct dvb_frontend *fe, u8 *_agc_pwm);
 #else
 static inline struct dvb_frontend *m88ds3103_attach(
 		const struct m88ds3103_config *config,
@@ -187,6 +188,7 @@ static inline struct dvb_frontend *m88ds3103_attach(
 	pr_warn("%s: driver disabled by Kconfig\n", __func__);
 	return NULL;
 }
+#define m88ds3103_get_agc_pwm NULL
 #endif
 
 #endif

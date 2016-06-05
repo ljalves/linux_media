@@ -2294,8 +2294,6 @@ snd_azf3328_free(struct snd_azf3328 *chip)
 	snd_azf3328_timer_stop(chip->timer);
 	snd_azf3328_gameport_free(chip);
 
-	if (chip->irq >= 0)
-		synchronize_irq(chip->irq);
 __end_hw:
 	if (chip->irq >= 0)
 		free_irq(chip->irq, chip);
@@ -2420,8 +2418,8 @@ snd_azf3328_create(struct snd_card *card,
 	chip->irq = -1;
 
 	/* check if we can restrict PCI DMA transfers to 24 bits */
-	if (pci_set_dma_mask(pci, DMA_BIT_MASK(24)) < 0 ||
-	    pci_set_consistent_dma_mask(pci, DMA_BIT_MASK(24)) < 0) {
+	if (dma_set_mask(&pci->dev, DMA_BIT_MASK(24)) < 0 ||
+	    dma_set_coherent_mask(&pci->dev, DMA_BIT_MASK(24)) < 0) {
 		dev_err(card->dev,
 			"architecture does not support 24bit PCI busmaster DMA\n"
 		);

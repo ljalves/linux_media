@@ -12,6 +12,7 @@
  * max98357a.c -- MAX98357A ALSA SoC Codec driver
  */
 
+#include <linux/acpi.h>
 #include <linux/device.h>
 #include <linux/err.h>
 #include <linux/gpio.h>
@@ -31,6 +32,9 @@ static int max98357a_daiops_trigger(struct snd_pcm_substream *substream,
 {
 	struct gpio_desc *sdmode = snd_soc_dai_get_drvdata(dai);
 
+	if (!sdmode)
+		return 0;
+
 	switch (cmd) {
 	case SNDRV_PCM_TRIGGER_START:
 	case SNDRV_PCM_TRIGGER_RESUME:
@@ -48,25 +52,21 @@ static int max98357a_daiops_trigger(struct snd_pcm_substream *substream,
 }
 
 static const struct snd_soc_dapm_widget max98357a_dapm_widgets[] = {
-	SND_SOC_DAPM_DAC("SDMode", NULL, SND_SOC_NOPM, 0, 0),
 	SND_SOC_DAPM_OUTPUT("Speaker"),
 };
 
 static const struct snd_soc_dapm_route max98357a_dapm_routes[] = {
-	{"Speaker", NULL, "SDMode"},
+	{"Speaker", NULL, "HiFi Playback"},
 };
 
 static int max98357a_codec_probe(struct snd_soc_codec *codec)
 {
 	struct gpio_desc *sdmode;
 
-	sdmode = devm_gpiod_get(codec->dev, "sdmode");
-	if (IS_ERR(sdmode)) {
-		dev_err(codec->dev, "%s() unable to get sdmode GPIO: %ld\n",
-				__func__, PTR_ERR(sdmode));
+	sdmode = devm_gpiod_get_optional(codec->dev, "sdmode", GPIOD_OUT_LOW);
+	if (IS_ERR(sdmode))
 		return PTR_ERR(sdmode);
-	}
-	gpiod_direction_output(sdmode, 0);
+
 	snd_soc_codec_set_drvdata(codec, sdmode);
 
 	return 0;
@@ -80,7 +80,7 @@ static struct snd_soc_codec_driver max98357a_codec_driver = {
 	.num_dapm_routes	= ARRAY_SIZE(max98357a_dapm_routes),
 };
 
-static struct snd_soc_dai_ops max98357a_dai_ops = {
+static const struct snd_soc_dai_ops max98357a_dai_ops = {
 	.trigger	= max98357a_daiops_trigger,
 };
 
@@ -105,15 +105,8 @@ static struct snd_soc_dai_driver max98357a_dai_driver = {
 
 static int max98357a_platform_probe(struct platform_device *pdev)
 {
-	int ret;
-
-	ret = snd_soc_register_codec(&pdev->dev, &max98357a_codec_driver,
+	return snd_soc_register_codec(&pdev->dev, &max98357a_codec_driver,
 			&max98357a_dai_driver, 1);
-	if (ret)
-		dev_err(&pdev->dev, "%s() error registering codec driver: %d\n",
-				__func__, ret);
-
-	return ret;
 }
 
 static int max98357a_platform_remove(struct platform_device *pdev)
@@ -131,10 +124,19 @@ static const struct of_device_id max98357a_device_id[] = {
 MODULE_DEVICE_TABLE(of, max98357a_device_id);
 #endif
 
+#ifdef CONFIG_ACPI
+static const struct acpi_device_id max98357a_acpi_match[] = {
+	{ "MX98357A", 0 },
+	{},
+};
+MODULE_DEVICE_TABLE(acpi, max98357a_acpi_match);
+#endif
+
 static struct platform_driver max98357a_platform_driver = {
 	.driver = {
 		.name = "max98357a",
 		.of_match_table = of_match_ptr(max98357a_device_id),
+		.acpi_match_table = ACPI_PTR(max98357a_acpi_match),
 	},
 	.probe	= max98357a_platform_probe,
 	.remove = max98357a_platform_remove,

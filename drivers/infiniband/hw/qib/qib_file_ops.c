@@ -45,6 +45,8 @@
 #include <linux/export.h>
 #include <linux/uio.h>
 
+#include <rdma/ib.h>
+
 #include "qib.h"
 #include "qib_common.h"
 #include "qib_user_sdma.h"
@@ -822,10 +824,7 @@ static int mmap_piobufs(struct vm_area_struct *vma,
 	phys = dd->physaddr + piobufs;
 
 #if defined(__powerpc__)
-	/* There isn't a generic way to specify writethrough mappings */
-	pgprot_val(vma->vm_page_prot) |= _PAGE_NO_CACHE;
-	pgprot_val(vma->vm_page_prot) |= _PAGE_WRITETHRU;
-	pgprot_val(vma->vm_page_prot) &= ~_PAGE_GUARDED;
+	vma->vm_page_prot = pgprot_noncached(vma->vm_page_prot);
 #endif
 
 	/*
@@ -908,7 +907,7 @@ static int qib_file_vma_fault(struct vm_area_struct *vma, struct vm_fault *vmf)
 	return 0;
 }
 
-static struct vm_operations_struct qib_file_vm_ops = {
+static const struct vm_operations_struct qib_file_vm_ops = {
 	.fault = qib_file_vma_fault,
 };
 
@@ -2066,6 +2065,9 @@ static ssize_t qib_write(struct file *fp, const char __user *data,
 	struct qib_cmd cmd;
 	ssize_t ret = 0;
 	void *dest;
+
+	if (WARN_ON_ONCE(!ib_safe_file_access(fp)))
+		return -EACCES;
 
 	if (count < sizeof(cmd.type)) {
 		ret = -EINVAL;

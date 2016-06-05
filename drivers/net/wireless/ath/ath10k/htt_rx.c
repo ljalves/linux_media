@@ -31,6 +31,8 @@
 /* when under memory pressure rx ring refill may fail and needs a retry */
 #define HTT_RX_RING_REFILL_RETRY_MS 50
 
+#define HTT_RX_RING_REFILL_RESCHED_MS 5
+
 static int ath10k_htt_rx_get_csum_state(struct sk_buff *skb);
 static void ath10k_htt_txrx_compl_task(unsigned long ptr);
 
@@ -192,7 +194,8 @@ static void ath10k_htt_rx_msdu_buff_replenish(struct ath10k_htt *htt)
 		mod_timer(&htt->rx_ring.refill_retry_timer, jiffies +
 			  msecs_to_jiffies(HTT_RX_RING_REFILL_RETRY_MS));
 	} else if (num_deficit > 0) {
-		tasklet_schedule(&htt->rx_replenish_task);
+		mod_timer(&htt->rx_ring.refill_retry_timer, jiffies +
+			  msecs_to_jiffies(HTT_RX_RING_REFILL_RESCHED_MS));
 	}
 	spin_unlock_bh(&htt->rx_ring.lock);
 }
@@ -223,12 +226,11 @@ int ath10k_htt_rx_ring_refill(struct ath10k *ar)
 void ath10k_htt_rx_free(struct ath10k_htt *htt)
 {
 	del_timer_sync(&htt->rx_ring.refill_retry_timer);
-	tasklet_kill(&htt->rx_replenish_task);
 	tasklet_kill(&htt->txrx_compl_task);
 
-	skb_queue_purge(&htt->tx_compl_q);
 	skb_queue_purge(&htt->rx_compl_q);
 	skb_queue_purge(&htt->rx_in_ord_compl_q);
+	skb_queue_purge(&htt->tx_fetch_ind_q);
 
 	ath10k_htt_rx_ring_free(htt);
 
@@ -281,7 +283,6 @@ static inline struct sk_buff *ath10k_htt_rx_netbuf_pop(struct ath10k_htt *htt)
 
 /* return: < 0 fatal error, 0 - non chained msdu, 1 chained msdu */
 static int ath10k_htt_rx_amsdu_pop(struct ath10k_htt *htt,
-				   u8 **fw_desc, int *fw_desc_len,
 				   struct sk_buff_head *amsdu)
 {
 	struct ath10k *ar = htt->ar;
@@ -323,52 +324,10 @@ static int ath10k_htt_rx_amsdu_pop(struct ath10k_htt *htt,
 			return -EIO;
 		}
 
-		/*
-		 * Copy the FW rx descriptor for this MSDU from the rx
-		 * indication message into the MSDU's netbuf. HL uses the
-		 * same rx indication message definition as LL, and simply
-		 * appends new info (fields from the HW rx desc, and the
-		 * MSDU payload itself). So, the offset into the rx
-		 * indication message only has to account for the standard
-		 * offset of the per-MSDU FW rx desc info within the
-		 * message, and how many bytes of the per-MSDU FW rx desc
-		 * info have already been consumed. (And the endianness of
-		 * the host, since for a big-endian host, the rx ind
-		 * message contents, including the per-MSDU rx desc bytes,
-		 * were byteswapped during upload.)
-		 */
-		if (*fw_desc_len > 0) {
-			rx_desc->fw_desc.info0 = **fw_desc;
-			/*
-			 * The target is expected to only provide the basic
-			 * per-MSDU rx descriptors. Just to be sure, verify
-			 * that the target has not attached extension data
-			 * (e.g. LRO flow ID).
-			 */
-
-			/* or more, if there's extension data */
-			(*fw_desc)++;
-			(*fw_desc_len)--;
-		} else {
-			/*
-			 * When an oversized AMSDU happened, FW will lost
-			 * some of MSDU status - in this case, the FW
-			 * descriptors provided will be less than the
-			 * actual MSDUs inside this MPDU. Mark the FW
-			 * descriptors so that it will still deliver to
-			 * upper stack, if no CRC error for this MPDU.
-			 *
-			 * FIX THIS - the FW descriptors are actually for
-			 * MSDUs in the end of this A-MSDU instead of the
-			 * beginning.
-			 */
-			rx_desc->fw_desc.info0 = 0;
-		}
-
 		msdu_len_invalid = !!(__le32_to_cpu(rx_desc->attention.flags)
 					& (RX_ATTENTION_FLAGS_MPDU_LENGTH_ERR |
 					   RX_ATTENTION_FLAGS_MSDU_LENGTH_ERR));
-		msdu_len = MS(__le32_to_cpu(rx_desc->msdu_start.info0),
+		msdu_len = MS(__le32_to_cpu(rx_desc->msdu_start.common.info0),
 			      RX_MSDU_START_INFO0_MSDU_LENGTH);
 		msdu_chained = rx_desc->frag_info.ring2_more_count;
 
@@ -394,7 +353,7 @@ static int ath10k_htt_rx_amsdu_pop(struct ath10k_htt *htt,
 			msdu_chaining = 1;
 		}
 
-		last_msdu = __le32_to_cpu(rx_desc->msdu_end.info0) &
+		last_msdu = __le32_to_cpu(rx_desc->msdu_end.common.info0) &
 				RX_MSDU_END_INFO0_LAST_MSDU;
 
 		trace_ath10k_htt_rx_desc(ar, &rx_desc->attention,
@@ -421,13 +380,6 @@ static int ath10k_htt_rx_amsdu_pop(struct ath10k_htt *htt,
 	 */
 
 	return msdu_chaining;
-}
-
-static void ath10k_htt_rx_replenish_task(unsigned long ptr)
-{
-	struct ath10k_htt *htt = (struct ath10k_htt *)ptr;
-
-	ath10k_htt_rx_msdu_buff_replenish(htt);
 }
 
 static struct sk_buff *ath10k_htt_rx_pop_paddr(struct ath10k_htt *htt,
@@ -536,7 +488,7 @@ int ath10k_htt_rx_alloc(struct ath10k_htt *htt)
 
 	size = htt->rx_ring.size * sizeof(htt->rx_ring.paddrs_ring);
 
-	vaddr = dma_alloc_coherent(htt->ar->dev, size, &paddr, GFP_DMA);
+	vaddr = dma_alloc_coherent(htt->ar->dev, size, &paddr, GFP_KERNEL);
 	if (!vaddr)
 		goto err_dma_ring;
 
@@ -545,7 +497,7 @@ int ath10k_htt_rx_alloc(struct ath10k_htt *htt)
 
 	vaddr = dma_alloc_coherent(htt->ar->dev,
 				   sizeof(*htt->rx_ring.alloc_idx.vaddr),
-				   &paddr, GFP_DMA);
+				   &paddr, GFP_KERNEL);
 	if (!vaddr)
 		goto err_dma_idx;
 
@@ -563,12 +515,10 @@ int ath10k_htt_rx_alloc(struct ath10k_htt *htt)
 	htt->rx_ring.sw_rd_idx.msdu_payld = 0;
 	hash_init(htt->rx_ring.skb_table);
 
-	tasklet_init(&htt->rx_replenish_task, ath10k_htt_rx_replenish_task,
-		     (unsigned long)htt);
-
-	skb_queue_head_init(&htt->tx_compl_q);
 	skb_queue_head_init(&htt->rx_compl_q);
 	skb_queue_head_init(&htt->rx_in_ord_compl_q);
+	skb_queue_head_init(&htt->tx_fetch_ind_q);
+	atomic_set(&htt->num_mpdus_ready, 0);
 
 	tasklet_init(&htt->txrx_compl_task, ath10k_htt_txrx_compl_task,
 		     (unsigned long)htt);
@@ -637,58 +587,24 @@ static int ath10k_htt_rx_crypto_tail_len(struct ath10k *ar,
 	return 0;
 }
 
-struct rfc1042_hdr {
-	u8 llc_dsap;
-	u8 llc_ssap;
-	u8 llc_ctrl;
-	u8 snap_oui[3];
-	__be16 snap_type;
-} __packed;
-
 struct amsdu_subframe_hdr {
 	u8 dst[ETH_ALEN];
 	u8 src[ETH_ALEN];
 	__be16 len;
 } __packed;
 
-static const u8 rx_legacy_rate_idx[] = {
-	3,	/* 0x00  - 11Mbps  */
-	2,	/* 0x01  - 5.5Mbps */
-	1,	/* 0x02  - 2Mbps   */
-	0,	/* 0x03  - 1Mbps   */
-	3,	/* 0x04  - 11Mbps  */
-	2,	/* 0x05  - 5.5Mbps */
-	1,	/* 0x06  - 2Mbps   */
-	0,	/* 0x07  - 1Mbps   */
-	10,	/* 0x08  - 48Mbps  */
-	8,	/* 0x09  - 24Mbps  */
-	6,	/* 0x0A  - 12Mbps  */
-	4,	/* 0x0B  - 6Mbps   */
-	11,	/* 0x0C  - 54Mbps  */
-	9,	/* 0x0D  - 36Mbps  */
-	7,	/* 0x0E  - 18Mbps  */
-	5,	/* 0x0F  - 9Mbps   */
-};
+#define GROUP_ID_IS_SU_MIMO(x) ((x) == 0 || (x) == 63)
 
 static void ath10k_htt_rx_h_rates(struct ath10k *ar,
 				  struct ieee80211_rx_status *status,
 				  struct htt_rx_desc *rxd)
 {
-	enum ieee80211_band band;
-	u8 cck, rate, rate_idx, bw, sgi, mcs, nss;
+	struct ieee80211_supported_band *sband;
+	u8 cck, rate, bw, sgi, mcs, nss;
 	u8 preamble = 0;
+	u8 group_id;
 	u32 info1, info2, info3;
 
-	/* Band value can't be set as undefined but freq can be 0 - use that to
-	 * determine whether band is provided.
-	 *
-	 * FIXME: Perhaps this can go away if CCK rate reporting is a little
-	 * reworked?
-	 */
-	if (!status->freq)
-		return;
-
-	band = status->band;
 	info1 = __le32_to_cpu(rxd->ppdu_start.info1);
 	info2 = __le32_to_cpu(rxd->ppdu_start.info2);
 	info3 = __le32_to_cpu(rxd->ppdu_start.info3);
@@ -697,31 +613,18 @@ static void ath10k_htt_rx_h_rates(struct ath10k *ar,
 
 	switch (preamble) {
 	case HTT_RX_LEGACY:
+		/* To get legacy rate index band is required. Since band can't
+		 * be undefined check if freq is non-zero.
+		 */
+		if (!status->freq)
+			return;
+
 		cck = info1 & RX_PPDU_START_INFO1_L_SIG_RATE_SELECT;
 		rate = MS(info1, RX_PPDU_START_INFO1_L_SIG_RATE);
-		rate_idx = 0;
+		rate &= ~RX_PPDU_START_RATE_FLAG;
 
-		if (rate < 0x08 || rate > 0x0F)
-			break;
-
-		switch (band) {
-		case IEEE80211_BAND_2GHZ:
-			if (cck)
-				rate &= ~BIT(3);
-			rate_idx = rx_legacy_rate_idx[rate];
-			break;
-		case IEEE80211_BAND_5GHZ:
-			rate_idx = rx_legacy_rate_idx[rate];
-			/* We are using same rate table registering
-			   HW - ath10k_rates[]. In case of 5GHz skip
-			   CCK rates, so -4 here */
-			rate_idx -= 4;
-			break;
-		default:
-			break;
-		}
-
-		status->rate_idx = rate_idx;
+		sband = &ar->mac.sbands[status->band];
+		status->rate_idx = ath10k_mac_hw_rate_to_idx(sband, rate, cck);
 		break;
 	case HTT_RX_HT:
 	case HTT_RX_HT_WITH_TXBF:
@@ -742,10 +645,50 @@ static void ath10k_htt_rx_h_rates(struct ath10k *ar,
 	case HTT_RX_VHT_WITH_TXBF:
 		/* VHT-SIG-A1 in info2, VHT-SIG-A2 in info3
 		   TODO check this */
-		mcs = (info3 >> 4) & 0x0F;
-		nss = ((info2 >> 10) & 0x07) + 1;
 		bw = info2 & 3;
 		sgi = info3 & 1;
+		group_id = (info2 >> 4) & 0x3F;
+
+		if (GROUP_ID_IS_SU_MIMO(group_id)) {
+			mcs = (info3 >> 4) & 0x0F;
+			nss = ((info2 >> 10) & 0x07) + 1;
+		} else {
+			/* Hardware doesn't decode VHT-SIG-B into Rx descriptor
+			 * so it's impossible to decode MCS. Also since
+			 * firmware consumes Group Id Management frames host
+			 * has no knowledge regarding group/user position
+			 * mapping so it's impossible to pick the correct Nsts
+			 * from VHT-SIG-A1.
+			 *
+			 * Bandwidth and SGI are valid so report the rateinfo
+			 * on best-effort basis.
+			 */
+			mcs = 0;
+			nss = 1;
+		}
+
+		if (mcs > 0x09) {
+			ath10k_warn(ar, "invalid MCS received %u\n", mcs);
+			ath10k_warn(ar, "rxd %08x mpdu start %08x %08x msdu start %08x %08x ppdu start %08x %08x %08x %08x %08x\n",
+				    __le32_to_cpu(rxd->attention.flags),
+				    __le32_to_cpu(rxd->mpdu_start.info0),
+				    __le32_to_cpu(rxd->mpdu_start.info1),
+				    __le32_to_cpu(rxd->msdu_start.common.info0),
+				    __le32_to_cpu(rxd->msdu_start.common.info1),
+				    rxd->ppdu_start.info0,
+				    __le32_to_cpu(rxd->ppdu_start.info1),
+				    __le32_to_cpu(rxd->ppdu_start.info2),
+				    __le32_to_cpu(rxd->ppdu_start.info3),
+				    __le32_to_cpu(rxd->ppdu_start.info4));
+
+			ath10k_warn(ar, "msdu end %08x mpdu end %08x\n",
+				    __le32_to_cpu(rxd->msdu_end.common.info0),
+				    __le32_to_cpu(rxd->mpdu_end.info0));
+
+			ath10k_dbg_dump(ar, ATH10K_DBG_HTT_DUMP, NULL,
+					"rx desc msdu payload: ",
+					rxd->msdu_payload, 50);
+		}
 
 		status->rate_idx = mcs;
 		status->vht_nss = nss;
@@ -773,8 +716,87 @@ static void ath10k_htt_rx_h_rates(struct ath10k *ar,
 	}
 }
 
+static struct ieee80211_channel *
+ath10k_htt_rx_h_peer_channel(struct ath10k *ar, struct htt_rx_desc *rxd)
+{
+	struct ath10k_peer *peer;
+	struct ath10k_vif *arvif;
+	struct cfg80211_chan_def def;
+	u16 peer_id;
+
+	lockdep_assert_held(&ar->data_lock);
+
+	if (!rxd)
+		return NULL;
+
+	if (rxd->attention.flags &
+	    __cpu_to_le32(RX_ATTENTION_FLAGS_PEER_IDX_INVALID))
+		return NULL;
+
+	if (!(rxd->msdu_end.common.info0 &
+	      __cpu_to_le32(RX_MSDU_END_INFO0_FIRST_MSDU)))
+		return NULL;
+
+	peer_id = MS(__le32_to_cpu(rxd->mpdu_start.info0),
+		     RX_MPDU_START_INFO0_PEER_IDX);
+
+	peer = ath10k_peer_find_by_id(ar, peer_id);
+	if (!peer)
+		return NULL;
+
+	arvif = ath10k_get_arvif(ar, peer->vdev_id);
+	if (WARN_ON_ONCE(!arvif))
+		return NULL;
+
+	if (WARN_ON(ath10k_mac_vif_chan(arvif->vif, &def)))
+		return NULL;
+
+	return def.chan;
+}
+
+static struct ieee80211_channel *
+ath10k_htt_rx_h_vdev_channel(struct ath10k *ar, u32 vdev_id)
+{
+	struct ath10k_vif *arvif;
+	struct cfg80211_chan_def def;
+
+	lockdep_assert_held(&ar->data_lock);
+
+	list_for_each_entry(arvif, &ar->arvifs, list) {
+		if (arvif->vdev_id == vdev_id &&
+		    ath10k_mac_vif_chan(arvif->vif, &def) == 0)
+			return def.chan;
+	}
+
+	return NULL;
+}
+
+static void
+ath10k_htt_rx_h_any_chan_iter(struct ieee80211_hw *hw,
+			      struct ieee80211_chanctx_conf *conf,
+			      void *data)
+{
+	struct cfg80211_chan_def *def = data;
+
+	*def = conf->def;
+}
+
+static struct ieee80211_channel *
+ath10k_htt_rx_h_any_channel(struct ath10k *ar)
+{
+	struct cfg80211_chan_def def = {};
+
+	ieee80211_iter_chan_contexts_atomic(ar->hw,
+					    ath10k_htt_rx_h_any_chan_iter,
+					    &def);
+
+	return def.chan;
+}
+
 static bool ath10k_htt_rx_h_channel(struct ath10k *ar,
-				    struct ieee80211_rx_status *status)
+				    struct ieee80211_rx_status *status,
+				    struct htt_rx_desc *rxd,
+				    u32 vdev_id)
 {
 	struct ieee80211_channel *ch;
 
@@ -782,6 +804,14 @@ static bool ath10k_htt_rx_h_channel(struct ath10k *ar,
 	ch = ar->scan_channel;
 	if (!ch)
 		ch = ar->rx_channel;
+	if (!ch)
+		ch = ath10k_htt_rx_h_peer_channel(ar, rxd);
+	if (!ch)
+		ch = ath10k_htt_rx_h_vdev_channel(ar, vdev_id);
+	if (!ch)
+		ch = ath10k_htt_rx_h_any_channel(ar);
+	if (!ch)
+		ch = ar->tgt_oper_chan;
 	spin_unlock_bh(&ar->data_lock);
 
 	if (!ch)
@@ -819,7 +849,8 @@ static void ath10k_htt_rx_h_mactime(struct ath10k *ar,
 
 static void ath10k_htt_rx_h_ppdu(struct ath10k *ar,
 				 struct sk_buff_head *amsdu,
-				 struct ieee80211_rx_status *status)
+				 struct ieee80211_rx_status *status,
+				 u32 vdev_id)
 {
 	struct sk_buff *first;
 	struct htt_rx_desc *rxd;
@@ -851,7 +882,7 @@ static void ath10k_htt_rx_h_ppdu(struct ath10k *ar,
 		status->flag |= RX_FLAG_NO_SIGNAL_VAL;
 
 		ath10k_htt_rx_h_signal(ar, status, rxd);
-		ath10k_htt_rx_h_channel(ar, status);
+		ath10k_htt_rx_h_channel(ar, status, rxd, vdev_id);
 		ath10k_htt_rx_h_rates(ar, status, rxd);
 	}
 
@@ -900,7 +931,7 @@ static void ath10k_process_rx(struct ath10k *ar,
 	*status = *rx_status;
 
 	ath10k_dbg(ar, ATH10K_DBG_DATA,
-		   "rx skb %p len %u peer %pM %s %s sn %u %s%s%s%s%s %srate_idx %u vht_nss %u freq %u band %u flag 0x%x fcs-err %i mic-err %i amsdu-more %i\n",
+		   "rx skb %p len %u peer %pM %s %s sn %u %s%s%s%s%s %srate_idx %u vht_nss %u freq %u band %u flag 0x%llx fcs-err %i mic-err %i amsdu-more %i\n",
 		   skb,
 		   skb->len,
 		   ieee80211_get_SA(hdr),
@@ -929,10 +960,16 @@ static void ath10k_process_rx(struct ath10k *ar,
 	ieee80211_rx(ar->hw, skb);
 }
 
-static int ath10k_htt_rx_nwifi_hdrlen(struct ieee80211_hdr *hdr)
+static int ath10k_htt_rx_nwifi_hdrlen(struct ath10k *ar,
+				      struct ieee80211_hdr *hdr)
 {
-	/* nwifi header is padded to 4 bytes. this fixes 4addr rx */
-	return round_up(ieee80211_hdrlen(hdr->frame_control), 4);
+	int len = ieee80211_hdrlen(hdr->frame_control);
+
+	if (!test_bit(ATH10K_FW_FEATURE_NO_NWIFI_DECAP_4ADDR_PADDING,
+		      ar->running_fw->fw_file.fw_features))
+		len = round_up(len, 4);
+
+	return len;
 }
 
 static void ath10k_htt_rx_h_undecap_raw(struct ath10k *ar,
@@ -949,9 +986,9 @@ static void ath10k_htt_rx_h_undecap_raw(struct ath10k *ar,
 	bool is_last;
 
 	rxd = (void *)msdu->data - sizeof(*rxd);
-	is_first = !!(rxd->msdu_end.info0 &
+	is_first = !!(rxd->msdu_end.common.info0 &
 		      __cpu_to_le32(RX_MSDU_END_INFO0_FIRST_MSDU));
-	is_last = !!(rxd->msdu_end.info0 &
+	is_last = !!(rxd->msdu_end.common.info0 &
 		     __cpu_to_le32(RX_MSDU_END_INFO0_LAST_MSDU));
 
 	/* Delivered decapped frame:
@@ -975,9 +1012,8 @@ static void ath10k_htt_rx_h_undecap_raw(struct ath10k *ar,
 	skb_trim(msdu, msdu->len - FCS_LEN);
 
 	/* In most cases this will be true for sniffed frames. It makes sense
-	 * to deliver them as-is without stripping the crypto param. This would
-	 * also make sense for software based decryption (which is not
-	 * implemented in ath10k).
+	 * to deliver them as-is without stripping the crypto param. This is
+	 * necessary for software based decryption.
 	 *
 	 * If there's no error then the frame is decrypted. At least that is
 	 * the case for frames that come in via fragmented rx indication.
@@ -992,20 +1028,25 @@ static void ath10k_htt_rx_h_undecap_raw(struct ath10k *ar,
 	hdr = (void *)msdu->data;
 
 	/* Tail */
-	skb_trim(msdu, msdu->len - ath10k_htt_rx_crypto_tail_len(ar, enctype));
+	if (status->flag & RX_FLAG_IV_STRIPPED)
+		skb_trim(msdu, msdu->len -
+			 ath10k_htt_rx_crypto_tail_len(ar, enctype));
 
 	/* MMIC */
-	if (!ieee80211_has_morefrags(hdr->frame_control) &&
+	if ((status->flag & RX_FLAG_MMIC_STRIPPED) &&
+	    !ieee80211_has_morefrags(hdr->frame_control) &&
 	    enctype == HTT_RX_MPDU_ENCRYPT_TKIP_WPA)
 		skb_trim(msdu, msdu->len - 8);
 
 	/* Head */
-	hdr_len = ieee80211_hdrlen(hdr->frame_control);
-	crypto_len = ath10k_htt_rx_crypto_param_len(ar, enctype);
+	if (status->flag & RX_FLAG_IV_STRIPPED) {
+		hdr_len = ieee80211_hdrlen(hdr->frame_control);
+		crypto_len = ath10k_htt_rx_crypto_param_len(ar, enctype);
 
-	memmove((void *)msdu->data + crypto_len,
-		(void *)msdu->data, hdr_len);
-	skb_pull(msdu, crypto_len);
+		memmove((void *)msdu->data + crypto_len,
+			(void *)msdu->data, hdr_len);
+		skb_pull(msdu, crypto_len);
+	}
 }
 
 static void ath10k_htt_rx_h_undecap_nwifi(struct ath10k *ar,
@@ -1030,8 +1071,21 @@ static void ath10k_htt_rx_h_undecap_nwifi(struct ath10k *ar,
 	 */
 
 	/* pull decapped header and copy SA & DA */
-	hdr = (struct ieee80211_hdr *)msdu->data;
-	hdr_len = ath10k_htt_rx_nwifi_hdrlen(hdr);
+	if ((ar->hw_params.hw_4addr_pad == ATH10K_HW_4ADDR_PAD_BEFORE) &&
+	    ieee80211_has_a4(((struct ieee80211_hdr *)first_hdr)->frame_control)) {
+		/* The QCA99X0 4 address mode pad 2 bytes at the
+		 * beginning of MSDU
+		 */
+		hdr = (struct ieee80211_hdr *)(msdu->data + 2);
+		/* The skb length need be extended 2 as the 2 bytes at the tail
+		 * be excluded due to the padding
+		 */
+		skb_put(msdu, 2);
+	} else {
+		hdr = (struct ieee80211_hdr *)(msdu->data);
+	}
+
+	hdr_len = ath10k_htt_rx_nwifi_hdrlen(ar, hdr);
 	ether_addr_copy(da, ieee80211_get_DA(hdr));
 	ether_addr_copy(sa, ieee80211_get_SA(hdr));
 	skb_pull(msdu, hdr_len);
@@ -1062,9 +1116,9 @@ static void *ath10k_htt_rx_h_find_rfc1042(struct ath10k *ar,
 	rxd = (void *)msdu->data - sizeof(*rxd);
 	hdr = (void *)rxd->rx_hdr_status;
 
-	is_first = !!(rxd->msdu_end.info0 &
+	is_first = !!(rxd->msdu_end.common.info0 &
 		      __cpu_to_le32(RX_MSDU_END_INFO0_FIRST_MSDU));
-	is_last = !!(rxd->msdu_end.info0 &
+	is_last = !!(rxd->msdu_end.common.info0 &
 		     __cpu_to_le32(RX_MSDU_END_INFO0_LAST_MSDU));
 	is_amsdu = !(is_first && is_last);
 
@@ -1159,7 +1213,6 @@ static void ath10k_htt_rx_h_undecap(struct ath10k *ar,
 {
 	struct htt_rx_desc *rxd;
 	enum rx_msdu_decap_format decap;
-	struct ieee80211_hdr *hdr;
 
 	/* First msdu's decapped header:
 	 * [802.11 header] <-- padded to 4 bytes long
@@ -1173,8 +1226,7 @@ static void ath10k_htt_rx_h_undecap(struct ath10k *ar,
 	 */
 
 	rxd = (void *)msdu->data - sizeof(*rxd);
-	hdr = (void *)rxd->rx_hdr_status;
-	decap = MS(__le32_to_cpu(rxd->msdu_start.info1),
+	decap = MS(__le32_to_cpu(rxd->msdu_start.common.info1),
 		   RX_MSDU_START_INFO1_DECAP_FORMAT);
 
 	switch (decap) {
@@ -1204,7 +1256,7 @@ static int ath10k_htt_rx_get_csum_state(struct sk_buff *skb)
 
 	rxd = (void *)skb->data - sizeof(*rxd);
 	flags = __le32_to_cpu(rxd->attention.flags);
-	info = __le32_to_cpu(rxd->msdu_start.info1);
+	info = __le32_to_cpu(rxd->msdu_start.common.info1);
 
 	is_ip4 = !!(info & RX_MSDU_START_INFO1_IPV4_PROTO);
 	is_ip6 = !!(info & RX_MSDU_START_INFO1_IPV6_PROTO);
@@ -1248,6 +1300,7 @@ static void ath10k_htt_rx_h_mpdu(struct ath10k *ar,
 	bool has_tkip_err;
 	bool has_peer_idx_invalid;
 	bool is_decrypted;
+	bool is_mgmt;
 	u32 attention;
 
 	if (skb_queue_empty(amsdu))
@@ -1255,6 +1308,9 @@ static void ath10k_htt_rx_h_mpdu(struct ath10k *ar,
 
 	first = skb_peek(amsdu);
 	rxd = (void *)first->data - sizeof(*rxd);
+
+	is_mgmt = !!(rxd->attention.flags &
+		     __cpu_to_le32(RX_ATTENTION_FLAGS_MGMT_TYPE));
 
 	enctype = MS(__le32_to_cpu(rxd->mpdu_start.info0),
 		     RX_MPDU_START_INFO0_ENCRYPT_TYPE);
@@ -1297,6 +1353,7 @@ static void ath10k_htt_rx_h_mpdu(struct ath10k *ar,
 			  RX_FLAG_MMIC_ERROR |
 			  RX_FLAG_DECRYPTED |
 			  RX_FLAG_IV_STRIPPED |
+			  RX_FLAG_ONLY_MONITOR |
 			  RX_FLAG_MMIC_STRIPPED);
 
 	if (has_fcs_err)
@@ -1305,10 +1362,21 @@ static void ath10k_htt_rx_h_mpdu(struct ath10k *ar,
 	if (has_tkip_err)
 		status->flag |= RX_FLAG_MMIC_ERROR;
 
-	if (is_decrypted)
-		status->flag |= RX_FLAG_DECRYPTED |
-				RX_FLAG_IV_STRIPPED |
-				RX_FLAG_MMIC_STRIPPED;
+	/* Firmware reports all necessary management frames via WMI already.
+	 * They are not reported to monitor interfaces at all so pass the ones
+	 * coming via HTT to monitor interfaces instead. This simplifies
+	 * matters a lot.
+	 */
+	if (is_mgmt)
+		status->flag |= RX_FLAG_ONLY_MONITOR;
+
+	if (is_decrypted) {
+		status->flag |= RX_FLAG_DECRYPTED;
+
+		if (likely(!is_mgmt))
+			status->flag |= RX_FLAG_IV_STRIPPED |
+					RX_FLAG_MMIC_STRIPPED;
+}
 
 	skb_queue_walk(amsdu, msdu) {
 		ath10k_htt_rx_h_csum_offload(msdu);
@@ -1320,6 +1388,8 @@ static void ath10k_htt_rx_h_mpdu(struct ath10k *ar,
 		 * it then remove the protected bit.
 		 */
 		if (!is_decrypted)
+			continue;
+		if (is_mgmt)
 			continue;
 
 		hdr = (void *)msdu->data;
@@ -1397,7 +1467,7 @@ static void ath10k_htt_rx_h_unchain(struct ath10k *ar,
 
 	first = skb_peek(amsdu);
 	rxd = (void *)first->data - sizeof(*rxd);
-	decap = MS(__le32_to_cpu(rxd->msdu_start.info1),
+	decap = MS(__le32_to_cpu(rxd->msdu_start.common.info1),
 		   RX_MSDU_START_INFO1_DECAP_FORMAT);
 
 	if (!chained)
@@ -1421,37 +1491,12 @@ static bool ath10k_htt_rx_amsdu_allowed(struct ath10k *ar,
 					struct sk_buff_head *amsdu,
 					struct ieee80211_rx_status *rx_status)
 {
-	struct sk_buff *msdu;
-	struct htt_rx_desc *rxd;
-	bool is_mgmt;
-	bool has_fcs_err;
-
-	msdu = skb_peek(amsdu);
-	rxd = (void *)msdu->data - sizeof(*rxd);
-
 	/* FIXME: It might be a good idea to do some fuzzy-testing to drop
 	 * invalid/dangerous frames.
 	 */
 
 	if (!rx_status->freq) {
 		ath10k_warn(ar, "no channel configured; ignoring frame(s)!\n");
-		return false;
-	}
-
-	is_mgmt = !!(rxd->attention.flags &
-		     __cpu_to_le32(RX_ATTENTION_FLAGS_MGMT_TYPE));
-	has_fcs_err = !!(rxd->attention.flags &
-			 __cpu_to_le32(RX_ATTENTION_FLAGS_FCS_ERR));
-
-	/* Management frames are handled via WMI events. The pros of such
-	 * approach is that channel is explicitly provided in WMI events
-	 * whereas HTT doesn't provide channel information for Rxed frames.
-	 *
-	 * However some firmware revisions don't report corrupted frames via
-	 * WMI so don't drop them.
-	 */
-	if (is_mgmt && !has_fcs_err) {
-		ath10k_dbg(ar, ATH10K_DBG_HTT, "htt rx mgmt ctrl\n");
 		return false;
 	}
 
@@ -1476,25 +1521,49 @@ static void ath10k_htt_rx_h_filter(struct ath10k *ar,
 	__skb_queue_purge(amsdu);
 }
 
-static void ath10k_htt_rx_handler(struct ath10k_htt *htt,
-				  struct htt_rx_indication *rx)
+static int ath10k_htt_rx_handle_amsdu(struct ath10k_htt *htt)
 {
 	struct ath10k *ar = htt->ar;
-	struct ieee80211_rx_status *rx_status = &htt->rx_status;
-	struct htt_rx_indication_mpdu_range *mpdu_ranges;
+	static struct ieee80211_rx_status rx_status;
 	struct sk_buff_head amsdu;
+	int ret;
+
+	__skb_queue_head_init(&amsdu);
+
+	spin_lock_bh(&htt->rx_ring.lock);
+	if (htt->rx_confused) {
+		spin_unlock_bh(&htt->rx_ring.lock);
+		return -EIO;
+	}
+	ret = ath10k_htt_rx_amsdu_pop(htt, &amsdu);
+	spin_unlock_bh(&htt->rx_ring.lock);
+
+	if (ret < 0) {
+		ath10k_warn(ar, "rx ring became corrupted: %d\n", ret);
+		__skb_queue_purge(&amsdu);
+		/* FIXME: It's probably a good idea to reboot the
+		 * device instead of leaving it inoperable.
+		 */
+		htt->rx_confused = true;
+		return ret;
+	}
+
+	ath10k_htt_rx_h_ppdu(ar, &amsdu, &rx_status, 0xffff);
+	ath10k_htt_rx_h_unchain(ar, &amsdu, ret > 0);
+	ath10k_htt_rx_h_filter(ar, &amsdu, &rx_status);
+	ath10k_htt_rx_h_mpdu(ar, &amsdu, &rx_status);
+	ath10k_htt_rx_h_deliver(ar, &amsdu, &rx_status);
+
+	return 0;
+}
+
+static void ath10k_htt_rx_proc_rx_ind(struct ath10k_htt *htt,
+				      struct htt_rx_indication *rx)
+{
+	struct ath10k *ar = htt->ar;
+	struct htt_rx_indication_mpdu_range *mpdu_ranges;
 	int num_mpdu_ranges;
-	int fw_desc_len;
-	u8 *fw_desc;
-	int i, ret, mpdu_count = 0;
-
-	lockdep_assert_held(&htt->rx_ring.lock);
-
-	if (htt->rx_confused)
-		return;
-
-	fw_desc_len = __le16_to_cpu(rx->prefix.fw_rx_desc_bytes);
-	fw_desc = (u8 *)&rx->fw_desc;
+	int i, mpdu_count = 0;
 
 	num_mpdu_ranges = MS(__le32_to_cpu(rx->hdr.info1),
 			     HTT_RX_INDICATION_INFO1_NUM_MPDU_RANGES);
@@ -1508,80 +1577,19 @@ static void ath10k_htt_rx_handler(struct ath10k_htt *htt,
 	for (i = 0; i < num_mpdu_ranges; i++)
 		mpdu_count += mpdu_ranges[i].mpdu_count;
 
-	while (mpdu_count--) {
-		__skb_queue_head_init(&amsdu);
-		ret = ath10k_htt_rx_amsdu_pop(htt, &fw_desc,
-					      &fw_desc_len, &amsdu);
-		if (ret < 0) {
-			ath10k_warn(ar, "rx ring became corrupted: %d\n", ret);
-			__skb_queue_purge(&amsdu);
-			/* FIXME: It's probably a good idea to reboot the
-			 * device instead of leaving it inoperable.
-			 */
-			htt->rx_confused = true;
-			break;
-		}
+	atomic_add(mpdu_count, &htt->num_mpdus_ready);
 
-		ath10k_htt_rx_h_ppdu(ar, &amsdu, rx_status);
-		ath10k_htt_rx_h_unchain(ar, &amsdu, ret > 0);
-		ath10k_htt_rx_h_filter(ar, &amsdu, rx_status);
-		ath10k_htt_rx_h_mpdu(ar, &amsdu, rx_status);
-		ath10k_htt_rx_h_deliver(ar, &amsdu, rx_status);
-	}
-
-	tasklet_schedule(&htt->rx_replenish_task);
+	tasklet_schedule(&htt->txrx_compl_task);
 }
 
-static void ath10k_htt_rx_frag_handler(struct ath10k_htt *htt,
-				       struct htt_rx_fragment_indication *frag)
+static void ath10k_htt_rx_frag_handler(struct ath10k_htt *htt)
 {
-	struct ath10k *ar = htt->ar;
-	struct ieee80211_rx_status *rx_status = &htt->rx_status;
-	struct sk_buff_head amsdu;
-	int ret;
-	u8 *fw_desc;
-	int fw_desc_len;
+	atomic_inc(&htt->num_mpdus_ready);
 
-	fw_desc_len = __le16_to_cpu(frag->fw_rx_desc_bytes);
-	fw_desc = (u8 *)frag->fw_msdu_rx_desc;
-
-	__skb_queue_head_init(&amsdu);
-
-	spin_lock_bh(&htt->rx_ring.lock);
-	ret = ath10k_htt_rx_amsdu_pop(htt, &fw_desc, &fw_desc_len,
-				      &amsdu);
-	spin_unlock_bh(&htt->rx_ring.lock);
-
-	tasklet_schedule(&htt->rx_replenish_task);
-
-	ath10k_dbg(ar, ATH10K_DBG_HTT_DUMP, "htt rx frag ahead\n");
-
-	if (ret) {
-		ath10k_warn(ar, "failed to pop amsdu from httr rx ring for fragmented rx %d\n",
-			    ret);
-		__skb_queue_purge(&amsdu);
-		return;
-	}
-
-	if (skb_queue_len(&amsdu) != 1) {
-		ath10k_warn(ar, "failed to pop frag amsdu: too many msdus\n");
-		__skb_queue_purge(&amsdu);
-		return;
-	}
-
-	ath10k_htt_rx_h_ppdu(ar, &amsdu, rx_status);
-	ath10k_htt_rx_h_filter(ar, &amsdu, rx_status);
-	ath10k_htt_rx_h_mpdu(ar, &amsdu, rx_status);
-	ath10k_htt_rx_h_deliver(ar, &amsdu, rx_status);
-
-	if (fw_desc_len > 0) {
-		ath10k_dbg(ar, ATH10K_DBG_HTT,
-			   "expecting more fragmented rx in one indication %d\n",
-			   fw_desc_len);
-	}
+	tasklet_schedule(&htt->txrx_compl_task);
 }
 
-static void ath10k_htt_rx_frm_tx_compl(struct ath10k *ar,
+static void ath10k_htt_rx_tx_compl_ind(struct ath10k *ar,
 				       struct sk_buff *skb)
 {
 	struct ath10k_htt *htt = &ar->htt;
@@ -1591,22 +1599,21 @@ static void ath10k_htt_rx_frm_tx_compl(struct ath10k *ar,
 	__le16 msdu_id;
 	int i;
 
-	lockdep_assert_held(&htt->tx_lock);
-
 	switch (status) {
 	case HTT_DATA_TX_STATUS_NO_ACK:
-		tx_done.no_ack = true;
+		tx_done.status = HTT_TX_COMPL_STATE_NOACK;
 		break;
 	case HTT_DATA_TX_STATUS_OK:
+		tx_done.status = HTT_TX_COMPL_STATE_ACK;
 		break;
 	case HTT_DATA_TX_STATUS_DISCARD:
 	case HTT_DATA_TX_STATUS_POSTPONE:
 	case HTT_DATA_TX_STATUS_DOWNLOAD_FAIL:
-		tx_done.discard = true;
+		tx_done.status = HTT_TX_COMPL_STATE_DISCARD;
 		break;
 	default:
 		ath10k_warn(ar, "unhandled tx completion status %d\n", status);
-		tx_done.discard = true;
+		tx_done.status = HTT_TX_COMPL_STATE_DISCARD;
 		break;
 	}
 
@@ -1616,7 +1623,20 @@ static void ath10k_htt_rx_frm_tx_compl(struct ath10k *ar,
 	for (i = 0; i < resp->data_tx_completion.num_msdus; i++) {
 		msdu_id = resp->data_tx_completion.msdus[i];
 		tx_done.msdu_id = __le16_to_cpu(msdu_id);
-		ath10k_txrx_tx_unref(htt, &tx_done);
+
+		/* kfifo_put: In practice firmware shouldn't fire off per-CE
+		 * interrupt and main interrupt (MSI/-X range case) for the same
+		 * HTC service so it should be safe to use kfifo_put w/o lock.
+		 *
+		 * From kfifo_put() documentation:
+		 *  Note that with only one concurrent reader and one concurrent
+		 *  writer, you don't need extra locking to use these macro.
+		 */
+		if (!kfifo_put(&htt->txdone_fifo, tx_done)) {
+			ath10k_warn(ar, "txdone fifo overrun, msdu_id %d status %d\n",
+				    tx_done.msdu_id, tx_done.status);
+			ath10k_txrx_tx_unref(htt, &tx_done);
+		}
 	}
 }
 
@@ -1716,14 +1736,14 @@ static int ath10k_htt_rx_extract_amsdu(struct sk_buff_head *list,
 		__skb_queue_tail(amsdu, msdu);
 
 		rxd = (void *)msdu->data - sizeof(*rxd);
-		if (rxd->msdu_end.info0 &
+		if (rxd->msdu_end.common.info0 &
 		    __cpu_to_le32(RX_MSDU_END_INFO0_LAST_MSDU))
 			break;
 	}
 
 	msdu = skb_peek_tail(amsdu);
 	rxd = (void *)msdu->data - sizeof(*rxd);
-	if (!(rxd->msdu_end.info0 &
+	if (!(rxd->msdu_end.common.info0 &
 	      __cpu_to_le32(RX_MSDU_END_INFO0_LAST_MSDU))) {
 		skb_queue_splice_init(amsdu, list);
 		return -EAGAIN;
@@ -1796,7 +1816,7 @@ static void ath10k_htt_rx_h_rx_offload(struct ath10k *ar,
 		status->flag |= RX_FLAG_NO_SIGNAL_VAL;
 
 		ath10k_htt_rx_h_rx_offload_prot(status, msdu);
-		ath10k_htt_rx_h_channel(ar, status);
+		ath10k_htt_rx_h_channel(ar, status, NULL, rx->vdev_id);
 		ath10k_process_rx(ar, status, msdu);
 	}
 }
@@ -1869,7 +1889,7 @@ static void ath10k_htt_rx_in_ord_ind(struct ath10k *ar, struct sk_buff *skb)
 			 * better to report something than nothing though. This
 			 * should still give an idea about rx rate to the user.
 			 */
-			ath10k_htt_rx_h_ppdu(ar, &amsdu, status);
+			ath10k_htt_rx_h_ppdu(ar, &amsdu, status, vdev_id);
 			ath10k_htt_rx_h_filter(ar, &amsdu, status);
 			ath10k_htt_rx_h_mpdu(ar, &amsdu, status);
 			ath10k_htt_rx_h_deliver(ar, &amsdu, status);
@@ -1884,14 +1904,328 @@ static void ath10k_htt_rx_in_ord_ind(struct ath10k *ar, struct sk_buff *skb)
 			return;
 		}
 	}
-
-	tasklet_schedule(&htt->rx_replenish_task);
+	ath10k_htt_rx_msdu_buff_replenish(htt);
 }
 
-void ath10k_htt_t2h_msg_handler(struct ath10k *ar, struct sk_buff *skb)
+static void ath10k_htt_rx_tx_fetch_resp_id_confirm(struct ath10k *ar,
+						   const __le32 *resp_ids,
+						   int num_resp_ids)
+{
+	int i;
+	u32 resp_id;
+
+	ath10k_dbg(ar, ATH10K_DBG_HTT, "htt rx tx fetch confirm num_resp_ids %d\n",
+		   num_resp_ids);
+
+	for (i = 0; i < num_resp_ids; i++) {
+		resp_id = le32_to_cpu(resp_ids[i]);
+
+		ath10k_dbg(ar, ATH10K_DBG_HTT, "htt rx tx fetch confirm resp_id %u\n",
+			   resp_id);
+
+		/* TODO: free resp_id */
+	}
+}
+
+static void ath10k_htt_rx_tx_fetch_ind(struct ath10k *ar, struct sk_buff *skb)
+{
+	struct ieee80211_hw *hw = ar->hw;
+	struct ieee80211_txq *txq;
+	struct htt_resp *resp = (struct htt_resp *)skb->data;
+	struct htt_tx_fetch_record *record;
+	size_t len;
+	size_t max_num_bytes;
+	size_t max_num_msdus;
+	size_t num_bytes;
+	size_t num_msdus;
+	const __le32 *resp_ids;
+	u16 num_records;
+	u16 num_resp_ids;
+	u16 peer_id;
+	u8 tid;
+	int ret;
+	int i;
+
+	ath10k_dbg(ar, ATH10K_DBG_HTT, "htt rx tx fetch ind\n");
+
+	len = sizeof(resp->hdr) + sizeof(resp->tx_fetch_ind);
+	if (unlikely(skb->len < len)) {
+		ath10k_warn(ar, "received corrupted tx_fetch_ind event: buffer too short\n");
+		return;
+	}
+
+	num_records = le16_to_cpu(resp->tx_fetch_ind.num_records);
+	num_resp_ids = le16_to_cpu(resp->tx_fetch_ind.num_resp_ids);
+
+	len += sizeof(resp->tx_fetch_ind.records[0]) * num_records;
+	len += sizeof(resp->tx_fetch_ind.resp_ids[0]) * num_resp_ids;
+
+	if (unlikely(skb->len < len)) {
+		ath10k_warn(ar, "received corrupted tx_fetch_ind event: too many records/resp_ids\n");
+		return;
+	}
+
+	ath10k_dbg(ar, ATH10K_DBG_HTT, "htt rx tx fetch ind num records %hu num resps %hu seq %hu\n",
+		   num_records, num_resp_ids,
+		   le16_to_cpu(resp->tx_fetch_ind.fetch_seq_num));
+
+	if (!ar->htt.tx_q_state.enabled) {
+		ath10k_warn(ar, "received unexpected tx_fetch_ind event: not enabled\n");
+		return;
+	}
+
+	if (ar->htt.tx_q_state.mode == HTT_TX_MODE_SWITCH_PUSH) {
+		ath10k_warn(ar, "received unexpected tx_fetch_ind event: in push mode\n");
+		return;
+	}
+
+	rcu_read_lock();
+
+	for (i = 0; i < num_records; i++) {
+		record = &resp->tx_fetch_ind.records[i];
+		peer_id = MS(le16_to_cpu(record->info),
+			     HTT_TX_FETCH_RECORD_INFO_PEER_ID);
+		tid = MS(le16_to_cpu(record->info),
+			 HTT_TX_FETCH_RECORD_INFO_TID);
+		max_num_msdus = le16_to_cpu(record->num_msdus);
+		max_num_bytes = le32_to_cpu(record->num_bytes);
+
+		ath10k_dbg(ar, ATH10K_DBG_HTT, "htt rx tx fetch record %i peer_id %hu tid %hhu msdus %zu bytes %zu\n",
+			   i, peer_id, tid, max_num_msdus, max_num_bytes);
+
+		if (unlikely(peer_id >= ar->htt.tx_q_state.num_peers) ||
+		    unlikely(tid >= ar->htt.tx_q_state.num_tids)) {
+			ath10k_warn(ar, "received out of range peer_id %hu tid %hhu\n",
+				    peer_id, tid);
+			continue;
+		}
+
+		spin_lock_bh(&ar->data_lock);
+		txq = ath10k_mac_txq_lookup(ar, peer_id, tid);
+		spin_unlock_bh(&ar->data_lock);
+
+		/* It is okay to release the lock and use txq because RCU read
+		 * lock is held.
+		 */
+
+		if (unlikely(!txq)) {
+			ath10k_warn(ar, "failed to lookup txq for peer_id %hu tid %hhu\n",
+				    peer_id, tid);
+			continue;
+		}
+
+		num_msdus = 0;
+		num_bytes = 0;
+
+		while (num_msdus < max_num_msdus &&
+		       num_bytes < max_num_bytes) {
+			ret = ath10k_mac_tx_push_txq(hw, txq);
+			if (ret < 0)
+				break;
+
+			num_msdus++;
+			num_bytes += ret;
+		}
+
+		record->num_msdus = cpu_to_le16(num_msdus);
+		record->num_bytes = cpu_to_le32(num_bytes);
+
+		ath10k_htt_tx_txq_recalc(hw, txq);
+	}
+
+	rcu_read_unlock();
+
+	resp_ids = ath10k_htt_get_tx_fetch_ind_resp_ids(&resp->tx_fetch_ind);
+	ath10k_htt_rx_tx_fetch_resp_id_confirm(ar, resp_ids, num_resp_ids);
+
+	ret = ath10k_htt_tx_fetch_resp(ar,
+				       resp->tx_fetch_ind.token,
+				       resp->tx_fetch_ind.fetch_seq_num,
+				       resp->tx_fetch_ind.records,
+				       num_records);
+	if (unlikely(ret)) {
+		ath10k_warn(ar, "failed to submit tx fetch resp for token 0x%08x: %d\n",
+			    le32_to_cpu(resp->tx_fetch_ind.token), ret);
+		/* FIXME: request fw restart */
+	}
+
+	ath10k_htt_tx_txq_sync(ar);
+}
+
+static void ath10k_htt_rx_tx_fetch_confirm(struct ath10k *ar,
+					   struct sk_buff *skb)
+{
+	const struct htt_resp *resp = (void *)skb->data;
+	size_t len;
+	int num_resp_ids;
+
+	ath10k_dbg(ar, ATH10K_DBG_HTT, "htt rx tx fetch confirm\n");
+
+	len = sizeof(resp->hdr) + sizeof(resp->tx_fetch_confirm);
+	if (unlikely(skb->len < len)) {
+		ath10k_warn(ar, "received corrupted tx_fetch_confirm event: buffer too short\n");
+		return;
+	}
+
+	num_resp_ids = le16_to_cpu(resp->tx_fetch_confirm.num_resp_ids);
+	len += sizeof(resp->tx_fetch_confirm.resp_ids[0]) * num_resp_ids;
+
+	if (unlikely(skb->len < len)) {
+		ath10k_warn(ar, "received corrupted tx_fetch_confirm event: resp_ids buffer overflow\n");
+		return;
+	}
+
+	ath10k_htt_rx_tx_fetch_resp_id_confirm(ar,
+					       resp->tx_fetch_confirm.resp_ids,
+					       num_resp_ids);
+}
+
+static void ath10k_htt_rx_tx_mode_switch_ind(struct ath10k *ar,
+					     struct sk_buff *skb)
+{
+	const struct htt_resp *resp = (void *)skb->data;
+	const struct htt_tx_mode_switch_record *record;
+	struct ieee80211_txq *txq;
+	struct ath10k_txq *artxq;
+	size_t len;
+	size_t num_records;
+	enum htt_tx_mode_switch_mode mode;
+	bool enable;
+	u16 info0;
+	u16 info1;
+	u16 threshold;
+	u16 peer_id;
+	u8 tid;
+	int i;
+
+	ath10k_dbg(ar, ATH10K_DBG_HTT, "htt rx tx mode switch ind\n");
+
+	len = sizeof(resp->hdr) + sizeof(resp->tx_mode_switch_ind);
+	if (unlikely(skb->len < len)) {
+		ath10k_warn(ar, "received corrupted tx_mode_switch_ind event: buffer too short\n");
+		return;
+	}
+
+	info0 = le16_to_cpu(resp->tx_mode_switch_ind.info0);
+	info1 = le16_to_cpu(resp->tx_mode_switch_ind.info1);
+
+	enable = !!(info0 & HTT_TX_MODE_SWITCH_IND_INFO0_ENABLE);
+	num_records = MS(info0, HTT_TX_MODE_SWITCH_IND_INFO1_THRESHOLD);
+	mode = MS(info1, HTT_TX_MODE_SWITCH_IND_INFO1_MODE);
+	threshold = MS(info1, HTT_TX_MODE_SWITCH_IND_INFO1_THRESHOLD);
+
+	ath10k_dbg(ar, ATH10K_DBG_HTT,
+		   "htt rx tx mode switch ind info0 0x%04hx info1 0x%04hx enable %d num records %zd mode %d threshold %hu\n",
+		   info0, info1, enable, num_records, mode, threshold);
+
+	len += sizeof(resp->tx_mode_switch_ind.records[0]) * num_records;
+
+	if (unlikely(skb->len < len)) {
+		ath10k_warn(ar, "received corrupted tx_mode_switch_mode_ind event: too many records\n");
+		return;
+	}
+
+	switch (mode) {
+	case HTT_TX_MODE_SWITCH_PUSH:
+	case HTT_TX_MODE_SWITCH_PUSH_PULL:
+		break;
+	default:
+		ath10k_warn(ar, "received invalid tx_mode_switch_mode_ind mode %d, ignoring\n",
+			    mode);
+		return;
+	}
+
+	if (!enable)
+		return;
+
+	ar->htt.tx_q_state.enabled = enable;
+	ar->htt.tx_q_state.mode = mode;
+	ar->htt.tx_q_state.num_push_allowed = threshold;
+
+	rcu_read_lock();
+
+	for (i = 0; i < num_records; i++) {
+		record = &resp->tx_mode_switch_ind.records[i];
+		info0 = le16_to_cpu(record->info0);
+		peer_id = MS(info0, HTT_TX_MODE_SWITCH_RECORD_INFO0_PEER_ID);
+		tid = MS(info0, HTT_TX_MODE_SWITCH_RECORD_INFO0_TID);
+
+		if (unlikely(peer_id >= ar->htt.tx_q_state.num_peers) ||
+		    unlikely(tid >= ar->htt.tx_q_state.num_tids)) {
+			ath10k_warn(ar, "received out of range peer_id %hu tid %hhu\n",
+				    peer_id, tid);
+			continue;
+		}
+
+		spin_lock_bh(&ar->data_lock);
+		txq = ath10k_mac_txq_lookup(ar, peer_id, tid);
+		spin_unlock_bh(&ar->data_lock);
+
+		/* It is okay to release the lock and use txq because RCU read
+		 * lock is held.
+		 */
+
+		if (unlikely(!txq)) {
+			ath10k_warn(ar, "failed to lookup txq for peer_id %hu tid %hhu\n",
+				    peer_id, tid);
+			continue;
+		}
+
+		spin_lock_bh(&ar->htt.tx_lock);
+		artxq = (void *)txq->drv_priv;
+		artxq->num_push_allowed = le16_to_cpu(record->num_max_msdus);
+		spin_unlock_bh(&ar->htt.tx_lock);
+	}
+
+	rcu_read_unlock();
+
+	ath10k_mac_tx_push_pending(ar);
+}
+
+static inline enum nl80211_band phy_mode_to_band(u32 phy_mode)
+{
+	enum nl80211_band band;
+
+	switch (phy_mode) {
+	case MODE_11A:
+	case MODE_11NA_HT20:
+	case MODE_11NA_HT40:
+	case MODE_11AC_VHT20:
+	case MODE_11AC_VHT40:
+	case MODE_11AC_VHT80:
+		band = NL80211_BAND_5GHZ;
+		break;
+	case MODE_11G:
+	case MODE_11B:
+	case MODE_11GONLY:
+	case MODE_11NG_HT20:
+	case MODE_11NG_HT40:
+	case MODE_11AC_VHT20_2G:
+	case MODE_11AC_VHT40_2G:
+	case MODE_11AC_VHT80_2G:
+	default:
+		band = NL80211_BAND_2GHZ;
+	}
+
+	return band;
+}
+
+void ath10k_htt_htc_t2h_msg_handler(struct ath10k *ar, struct sk_buff *skb)
+{
+	bool release;
+
+	release = ath10k_htt_t2h_msg_handler(ar, skb);
+
+	/* Free the indication buffer */
+	if (release)
+		dev_kfree_skb_any(skb);
+}
+
+bool ath10k_htt_t2h_msg_handler(struct ath10k *ar, struct sk_buff *skb)
 {
 	struct ath10k_htt *htt = &ar->htt;
 	struct htt_resp *resp = (struct htt_resp *)skb->data;
+	enum htt_t2h_msg_type type;
 
 	/* confirm alignment */
 	if (!IS_ALIGNED((unsigned long)skb->data, 4))
@@ -1899,7 +2233,15 @@ void ath10k_htt_t2h_msg_handler(struct ath10k *ar, struct sk_buff *skb)
 
 	ath10k_dbg(ar, ATH10K_DBG_HTT, "htt rx, msg_type: 0x%0X\n",
 		   resp->hdr.msg_type);
-	switch (resp->hdr.msg_type) {
+
+	if (resp->hdr.msg_type >= ar->htt.t2h_msg_types_max) {
+		ath10k_dbg(ar, ATH10K_DBG_HTT, "htt rx, unsupported msg_type: 0x%0X\n max: 0x%0X",
+			   resp->hdr.msg_type, ar->htt.t2h_msg_types_max);
+		return true;
+	}
+	type = ar->htt.t2h_msg_types[resp->hdr.msg_type];
+
+	switch (type) {
 	case HTT_T2H_MSG_TYPE_VERSION_CONF: {
 		htt->target_version_major = resp->ver_resp.major;
 		htt->target_version_minor = resp->ver_resp.minor;
@@ -1907,11 +2249,8 @@ void ath10k_htt_t2h_msg_handler(struct ath10k *ar, struct sk_buff *skb)
 		break;
 	}
 	case HTT_T2H_MSG_TYPE_RX_IND:
-		spin_lock_bh(&htt->rx_ring.lock);
-		__skb_queue_tail(&htt->rx_compl_q, skb);
-		spin_unlock_bh(&htt->rx_ring.lock);
-		tasklet_schedule(&htt->txrx_compl_task);
-		return;
+		ath10k_htt_rx_proc_rx_ind(htt, &resp->rx_ind);
+		break;
 	case HTT_T2H_MSG_TYPE_PEER_MAP: {
 		struct htt_peer_map_event ev = {
 			.vdev_id = resp->peer_map.vdev_id,
@@ -1932,31 +2271,33 @@ void ath10k_htt_t2h_msg_handler(struct ath10k *ar, struct sk_buff *skb)
 		struct htt_tx_done tx_done = {};
 		int status = __le32_to_cpu(resp->mgmt_tx_completion.status);
 
-		tx_done.msdu_id =
-			__le32_to_cpu(resp->mgmt_tx_completion.desc_id);
+		tx_done.msdu_id = __le32_to_cpu(resp->mgmt_tx_completion.desc_id);
 
 		switch (status) {
 		case HTT_MGMT_TX_STATUS_OK:
+			tx_done.status = HTT_TX_COMPL_STATE_ACK;
 			break;
 		case HTT_MGMT_TX_STATUS_RETRY:
-			tx_done.no_ack = true;
+			tx_done.status = HTT_TX_COMPL_STATE_NOACK;
 			break;
 		case HTT_MGMT_TX_STATUS_DROP:
-			tx_done.discard = true;
+			tx_done.status = HTT_TX_COMPL_STATE_DISCARD;
 			break;
 		}
 
-		spin_lock_bh(&htt->tx_lock);
-		ath10k_txrx_tx_unref(htt, &tx_done);
-		spin_unlock_bh(&htt->tx_lock);
+		status = ath10k_txrx_tx_unref(htt, &tx_done);
+		if (!status) {
+			spin_lock_bh(&htt->tx_lock);
+			ath10k_htt_tx_mgmt_dec_pending(htt);
+			spin_unlock_bh(&htt->tx_lock);
+		}
+		ath10k_mac_tx_push_pending(ar);
 		break;
 	}
 	case HTT_T2H_MSG_TYPE_TX_COMPL_IND:
-		spin_lock_bh(&htt->tx_lock);
-		__skb_queue_tail(&htt->tx_compl_q, skb);
-		spin_unlock_bh(&htt->tx_lock);
+		ath10k_htt_rx_tx_compl_ind(htt->ar, skb);
 		tasklet_schedule(&htt->txrx_compl_task);
-		return;
+		break;
 	case HTT_T2H_MSG_TYPE_SEC_IND: {
 		struct ath10k *ar = htt->ar;
 		struct htt_security_indication *ev = &resp->security_indication;
@@ -1972,11 +2313,10 @@ void ath10k_htt_t2h_msg_handler(struct ath10k *ar, struct sk_buff *skb)
 	case HTT_T2H_MSG_TYPE_RX_FRAG_IND: {
 		ath10k_dbg_dump(ar, ATH10K_DBG_HTT_DUMP, NULL, "htt event: ",
 				skb->data, skb->len);
-		ath10k_htt_rx_frag_handler(htt, &resp->rx_frag_ind);
+		ath10k_htt_rx_frag_handler(htt);
 		break;
 	}
 	case HTT_T2H_MSG_TYPE_TEST:
-		/* FIX THIS */
 		break;
 	case HTT_T2H_MSG_TYPE_STATS_CONF:
 		trace_ath10k_htt_stats(ar, skb->data, skb->len);
@@ -2011,19 +2351,43 @@ void ath10k_htt_t2h_msg_handler(struct ath10k *ar, struct sk_buff *skb)
 		break;
 	}
 	case HTT_T2H_MSG_TYPE_RX_IN_ORD_PADDR_IND: {
-		spin_lock_bh(&htt->rx_ring.lock);
-		__skb_queue_tail(&htt->rx_in_ord_compl_q, skb);
-		spin_unlock_bh(&htt->rx_ring.lock);
+		skb_queue_tail(&htt->rx_in_ord_compl_q, skb);
 		tasklet_schedule(&htt->txrx_compl_task);
-		return;
+		return false;
 	}
 	case HTT_T2H_MSG_TYPE_TX_CREDIT_UPDATE_IND:
-		/* FIXME: This WMI-TLV event is overlapping with 10.2
-		 * CHAN_CHANGE - both being 0xF. Neither is being used in
-		 * practice so no immediate action is necessary. Nevertheless
-		 * HTT may need an abstraction layer like WMI has one day.
-		 */
 		break;
+	case HTT_T2H_MSG_TYPE_CHAN_CHANGE: {
+		u32 phymode = __le32_to_cpu(resp->chan_change.phymode);
+		u32 freq = __le32_to_cpu(resp->chan_change.freq);
+
+		ar->tgt_oper_chan =
+			__ieee80211_get_channel(ar->hw->wiphy, freq);
+		ath10k_dbg(ar, ATH10K_DBG_HTT,
+			   "htt chan change freq %u phymode %s\n",
+			   freq, ath10k_wmi_phymode_str(phymode));
+		break;
+	}
+	case HTT_T2H_MSG_TYPE_AGGR_CONF:
+		break;
+	case HTT_T2H_MSG_TYPE_TX_FETCH_IND: {
+		struct sk_buff *tx_fetch_ind = skb_copy(skb, GFP_ATOMIC);
+
+		if (!tx_fetch_ind) {
+			ath10k_warn(ar, "failed to copy htt tx fetch ind\n");
+			break;
+		}
+		skb_queue_tail(&htt->tx_fetch_ind_q, tx_fetch_ind);
+		tasklet_schedule(&htt->txrx_compl_task);
+		break;
+	}
+	case HTT_T2H_MSG_TYPE_TX_FETCH_CONFIRM:
+		ath10k_htt_rx_tx_fetch_confirm(ar, skb);
+		break;
+	case HTT_T2H_MSG_TYPE_TX_MODE_SWITCH_IND:
+		ath10k_htt_rx_tx_mode_switch_ind(ar, skb);
+		break;
+	case HTT_T2H_MSG_TYPE_EN_STATS:
 	default:
 		ath10k_warn(ar, "htt event (%d) not handled\n",
 			    resp->hdr.msg_type);
@@ -2031,35 +2395,71 @@ void ath10k_htt_t2h_msg_handler(struct ath10k *ar, struct sk_buff *skb)
 				skb->data, skb->len);
 		break;
 	};
+	return true;
+}
+EXPORT_SYMBOL(ath10k_htt_t2h_msg_handler);
 
-	/* Free the indication buffer */
+void ath10k_htt_rx_pktlog_completion_handler(struct ath10k *ar,
+					     struct sk_buff *skb)
+{
+	trace_ath10k_htt_pktlog(ar, skb->data, skb->len);
 	dev_kfree_skb_any(skb);
 }
+EXPORT_SYMBOL(ath10k_htt_rx_pktlog_completion_handler);
 
 static void ath10k_htt_txrx_compl_task(unsigned long ptr)
 {
 	struct ath10k_htt *htt = (struct ath10k_htt *)ptr;
 	struct ath10k *ar = htt->ar;
-	struct htt_resp *resp;
+	struct htt_tx_done tx_done = {};
+	struct sk_buff_head rx_ind_q;
+	struct sk_buff_head tx_ind_q;
 	struct sk_buff *skb;
+	unsigned long flags;
+	int num_mpdus;
 
-	spin_lock_bh(&htt->tx_lock);
-	while ((skb = __skb_dequeue(&htt->tx_compl_q))) {
-		ath10k_htt_rx_frm_tx_compl(htt->ar, skb);
+	__skb_queue_head_init(&rx_ind_q);
+	__skb_queue_head_init(&tx_ind_q);
+
+	spin_lock_irqsave(&htt->rx_in_ord_compl_q.lock, flags);
+	skb_queue_splice_init(&htt->rx_in_ord_compl_q, &rx_ind_q);
+	spin_unlock_irqrestore(&htt->rx_in_ord_compl_q.lock, flags);
+
+	spin_lock_irqsave(&htt->tx_fetch_ind_q.lock, flags);
+	skb_queue_splice_init(&htt->tx_fetch_ind_q, &tx_ind_q);
+	spin_unlock_irqrestore(&htt->tx_fetch_ind_q.lock, flags);
+
+	/* kfifo_get: called only within txrx_tasklet so it's neatly serialized.
+	 * From kfifo_get() documentation:
+	 *  Note that with only one concurrent reader and one concurrent writer,
+	 *  you don't need extra locking to use these macro.
+	 */
+	while (kfifo_get(&htt->txdone_fifo, &tx_done))
+		ath10k_txrx_tx_unref(htt, &tx_done);
+
+	while ((skb = __skb_dequeue(&tx_ind_q))) {
+		ath10k_htt_rx_tx_fetch_ind(ar, skb);
 		dev_kfree_skb_any(skb);
 	}
-	spin_unlock_bh(&htt->tx_lock);
 
-	spin_lock_bh(&htt->rx_ring.lock);
-	while ((skb = __skb_dequeue(&htt->rx_compl_q))) {
-		resp = (struct htt_resp *)skb->data;
-		ath10k_htt_rx_handler(htt, &resp->rx_ind);
-		dev_kfree_skb_any(skb);
+	ath10k_mac_tx_push_pending(ar);
+
+	num_mpdus = atomic_read(&htt->num_mpdus_ready);
+
+	while (num_mpdus) {
+		if (ath10k_htt_rx_handle_amsdu(htt))
+			break;
+
+		num_mpdus--;
+		atomic_dec(&htt->num_mpdus_ready);
 	}
 
-	while ((skb = __skb_dequeue(&htt->rx_in_ord_compl_q))) {
+	while ((skb = __skb_dequeue(&rx_ind_q))) {
+		spin_lock_bh(&htt->rx_ring.lock);
 		ath10k_htt_rx_in_ord_ind(ar, skb);
+		spin_unlock_bh(&htt->rx_ring.lock);
 		dev_kfree_skb_any(skb);
 	}
-	spin_unlock_bh(&htt->rx_ring.lock);
+
+	ath10k_htt_rx_msdu_buff_replenish(htt);
 }

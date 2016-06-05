@@ -1,5 +1,5 @@
 /*
- * offset.c: Calculate pt_regs and task_struct offsets.
+ * asm-offsets.c: Calculate pt_regs and task_struct offsets.
  *
  * Copyright (C) 1996 David S. Miller
  * Copyright (C) 1997, 1998, 1999, 2000, 2001, 2002, 2003 Ralf Baechle
@@ -14,6 +14,7 @@
 #include <linux/mm.h>
 #include <linux/kbuild.h>
 #include <linux/suspend.h>
+#include <asm/cpu-info.h>
 #include <asm/pm.h>
 #include <asm/ptrace.h>
 #include <asm/processor.h>
@@ -128,6 +129,7 @@ void output_thread_defines(void)
 	       thread.cp0_baduaddr);
 	OFFSET(THREAD_ECODE, task_struct, \
 	       thread.error_code);
+	OFFSET(THREAD_TRAPNO, task_struct, thread.trap_nr);
 	BLANK();
 }
 
@@ -245,17 +247,6 @@ void output_sc_defines(void)
 }
 #endif
 
-#ifdef CONFIG_MIPS32_COMPAT
-void output_sc32_defines(void)
-{
-	COMMENT("Linux 32-bit sigcontext offsets.");
-	OFFSET(SC32_FPREGS, sigcontext32, sc_fpregs);
-	OFFSET(SC32_FPC_CSR, sigcontext32, sc_fpc_csr);
-	OFFSET(SC32_FPC_EIR, sigcontext32, sc_fpc_eir);
-	BLANK();
-}
-#endif
-
 void output_signal_defined(void)
 {
 	COMMENT("Linux signal numbers.");
@@ -347,6 +338,15 @@ void output_pm_defines(void)
 	BLANK();
 }
 #endif
+
+void output_cpuinfo_defines(void)
+{
+	COMMENT(" MIPS cpuinfo offsets. ");
+	DEFINE(CPUINFO_SIZE, sizeof(struct cpuinfo_mips));
+#ifdef CONFIG_MIPS_ASID_BITS_VARIABLE
+	OFFSET(CPUINFO_ASID_MASK, cpuinfo_mips, asid_mask);
+#endif
+}
 
 void output_kvm_defines(void)
 {

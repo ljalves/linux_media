@@ -10,6 +10,10 @@
 #include <linux/export.h>
 #include <linux/ctype.h>
 #include <linux/errno.h>
+#include <linux/fs.h>
+#include <linux/limits.h>
+#include <linux/mm.h>
+#include <linux/slab.h>
 #include <linux/string.h>
 #include <linux/string_helpers.h>
 
@@ -43,46 +47,73 @@ void string_get_size(u64 size, u64 blk_size, const enum string_size_units units,
 		[STRING_UNITS_10] = 1000,
 		[STRING_UNITS_2] = 1024,
 	};
-	int i, j;
-	u32 remainder = 0, sf_cap, exp;
+	static const unsigned int rounding[] = { 500, 50, 5 };
+	int i = 0, j;
+	u32 remainder = 0, sf_cap;
 	char tmp[8];
 	const char *unit;
 
 	tmp[0] = '\0';
-	i = 0;
-	if (!size)
+
+	if (blk_size == 0)
+		size = 0;
+	if (size == 0)
 		goto out;
 
-	while (blk_size >= divisor[units]) {
-		remainder = do_div(blk_size, divisor[units]);
+	/* This is Napier's algorithm.  Reduce the original block size to
+	 *
+	 * coefficient * divisor[units]^i
+	 *
+	 * we do the reduction so both coefficients are just under 32 bits so
+	 * that multiplying them together won't overflow 64 bits and we keep
+	 * as much precision as possible in the numbers.
+	 *
+	 * Note: it's safe to throw away the remainders here because all the
+	 * precision is in the coefficients.
+	 */
+	while (blk_size >> 32) {
+		do_div(blk_size, divisor[units]);
 		i++;
 	}
 
-	exp = divisor[units] / (u32)blk_size;
-	if (size >= exp) {
-		remainder = do_div(size, divisor[units]);
-		remainder *= blk_size;
+	while (size >> 32) {
+		do_div(size, divisor[units]);
 		i++;
-	} else {
-		remainder *= size;
 	}
 
+	/* now perform the actual multiplication keeping i as the sum of the
+	 * two logarithms */
 	size *= blk_size;
-	size += remainder / divisor[units];
-	remainder %= divisor[units];
 
+	/* and logarithmically reduce it until it's just under the divisor */
 	while (size >= divisor[units]) {
 		remainder = do_div(size, divisor[units]);
 		i++;
 	}
 
+	/* work out in j how many digits of precision we need from the
+	 * remainder */
 	sf_cap = size;
 	for (j = 0; sf_cap*10 < 1000; j++)
 		sf_cap *= 10;
 
-	if (j) {
+	if (units == STRING_UNITS_2) {
+		/* express the remainder as a decimal.  It's currently the
+		 * numerator of a fraction whose denominator is
+		 * divisor[units], which is 1 << 10 for STRING_UNITS_2 */
 		remainder *= 1000;
-		remainder /= divisor[units];
+		remainder >>= 10;
+	}
+
+	/* add a 5 to the digit below what will be printed to ensure
+	 * an arithmetical round up and carry it through to size */
+	remainder += rounding[j];
+	if (remainder >= 1000) {
+		remainder -= 1000;
+		size += 1;
+	}
+
+	if (j) {
 		snprintf(tmp, sizeof(tmp), ".%03u", remainder);
 		tmp[j+1] = '\0';
 	}
@@ -410,7 +441,7 @@ static bool escape_hex(unsigned char c, char **dst, char *end)
  * @dst:	destination buffer (escaped)
  * @osz:	destination buffer size
  * @flags:	combination of the flags (bitwise OR):
- *	%ESCAPE_SPACE:
+ *	%ESCAPE_SPACE: (special white space, not space itself)
  *		'\f' - form feed
  *		'\n' - new line
  *		'\r' - carriage return
@@ -432,16 +463,18 @@ static bool escape_hex(unsigned char c, char **dst, char *end)
  *		all previous together
  *	%ESCAPE_HEX:
  *		'\xHH' - byte with hexadecimal value HH (2 digits)
- * @esc:	NULL-terminated string of characters any of which, if found in
- *		the source, has to be escaped
+ * @only:	NULL-terminated string containing characters used to limit
+ *		the selected escape class. If characters are included in @only
+ *		that would not normally be escaped by the classes selected
+ *		in @flags, they will be copied to @dst unescaped.
  *
  * Description:
  * The process of escaping byte buffer includes several parts. They are applied
  * in the following sequence.
  *	1. The character is matched to the printable class, if asked, and in
  *	   case of match it passes through to the output.
- *	2. The character is not matched to the one from @esc string and thus
- *	   must go as is to the output.
+ *	2. The character is not matched to the one from @only string and thus
+ *	   must go as-is to the output.
  *	3. The character is checked if it falls into the class given by @flags.
  *	   %ESCAPE_OCTAL and %ESCAPE_HEX are going last since they cover any
  *	   character. Note that they actually can't go together, otherwise
@@ -458,11 +491,11 @@ static bool escape_hex(unsigned char c, char **dst, char *end)
  * dst for a '\0' terminator if and only if ret < osz.
  */
 int string_escape_mem(const char *src, size_t isz, char *dst, size_t osz,
-		      unsigned int flags, const char *esc)
+		      unsigned int flags, const char *only)
 {
 	char *p = dst;
 	char *end = p + osz;
-	bool is_dict = esc && *esc;
+	bool is_dict = only && *only;
 
 	while (isz--) {
 		unsigned char c = *src++;
@@ -471,7 +504,7 @@ int string_escape_mem(const char *src, size_t isz, char *dst, size_t osz,
 		 * Apply rules in the following sequence:
 		 *	- the character is printable, when @flags has
 		 *	  %ESCAPE_NP bit set
-		 *	- the @esc string is supplied and does not contain a
+		 *	- the @only string is supplied and does not contain a
 		 *	  character under question
 		 *	- the character doesn't fall into a class of symbols
 		 *	  defined by given @flags
@@ -479,7 +512,7 @@ int string_escape_mem(const char *src, size_t isz, char *dst, size_t osz,
 		 * output buffer.
 		 */
 		if ((flags & ESCAPE_NP && isprint(c)) ||
-		    (is_dict && !strchr(esc, c))) {
+		    (is_dict && !strchr(only, c))) {
 			/* do nothing */
 		} else {
 			if (flags & ESCAPE_SPACE && escape_space(c, &p, end))
@@ -505,3 +538,91 @@ int string_escape_mem(const char *src, size_t isz, char *dst, size_t osz,
 	return p - dst;
 }
 EXPORT_SYMBOL(string_escape_mem);
+
+/*
+ * Return an allocated string that has been escaped of special characters
+ * and double quotes, making it safe to log in quotes.
+ */
+char *kstrdup_quotable(const char *src, gfp_t gfp)
+{
+	size_t slen, dlen;
+	char *dst;
+	const int flags = ESCAPE_HEX;
+	const char esc[] = "\f\n\r\t\v\a\e\\\"";
+
+	if (!src)
+		return NULL;
+	slen = strlen(src);
+
+	dlen = string_escape_mem(src, slen, NULL, 0, flags, esc);
+	dst = kmalloc(dlen + 1, gfp);
+	if (!dst)
+		return NULL;
+
+	WARN_ON(string_escape_mem(src, slen, dst, dlen, flags, esc) != dlen);
+	dst[dlen] = '\0';
+
+	return dst;
+}
+EXPORT_SYMBOL_GPL(kstrdup_quotable);
+
+/*
+ * Returns allocated NULL-terminated string containing process
+ * command line, with inter-argument NULLs replaced with spaces,
+ * and other special characters escaped.
+ */
+char *kstrdup_quotable_cmdline(struct task_struct *task, gfp_t gfp)
+{
+	char *buffer, *quoted;
+	int i, res;
+
+	buffer = kmalloc(PAGE_SIZE, GFP_TEMPORARY);
+	if (!buffer)
+		return NULL;
+
+	res = get_cmdline(task, buffer, PAGE_SIZE - 1);
+	buffer[res] = '\0';
+
+	/* Collapse trailing NULLs, leave res pointing to last non-NULL. */
+	while (--res >= 0 && buffer[res] == '\0')
+		;
+
+	/* Replace inter-argument NULLs. */
+	for (i = 0; i <= res; i++)
+		if (buffer[i] == '\0')
+			buffer[i] = ' ';
+
+	/* Make sure result is printable. */
+	quoted = kstrdup_quotable(buffer, gfp);
+	kfree(buffer);
+	return quoted;
+}
+EXPORT_SYMBOL_GPL(kstrdup_quotable_cmdline);
+
+/*
+ * Returns allocated NULL-terminated string containing pathname,
+ * with special characters escaped, able to be safely logged. If
+ * there is an error, the leading character will be "<".
+ */
+char *kstrdup_quotable_file(struct file *file, gfp_t gfp)
+{
+	char *temp, *pathname;
+
+	if (!file)
+		return kstrdup("<unknown>", gfp);
+
+	/* We add 11 spaces for ' (deleted)' to be appended */
+	temp = kmalloc(PATH_MAX + 11, GFP_TEMPORARY);
+	if (!temp)
+		return kstrdup("<no_memory>", gfp);
+
+	pathname = file_path(file, temp, PATH_MAX + 11);
+	if (IS_ERR(pathname))
+		pathname = kstrdup("<too_long>", gfp);
+	else
+		pathname = kstrdup_quotable(pathname, gfp);
+
+	kfree(temp);
+	return pathname;
+}
+EXPORT_SYMBOL_GPL(kstrdup_quotable_file);

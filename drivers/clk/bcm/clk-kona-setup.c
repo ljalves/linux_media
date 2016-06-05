@@ -21,8 +21,6 @@
 #define selector_clear_exists(sel)	((sel)->width = 0)
 #define trigger_clear_exists(trig)	FLAG_CLEAR(trig, TRIG, EXISTS)
 
-LIST_HEAD(ccu_list);	/* The list of set up CCUs */
-
 /* Validity checking */
 
 static bool ccu_data_offsets_valid(struct ccu_data *ccu)
@@ -579,7 +577,8 @@ static u32 *parent_process(const char *clocks[],
 	 * selector is not required, but we allocate space for the
 	 * array anyway to keep things simple.
 	 */
-	parent_names = kmalloc(parent_count * sizeof(parent_names), GFP_KERNEL);
+	parent_names = kmalloc_array(parent_count, sizeof(*parent_names),
+			       GFP_KERNEL);
 	if (!parent_names) {
 		pr_err("%s: error allocating %u parent names\n", __func__,
 				parent_count);
@@ -773,7 +772,6 @@ static void kona_ccu_teardown(struct ccu_data *ccu)
 
 	of_clk_del_provider(ccu->node);	/* safe if never added */
 	ccu_clks_teardown(ccu);
-	list_del(&ccu->links);
 	of_node_put(ccu->node);
 	ccu->node = NULL;
 	iounmap(ccu->base);
@@ -847,7 +845,6 @@ void __init kona_dt_ccu_setup(struct ccu_data *ccu,
 		goto out_err;
 	}
 	ccu->node = of_node_get(node);
-	list_add_tail(&ccu->links, &ccu_list);
 
 	/*
 	 * Set up each defined kona clock and save the result in

@@ -75,6 +75,23 @@ struct of_phandle_args {
 	uint32_t args[MAX_PHANDLE_ARGS];
 };
 
+struct of_phandle_iterator {
+	/* Common iterator information */
+	const char *cells_name;
+	int cell_count;
+	const struct device_node *parent;
+
+	/* List size information */
+	const __be32 *list_end;
+	const __be32 *phandle_end;
+
+	/* Current position state */
+	const __be32 *cur;
+	uint32_t cur_count;
+	phandle phandle;
+	struct device_node *node;
+};
+
 struct of_reconfig_data {
 	struct device_node	*dn;
 	struct property		*prop;
@@ -120,15 +137,26 @@ extern struct device_node *of_aliases;
 extern struct device_node *of_stdout;
 extern raw_spinlock_t devtree_lock;
 
+/* flag descriptions (need to be visible even when !CONFIG_OF) */
+#define OF_DYNAMIC	1 /* node and properties were allocated via kmalloc */
+#define OF_DETACHED	2 /* node has been detached from the device tree */
+#define OF_POPULATED	3 /* device already created for the node */
+#define OF_POPULATED_BUS	4 /* of_platform_populate recursed to children of this node */
+
+#define OF_BAD_ADDR	((u64)-1)
+
 #ifdef CONFIG_OF
+void of_core_init(void);
+
 static inline bool is_of_node(struct fwnode_handle *fwnode)
 {
-	return fwnode && fwnode->type == FWNODE_OF;
+	return !IS_ERR_OR_NULL(fwnode) && fwnode->type == FWNODE_OF;
 }
 
-static inline struct device_node *of_node(struct fwnode_handle *fwnode)
+static inline struct device_node *to_of_node(struct fwnode_handle *fwnode)
 {
-	return fwnode ? container_of(fwnode, struct device_node, fwnode) : NULL;
+	return is_of_node(fwnode) ?
+		container_of(fwnode, struct device_node, fwnode) : NULL;
 }
 
 static inline bool of_have_populated_dt(void)
@@ -217,16 +245,8 @@ static inline unsigned long of_read_ulong(const __be32 *cell, int size)
 #define of_node_cmp(s1, s2)		strcasecmp((s1), (s2))
 #endif
 
-/* flag descriptions */
-#define OF_DYNAMIC	1 /* node and properties were allocated via kmalloc */
-#define OF_DETACHED	2 /* node has been detached from the device tree */
-#define OF_POPULATED	3 /* device already created for the node */
-#define OF_POPULATED_BUS	4 /* of_platform_populate recursed to children of this node */
-
 #define OF_IS_DYNAMIC(x) test_bit(OF_DYNAMIC, &x->_flags)
 #define OF_MARK_DYNAMIC(x) set_bit(OF_DYNAMIC, &x->_flags)
-
-#define OF_BAD_ADDR	((u64)-1)
 
 static inline const char *of_node_full_name(const struct device_node *np)
 {
@@ -293,13 +313,13 @@ extern int of_property_read_u64_array(const struct device_node *np,
 				      u64 *out_values,
 				      size_t sz);
 
-extern int of_property_read_string(struct device_node *np,
+extern int of_property_read_string(const struct device_node *np,
 				   const char *propname,
 				   const char **out_string);
-extern int of_property_match_string(struct device_node *np,
+extern int of_property_match_string(const struct device_node *np,
 				    const char *propname,
 				    const char *string);
-extern int of_property_read_string_helper(struct device_node *np,
+extern int of_property_read_string_helper(const struct device_node *np,
 					      const char *propname,
 					      const char **out_strs, size_t sz, int index);
 extern int of_device_is_compatible(const struct device_node *device,
@@ -330,6 +350,18 @@ extern int of_parse_phandle_with_fixed_args(const struct device_node *np,
 	struct of_phandle_args *out_args);
 extern int of_count_phandle_with_args(const struct device_node *np,
 	const char *list_name, const char *cells_name);
+
+/* phandle iterator functions */
+extern int of_phandle_iterator_init(struct of_phandle_iterator *it,
+				    const struct device_node *np,
+				    const char *list_name,
+				    const char *cells_name,
+				    int cell_count);
+
+extern int of_phandle_iterator_next(struct of_phandle_iterator *it);
+extern int of_phandle_iterator_args(struct of_phandle_iterator *it,
+				    uint32_t *args,
+				    int size);
 
 extern void of_alias_scan(void * (*dt_alloc)(u64 size, u64 align));
 extern int of_alias_get_id(struct device_node *np, const char *stem);
@@ -376,12 +408,16 @@ bool of_console_check(struct device_node *dn, char *name, int index);
 
 #else /* CONFIG_OF */
 
+static inline void of_core_init(void)
+{
+}
+
 static inline bool is_of_node(struct fwnode_handle *fwnode)
 {
 	return false;
 }
 
-static inline struct device_node *of_node(struct fwnode_handle *fwnode)
+static inline struct device_node *to_of_node(struct fwnode_handle *fwnode)
 {
 	return NULL;
 }
@@ -418,6 +454,11 @@ static inline struct device_node *of_find_node_by_path(const char *path)
 
 static inline struct device_node *of_find_node_opts_by_path(const char *path,
 	const char **opts)
+{
+	return NULL;
+}
+
+static inline struct device_node *of_find_node_by_phandle(phandle handle)
 {
 	return NULL;
 }
@@ -526,14 +567,14 @@ static inline int of_property_read_u64_array(const struct device_node *np,
 	return -ENOSYS;
 }
 
-static inline int of_property_read_string(struct device_node *np,
+static inline int of_property_read_string(const struct device_node *np,
 					  const char *propname,
 					  const char **out_string)
 {
 	return -ENOSYS;
 }
 
-static inline int of_property_read_string_helper(struct device_node *np,
+static inline int of_property_read_string_helper(const struct device_node *np,
 						 const char *propname,
 						 const char **out_strs, size_t sz, int index)
 {
@@ -559,7 +600,7 @@ static inline int of_property_read_u64(const struct device_node *np,
 	return -ENOSYS;
 }
 
-static inline int of_property_match_string(struct device_node *np,
+static inline int of_property_match_string(const struct device_node *np,
 					   const char *propname,
 					   const char *string)
 {
@@ -594,6 +635,27 @@ static inline int of_count_phandle_with_args(struct device_node *np,
 					     const char *cells_name)
 {
 	return -ENOSYS;
+}
+
+static inline int of_phandle_iterator_init(struct of_phandle_iterator *it,
+					   const struct device_node *np,
+					   const char *list_name,
+					   const char *cells_name,
+					   int cell_count)
+{
+	return -ENOSYS;
+}
+
+static inline int of_phandle_iterator_next(struct of_phandle_iterator *it)
+{
+	return -ENOSYS;
+}
+
+static inline int of_phandle_iterator_args(struct of_phandle_iterator *it,
+					   uint32_t *args,
+					   int size)
+{
+	return 0;
 }
 
 static inline int of_alias_get_id(struct device_node *np, const char *stem)
@@ -667,7 +729,19 @@ static inline void of_property_clear_flag(struct property *p, unsigned long flag
 #if defined(CONFIG_OF) && defined(CONFIG_NUMA)
 extern int of_node_to_nid(struct device_node *np);
 #else
-static inline int of_node_to_nid(struct device_node *device) { return 0; }
+static inline int of_node_to_nid(struct device_node *device)
+{
+	return NUMA_NO_NODE;
+}
+#endif
+
+#ifdef CONFIG_OF_NUMA
+extern int of_numa_init(void);
+#else
+static inline int of_numa_init(void)
+{
+	return -ENOSYS;
+}
 #endif
 
 static inline struct device_node *of_find_matching_node(
@@ -758,7 +832,7 @@ static inline int of_property_count_u64_elems(const struct device_node *np,
  *
  * If @out_strs is NULL, the number of strings in the property is returned.
  */
-static inline int of_property_read_string_array(struct device_node *np,
+static inline int of_property_read_string_array(const struct device_node *np,
 						const char *propname, const char **out_strs,
 						size_t sz)
 {
@@ -777,7 +851,7 @@ static inline int of_property_read_string_array(struct device_node *np,
  * does not have a value, and -EILSEQ if the string is not null-terminated
  * within the length of the property data.
  */
-static inline int of_property_count_strings(struct device_node *np,
+static inline int of_property_count_strings(const struct device_node *np,
 					    const char *propname)
 {
 	return of_property_read_string_helper(np, propname, NULL, 0, 0);
@@ -801,7 +875,7 @@ static inline int of_property_count_strings(struct device_node *np,
  *
  * The out_string pointer is modified only if a valid string can be decoded.
  */
-static inline int of_property_read_string_index(struct device_node *np,
+static inline int of_property_read_string_index(const struct device_node *np,
 						const char *propname,
 						int index, const char **output)
 {
@@ -815,7 +889,7 @@ static inline int of_property_read_string_index(struct device_node *np,
  * @propname:	name of the property to be searched.
  *
  * Search for a property in a device node.
- * Returns true if the property exist false otherwise.
+ * Returns true if the property exists false otherwise.
  */
 static inline bool of_property_read_bool(const struct device_node *np,
 					 const char *propname)
@@ -852,6 +926,12 @@ static inline int of_property_read_s32(const struct device_node *np,
 {
 	return of_property_read_u32(np, propname, (u32*) out_value);
 }
+
+#define of_for_each_phandle(it, err, np, ln, cn, cc)			\
+	for (of_phandle_iterator_init((it), (np), (ln), (cn), (cc)),	\
+	     err = of_phandle_iterator_next(it);			\
+	     err == 0;							\
+	     err = of_phandle_iterator_next(it))
 
 #define of_property_for_each_u32(np, propname, prop, p, u)	\
 	for (prop = of_find_property(np, propname, NULL),	\
@@ -914,7 +994,7 @@ static inline int of_get_available_child_count(const struct device_node *np)
 	return num;
 }
 
-#ifdef CONFIG_OF
+#if defined(CONFIG_OF) && !defined(MODULE)
 #define _OF_DECLARE(table, name, compat, fn, fn_type)			\
 	static const struct of_device_id __of_table_##name		\
 		__used __section(__##table##_of_table)			\

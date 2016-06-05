@@ -74,16 +74,22 @@ TYPES = \
 	$(shell perl -ne 'print "$$1 " if /^typedef\s+.*\s+(\S+)\;/' $(srctree)/include/uapi/linux/dvb/frontend.h)
 
 ENUMS = \
-	$(shell perl -ne 'print "$$1 " if /^enum\s+([^\s]+)\s+/' $(srctree)/include/uapi/linux/videodev2.h) \
-	$(shell perl -ne 'print "$$1 " if /^enum\s+([^\s]+)\s+/' $(srctree)/include/uapi/linux/dvb/audio.h) \
-	$(shell perl -ne 'print "$$1 " if /^enum\s+([^\s]+)\s+/' $(srctree)/include/uapi/linux/dvb/ca.h) \
-	$(shell perl -ne 'print "$$1 " if /^enum\s+([^\s]+)\s+/' $(srctree)/include/uapi/linux/dvb/dmx.h) \
-	$(shell perl -ne 'print "$$1 " if /^enum\s+([^\s]+)\s+/' $(srctree)/include/uapi/linux/dvb/frontend.h) \
-	$(shell perl -ne 'print "$$1 " if /^enum\s+([^\s]+)\s+/' $(srctree)/include/uapi/linux/dvb/net.h) \
-	$(shell perl -ne 'print "$$1 " if /^enum\s+([^\s]+)\s+/' $(srctree)/include/uapi/linux/dvb/video.h) \
-	$(shell perl -ne 'print "$$1 " if /^enum\s+([^\s]+)\s+/' $(srctree)/include/uapi/linux/media.h) \
-	$(shell perl -ne 'print "$$1 " if /^enum\s+([^\s]+)\s+/' $(srctree)/include/uapi/linux/v4l2-mediabus.h) \
-	$(shell perl -ne 'print "$$1 " if /^enum\s+([^\s]+)\s+/' $(srctree)/include/uapi/linux/v4l2-subdev.h)
+	$(shell perl -ne 'print "$$1 " if /^enum\s+([^\s]+)\s+/' \
+		$(srctree)/include/uapi/linux/videodev2.h \
+		$(srctree)/include/uapi/linux/dvb/audio.h \
+		$(srctree)/include/uapi/linux/dvb/ca.h \
+		$(srctree)/include/uapi/linux/dvb/dmx.h \
+		$(srctree)/include/uapi/linux/dvb/frontend.h \
+		$(srctree)/include/uapi/linux/dvb/net.h \
+		$(srctree)/include/uapi/linux/dvb/video.h \
+		$(srctree)/include/uapi/linux/media.h \
+		$(srctree)/include/uapi/linux/v4l2-mediabus.h \
+		$(srctree)/include/uapi/linux/v4l2-subdev.h)
+
+ENUM_DEFS = \
+	$(shell perl -e 'open IN,"cat @ARGV| cpp -fpreprocessed |"; while (<IN>) { if ($$enum) {print "$$1\n" if (/\s*([A-Z]\S+)\b/); } $$enum = 0 if ($$enum && /^\}/); $$enum = 1 if(/^\s*enum\s/); }; close IN;' \
+		$(srctree)/include/uapi/linux/dvb/dmx.h \
+		$(srctree)/include/uapi/linux/dvb/frontend.h)
 
 STRUCTS = \
 	$(shell perl -ne 'print "$$1 " if /^struct\s+([^\s]+)\s+/' $(srctree)/include/uapi/linux/videodev2.h) \
@@ -91,7 +97,7 @@ STRUCTS = \
 	$(shell perl -ne 'print "$$1 " if (/^struct\s+([^\s]+)\s+/)' $(srctree)/include/uapi/linux/dvb/ca.h) \
 	$(shell perl -ne 'print "$$1 " if (/^struct\s+([^\s]+)\s+/)' $(srctree)/include/uapi/linux/dvb/dmx.h) \
 	$(shell perl -ne 'print "$$1 " if (!/dtv\_cmds\_h/ && /^struct\s+([^\s]+)\s+/)' $(srctree)/include/uapi/linux/dvb/frontend.h) \
-	$(shell perl -ne 'print "$$1 " if (/^struct\s+([A-Z][^\s]+)\s+/)' $(srctree)/include/uapi/linux/dvb/net.h) \
+	$(shell perl -ne 'print "$$1 " if (/^struct\s+([^\s]+)\s+/ && !/_old/)' $(srctree)/include/uapi/linux/dvb/net.h) \
 	$(shell perl -ne 'print "$$1 " if (/^struct\s+([^\s]+)\s+/)' $(srctree)/include/uapi/linux/dvb/video.h) \
 	$(shell perl -ne 'print "$$1 " if /^struct\s+([^\s]+)\s+/' $(srctree)/include/uapi/linux/media.h) \
 	$(shell perl -ne 'print "$$1 " if /^struct\s+([^\s]+)\s+/' $(srctree)/include/uapi/linux/v4l2-subdev.h) \
@@ -193,7 +199,10 @@ DVB_DOCUMENTED = \
 #
 
 install_media_images = \
-	$(Q)-cp $(OBJIMGFILES) $(MEDIA_SRC_DIR)/*.svg $(MEDIA_SRC_DIR)/v4l/*.svg $(MEDIA_OBJ_DIR)/media_api
+	$(Q)if [ "x$(findstring media_api.xml,$(DOCBOOKS))" != "x" ]; then \
+		mkdir -p $(MEDIA_OBJ_DIR)/media_api; \
+		cp $(OBJIMGFILES) $(MEDIA_SRC_DIR)/*.svg $(MEDIA_SRC_DIR)/v4l/*.svg $(MEDIA_OBJ_DIR)/media_api; \
+	fi
 
 $(MEDIA_OBJ_DIR)/%: $(MEDIA_SRC_DIR)/%.b64
 	$(Q)base64 -d $< >$@
@@ -241,9 +250,14 @@ $(MEDIA_OBJ_DIR)/dmx.h.xml: $(srctree)/include/uapi/linux/dvb/dmx.h $(MEDIA_OBJ_
 	@(					\
 	echo "<programlisting>") > $@
 	@(					\
+	for ident in $(ENUM_DEFS) ; do		\
+	  entity=`echo $$ident | tr _ -` ;	\
+	  r="$$r s/([^\w\-])$$ident([^\w\-])/\1\&$$entity\;\2/g;";\
+	done;					\
 	expand --tabs=8 < $< |			\
 	  sed $(ESCAPE) $(DVB_DOCUMENTED) |	\
-	  sed 's/i\.e\./&ie;/') >> $@
+	  sed 's/i\.e\./&ie;/' |		\
+	  perl -ne "$$r print $$_;") >> $@
 	@(					\
 	echo "</programlisting>") >> $@
 
@@ -252,9 +266,14 @@ $(MEDIA_OBJ_DIR)/frontend.h.xml: $(srctree)/include/uapi/linux/dvb/frontend.h $(
 	@(					\
 	echo "<programlisting>") > $@
 	@(					\
+	for ident in $(ENUM_DEFS) ; do		\
+	  entity=`echo $$ident | tr _ -` ;	\
+	  r="$$r s/([^\w\-])$$ident([^\w\-])/\1\&$$entity\;\2/g;";\
+	done;					\
 	expand --tabs=8 < $< |			\
 	  sed $(ESCAPE) $(DVB_DOCUMENTED) |	\
-	  sed 's/i\.e\./&ie;/') >> $@
+	  sed 's/i\.e\./&ie;/' |		\
+	  perl -ne "$$r print $$_;") >> $@
 	@(					\
 	echo "</programlisting>") >> $@
 
@@ -329,6 +348,15 @@ $(MEDIA_OBJ_DIR)/media-entities.tmpl: $(MEDIA_OBJ_DIR)/v4l2.xml
 	  entity=`echo $$ident | sed -e "s/v4l2_mpeg_cx2341x_video_\([a-z]*_spatial_filter_type\)/\1/" | tr _ -` ; \
 	  echo "<!ENTITY $$entity \"enum&nbsp;<link"			\
 	    "linkend='$$entity'>$$ident</link>\">" >>$@ ;		\
+	done)
+	@(								\
+	echo -e "\n<!-- Enum definitions -->") >>$@
+	@(								\
+	for ident in $(ENUM_DEFS) ; do					\
+	  entity=`echo $$ident | tr _ -` ;				\
+	  echo "<!ENTITY $$entity \"<link"				\
+	    "linkend='$$entity'><constant>$$ident</constant></link>\">"	\
+	  >>$@ ;							\
 	done)
 	@(								\
 	echo -e "\n<!-- Structures -->") >>$@

@@ -85,6 +85,7 @@
 #include <asm/branch.h>
 #include <asm/byteorder.h>
 #include <asm/cop2.h>
+#include <asm/debug.h>
 #include <asm/fpu.h>
 #include <asm/fpu_emulator.h>
 #include <asm/inst.h>
@@ -438,7 +439,7 @@ do {                                                        \
 		: "memory");                                \
 } while(0)
 
-#define     StoreDW(addr, value, res) \
+#define     _StoreDW(addr, value, res) \
 do {                                                        \
 		__asm__ __volatile__ (                      \
 			".set\tpush\n\t"		    \
@@ -884,13 +885,16 @@ static void emulate_load_store_insn(struct pt_regs *regs,
 {
 	union mips_instruction insn;
 	unsigned long value;
-	unsigned int res;
+	unsigned int res, preempted;
 	unsigned long origpc;
 	unsigned long orig31;
 	void __user *fault_addr = NULL;
 #ifdef	CONFIG_EVA
 	mm_segment_t seg;
 #endif
+	union fpureg *fpr;
+	enum msa_2b_fmt df;
+	unsigned int wd;
 	origpc = (unsigned long)pc;
 	orig31 = regs->regs[31];
 
@@ -1187,6 +1191,7 @@ static void emulate_load_store_insn(struct pt_regs *regs,
 	case ldc1_op:
 	case swc1_op:
 	case sdc1_op:
+	case cop1x_op:
 		die_if_kernel("Unaligned FP access in kernel code", regs);
 		BUG_ON(!used_math());
 
@@ -1201,6 +1206,84 @@ static void emulate_load_store_insn(struct pt_regs *regs,
 		if (res == 0)
 			break;
 		return;
+
+	case msa_op:
+		if (!cpu_has_msa)
+			goto sigill;
+
+		/*
+		 * If we've reached this point then userland should have taken
+		 * the MSA disabled exception & initialised vector context at
+		 * some point in the past.
+		 */
+		BUG_ON(!thread_msa_context_live());
+
+		df = insn.msa_mi10_format.df;
+		wd = insn.msa_mi10_format.wd;
+		fpr = &current->thread.fpu.fpr[wd];
+
+		switch (insn.msa_mi10_format.func) {
+		case msa_ld_op:
+			if (!access_ok(VERIFY_READ, addr, sizeof(*fpr)))
+				goto sigbus;
+
+			do {
+				/*
+				 * If we have live MSA context keep track of
+				 * whether we get preempted in order to avoid
+				 * the register context we load being clobbered
+				 * by the live context as it's saved during
+				 * preemption. If we don't have live context
+				 * then it can't be saved to clobber the value
+				 * we load.
+				 */
+				preempted = test_thread_flag(TIF_USEDMSA);
+
+				res = __copy_from_user_inatomic(fpr, addr,
+								sizeof(*fpr));
+				if (res)
+					goto fault;
+
+				/*
+				 * Update the hardware register if it is in use
+				 * by the task in this quantum, in order to
+				 * avoid having to save & restore the whole
+				 * vector context.
+				 */
+				preempt_disable();
+				if (test_thread_flag(TIF_USEDMSA)) {
+					write_msa_wr(wd, fpr, df);
+					preempted = 0;
+				}
+				preempt_enable();
+			} while (preempted);
+			break;
+
+		case msa_st_op:
+			if (!access_ok(VERIFY_WRITE, addr, sizeof(*fpr)))
+				goto sigbus;
+
+			/*
+			 * Update from the hardware register if it is in use by
+			 * the task in this quantum, in order to avoid having to
+			 * save & restore the whole vector context.
+			 */
+			preempt_disable();
+			if (test_thread_flag(TIF_USEDMSA))
+				read_msa_wr(wd, fpr, df);
+			preempt_enable();
+
+			res = __copy_to_user_inatomic(addr, fpr, sizeof(*fpr));
+			if (res)
+				goto fault;
+			break;
+
+		default:
+			goto sigbus;
+		}
+
+		compute_return_epc(regs);
+		break;
 
 #ifndef CONFIG_CPU_MIPSR6
 	/*
@@ -2223,7 +2306,6 @@ sigbus:
 }
 
 #ifdef CONFIG_DEBUG_FS
-extern struct dentry *mips_debugfs_dir;
 static int __init debugfs_unaligned(void)
 {
 	struct dentry *d;
@@ -2240,5 +2322,5 @@ static int __init debugfs_unaligned(void)
 		return -ENOMEM;
 	return 0;
 }
-__initcall(debugfs_unaligned);
+arch_initcall(debugfs_unaligned);
 #endif

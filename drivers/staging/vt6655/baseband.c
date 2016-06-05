@@ -36,8 +36,10 @@
  * Revision History:
  *      06-10-2003 Bryan YC Fan:  Re-write codes to support VT3253 spec.
  *      08-07-2003 Bryan YC Fan:  Add MAXIM2827/2825 and RFMD2959 support.
- *      08-26-2003 Kyle Hsu    :  Modify BBuGetFrameTime() and BBvCalculateParameter().
- *                                cancel the setting of MAC_REG_SOFTPWRCTL on BBbVT3253Init().
+ *      08-26-2003 Kyle Hsu    :  Modify BBuGetFrameTime() and
+ *				  BBvCalculateParameter().
+ *                                cancel the setting of MAC_REG_SOFTPWRCTL on
+ *				  BBbVT3253Init().
  *                                Add the comments.
  *      09-01-2003 Bryan YC Fan:  RF & BB tables updated.
  *                                Modified BBvLoopbackOn & BBvLoopbackOff().
@@ -66,7 +68,7 @@
 /*---------------------  Static Variables  --------------------------*/
 
 #define CB_VT3253_INIT_FOR_RFMD 446
-static unsigned char byVT3253InitTab_RFMD[CB_VT3253_INIT_FOR_RFMD][2] = {
+static const unsigned char byVT3253InitTab_RFMD[CB_VT3253_INIT_FOR_RFMD][2] = {
 	{0x00, 0x30},
 	{0x01, 0x00},
 	{0x02, 0x00},
@@ -516,7 +518,7 @@ static unsigned char byVT3253InitTab_RFMD[CB_VT3253_INIT_FOR_RFMD][2] = {
 };
 
 #define CB_VT3253B0_INIT_FOR_RFMD 256
-static unsigned char byVT3253B0_RFMD[CB_VT3253B0_INIT_FOR_RFMD][2] = {
+static const unsigned char byVT3253B0_RFMD[CB_VT3253B0_INIT_FOR_RFMD][2] = {
 	{0x00, 0x31},
 	{0x01, 0x00},
 	{0x02, 0x00},
@@ -777,7 +779,8 @@ static unsigned char byVT3253B0_RFMD[CB_VT3253B0_INIT_FOR_RFMD][2] = {
 
 #define CB_VT3253B0_AGC_FOR_RFMD2959 195
 /* For RFMD2959 */
-static unsigned char byVT3253B0_AGC4_RFMD2959[CB_VT3253B0_AGC_FOR_RFMD2959][2] = {
+static
+unsigned char byVT3253B0_AGC4_RFMD2959[CB_VT3253B0_AGC_FOR_RFMD2959][2] = {
 	{0xF0, 0x00},
 	{0xF1, 0x3E},
 	{0xF0, 0x80},
@@ -977,7 +980,8 @@ static unsigned char byVT3253B0_AGC4_RFMD2959[CB_VT3253B0_AGC_FOR_RFMD2959][2] =
 
 #define CB_VT3253B0_INIT_FOR_AIROHA2230 256
 /* For AIROHA */
-static unsigned char byVT3253B0_AIROHA2230[CB_VT3253B0_INIT_FOR_AIROHA2230][2] = {
+static
+unsigned char byVT3253B0_AIROHA2230[CB_VT3253B0_INIT_FOR_AIROHA2230][2] = {
 	{0x00, 0x31},
 	{0x01, 0x00},
 	{0x02, 0x00},
@@ -1728,10 +1732,8 @@ BBuGetFrameTime(
 	unsigned int uRateIdx = (unsigned int) wRate;
 	unsigned int uRate = 0;
 
-	if (uRateIdx > RATE_54M) {
-		ASSERT(0);
+	if (uRateIdx > RATE_54M)
 		return 0;
-	}
 
 	uRate = (unsigned int)awcFrameTime[uRateIdx];
 
@@ -1945,7 +1947,6 @@ bool BBbReadEmbedded(struct vnt_private *priv,
 	VNSvInPortB(dwIoBase + MAC_REG_BBREGDATA, pbyData);
 
 	if (ww == W_MAX_TIMEOUT) {
-		DBG_PORT80(0x30);
 		pr_debug(" DBG_PORT80(0x30)\n");
 		return false;
 	}
@@ -1988,7 +1989,6 @@ bool BBbWriteEmbedded(struct vnt_private *priv,
 	}
 
 	if (ww == W_MAX_TIMEOUT) {
-		DBG_PORT80(0x31);
 		pr_debug(" DBG_PORT80(0x31)\n");
 		return false;
 	}
@@ -2093,9 +2093,19 @@ bool BBbVT3253Init(struct vnt_private *priv)
 				byVT3253B0_UW2451[ii][0],
 				byVT3253B0_UW2451[ii][1]);
 
-		/* Init ANT B select,TX Config CR09 = 0x61->0x45, 0x45->0x41(VC1/VC2 define, make the ANT_A, ANT_B inverted) */
+		/* Init ANT B select,
+		 * TX Config CR09 = 0x61->0x45,
+		 * 0x45->0x41(VC1/VC2 define, make the ANT_A, ANT_B inverted)
+		 */
+
 		/*bResult &= BBbWriteEmbedded(dwIoBase,0x09,0x41);*/
-		/* Init ANT B select,RX Config CR10 = 0x28->0x2A, 0x2A->0x28(VC1/VC2 define, make the ANT_A, ANT_B inverted) */
+
+		/* Init ANT B select,
+		 * RX Config CR10 = 0x28->0x2A,
+		 * 0x2A->0x28(VC1/VC2 define,
+		 * make the ANT_A, ANT_B inverted)
+		 */
+
 		/*bResult &= BBbWriteEmbedded(dwIoBase,0x0a,0x28);*/
 		/* Select VC1/VC2, CR215 = 0x02->0x06 */
 		bResult &= BBbWriteEmbedded(priv, 0xd7, 0x06);
@@ -2154,9 +2164,13 @@ bool BBbVT3253Init(struct vnt_private *priv)
 
 
 		/* {{ RobertYu:20050223, request by JerryChung */
-		/* Init ANT B select,TX Config CR09 = 0x61->0x45, 0x45->0x41(VC1/VC2 define, make the ANT_A, ANT_B inverted) */
+		/* Init ANT B select,TX Config CR09 = 0x61->0x45,
+		 * 0x45->0x41(VC1/VC2 define, make the ANT_A, ANT_B inverted)
+		 */
 		/*bResult &= BBbWriteEmbedded(dwIoBase,0x09,0x41);*/
-		/* Init ANT B select,RX Config CR10 = 0x28->0x2A, 0x2A->0x28(VC1/VC2 define, make the ANT_A, ANT_B inverted) */
+		/* Init ANT B select,RX Config CR10 = 0x28->0x2A,
+		 * 0x2A->0x28(VC1/VC2 define, make the ANT_A, ANT_B inverted)
+		 */
 		/*bResult &= BBbWriteEmbedded(dwIoBase,0x0a,0x28);*/
 		/* Select VC1/VC2, CR215 = 0x02->0x06 */
 		bResult &= BBbWriteEmbedded(priv, 0xd7, 0x06);

@@ -36,7 +36,7 @@
 #include <linux/pm_runtime.h>
 #include <linux/err.h>
 #include <linux/delay.h>
-#include <linux/usb/musb-omap.h>
+#include <linux/usb/musb.h>
 #include <linux/phy/omap_control_phy.h>
 #include <linux/of_platform.h>
 
@@ -46,7 +46,7 @@
 struct omap2430_glue {
 	struct device		*dev;
 	struct platform_device	*musb;
-	enum omap_musb_vbus_id_status status;
+	enum musb_vbus_id_status status;
 	struct work_struct	omap_musb_mailbox_work;
 	struct device		*control_otghs;
 };
@@ -234,7 +234,7 @@ static inline void omap2430_low_level_init(struct musb *musb)
 	musb_writel(musb->mregs, OTG_FORCESTDBY, l);
 }
 
-void omap_musb_mailbox(enum omap_musb_vbus_id_status status)
+static void omap2430_musb_mailbox(enum musb_vbus_id_status status)
 {
 	struct omap2430_glue	*glue = _glue;
 
@@ -251,7 +251,6 @@ void omap_musb_mailbox(enum omap_musb_vbus_id_status status)
 
 	schedule_work(&glue->omap_musb_mailbox_work);
 }
-EXPORT_SYMBOL_GPL(omap_musb_mailbox);
 
 static void omap_musb_set_mailbox(struct omap2430_glue *glue)
 {
@@ -262,7 +261,7 @@ static void omap_musb_set_mailbox(struct omap2430_glue *glue)
 	struct usb_otg *otg = musb->xceiv->otg;
 
 	switch (glue->status) {
-	case OMAP_MUSB_ID_GROUND:
+	case MUSB_ID_GROUND:
 		dev_dbg(dev, "ID GND\n");
 
 		otg->default_a = true;
@@ -276,7 +275,7 @@ static void omap_musb_set_mailbox(struct omap2430_glue *glue)
 		}
 		break;
 
-	case OMAP_MUSB_VBUS_VALID:
+	case MUSB_VBUS_VALID:
 		dev_dbg(dev, "VBUS Connect\n");
 
 		otg->default_a = false;
@@ -287,8 +286,8 @@ static void omap_musb_set_mailbox(struct omap2430_glue *glue)
 		omap_control_usb_set_mode(glue->control_otghs, USB_MODE_DEVICE);
 		break;
 
-	case OMAP_MUSB_ID_FLOAT:
-	case OMAP_MUSB_VBUS_OFF:
+	case MUSB_ID_FLOAT:
+	case MUSB_VBUS_OFF:
 		dev_dbg(dev, "VBUS Disconnect\n");
 
 		musb->xceiv->last_event = USB_EVENT_NONE;
@@ -391,9 +390,20 @@ static int omap2430_musb_init(struct musb *musb)
 	}
 	musb->isr = omap2430_musb_interrupt;
 
+	/*
+	 * Enable runtime PM for musb parent (this driver). We can't
+	 * do it earlier as struct musb is not yet allocated and we
+	 * need to touch the musb registers for runtime PM.
+	 */
+	pm_runtime_enable(glue->dev);
+	status = pm_runtime_get_sync(glue->dev);
+	if (status < 0)
+		goto err1;
+
 	status = pm_runtime_get_sync(dev);
 	if (status < 0) {
 		dev_err(dev, "pm_runtime_get_sync FAILED %d\n", status);
+		pm_runtime_put_sync(glue->dev);
 		goto err1;
 	}
 
@@ -419,13 +429,14 @@ static int omap2430_musb_init(struct musb *musb)
 
 	setup_timer(&musb_idle_timer, musb_do_idle, (unsigned long) musb);
 
-	if (glue->status != OMAP_MUSB_UNKNOWN)
+	if (glue->status != MUSB_UNKNOWN)
 		omap_musb_set_mailbox(glue);
 
 	phy_init(musb->phy);
 	phy_power_on(musb->phy);
 
 	pm_runtime_put_noidle(musb->controller);
+	pm_runtime_put_noidle(glue->dev);
 	return 0;
 
 err1:
@@ -443,7 +454,7 @@ static void omap2430_musb_enable(struct musb *musb)
 
 	switch (glue->status) {
 
-	case OMAP_MUSB_ID_GROUND:
+	case MUSB_ID_GROUND:
 		omap_control_usb_set_mode(glue->control_otghs, USB_MODE_HOST);
 		if (data->interface_type != MUSB_INTERFACE_UTMI)
 			break;
@@ -462,7 +473,7 @@ static void omap2430_musb_enable(struct musb *musb)
 		}
 		break;
 
-	case OMAP_MUSB_VBUS_VALID:
+	case MUSB_VBUS_VALID:
 		omap_control_usb_set_mode(glue->control_otghs, USB_MODE_DEVICE);
 		break;
 
@@ -476,7 +487,7 @@ static void omap2430_musb_disable(struct musb *musb)
 	struct device *dev = musb->controller;
 	struct omap2430_glue *glue = dev_get_drvdata(dev->parent);
 
-	if (glue->status != OMAP_MUSB_UNKNOWN)
+	if (glue->status != MUSB_UNKNOWN)
 		omap_control_usb_set_mode(glue->control_otghs,
 			USB_MODE_DISCONNECT);
 }
@@ -493,6 +504,11 @@ static int omap2430_musb_exit(struct musb *musb)
 }
 
 static const struct musb_platform_ops omap2430_ops = {
+	.quirks		= MUSB_DMA_INVENTRA,
+#ifdef CONFIG_USB_INVENTRA_DMA
+	.dma_init	= musbhs_dma_controller_create,
+	.dma_exit	= musbhs_dma_controller_destroy,
+#endif
 	.init		= omap2430_musb_init,
 	.exit		= omap2430_musb_exit,
 
@@ -503,6 +519,8 @@ static const struct musb_platform_ops omap2430_ops = {
 
 	.enable		= omap2430_musb_enable,
 	.disable	= omap2430_musb_disable,
+
+	.phy_callback	= omap2430_musb_mailbox,
 };
 
 static u64 omap2430_dmamask = DMA_BIT_MASK(32);
@@ -534,7 +552,7 @@ static int omap2430_probe(struct platform_device *pdev)
 
 	glue->dev			= &pdev->dev;
 	glue->musb			= musb;
-	glue->status			= OMAP_MUSB_UNKNOWN;
+	glue->status			= MUSB_UNKNOWN;
 	glue->control_otghs = ERR_PTR(-ENODEV);
 
 	if (np) {
@@ -621,7 +639,11 @@ static int omap2430_probe(struct platform_device *pdev)
 		goto err2;
 	}
 
-	pm_runtime_enable(&pdev->dev);
+	/*
+	 * Note that we cannot enable PM runtime yet for this
+	 * driver as we need struct musb initialized first.
+	 * See omap2430_musb_init above.
+	 */
 
 	ret = platform_device_add(musb);
 	if (ret) {
@@ -642,8 +664,11 @@ static int omap2430_remove(struct platform_device *pdev)
 {
 	struct omap2430_glue		*glue = platform_get_drvdata(pdev);
 
+	pm_runtime_get_sync(glue->dev);
 	cancel_work_sync(&glue->omap_musb_mailbox_work);
 	platform_device_unregister(glue->musb);
+	pm_runtime_put_sync(glue->dev);
+	pm_runtime_disable(glue->dev);
 
 	return 0;
 }
@@ -670,11 +695,12 @@ static int omap2430_runtime_resume(struct device *dev)
 	struct omap2430_glue		*glue = dev_get_drvdata(dev);
 	struct musb			*musb = glue_to_musb(glue);
 
-	if (musb) {
-		omap2430_low_level_init(musb);
-		musb_writel(musb->mregs, OTG_INTERFSEL,
-				musb->context.otg_interfsel);
-	}
+	if (!musb)
+		return -EPROBE_DEFER;
+
+	omap2430_low_level_init(musb);
+	musb_writel(musb->mregs, OTG_INTERFSEL,
+		    musb->context.otg_interfsel);
 
 	return 0;
 }

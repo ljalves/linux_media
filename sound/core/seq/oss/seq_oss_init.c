@@ -202,7 +202,7 @@ snd_seq_oss_open(struct file *file, int level)
 
 	dp->index = i;
 	if (i >= SNDRV_SEQ_OSS_MAX_CLIENTS) {
-		pr_err("ALSA: seq_oss: too many applications\n");
+		pr_debug("ALSA: seq_oss: too many applications\n");
 		rc = -ENOMEM;
 		goto _error;
 	}
@@ -436,22 +436,6 @@ snd_seq_oss_release(struct seq_oss_devinfo *dp)
 
 
 /*
- * Wait until the queue is empty (if we don't have nonblock)
- */
-void
-snd_seq_oss_drain_write(struct seq_oss_devinfo *dp)
-{
-	if (! dp->timer->running)
-		return;
-	if (is_write_mode(dp->file_mode) && !is_nonblock_mode(dp->file_mode) &&
-	    dp->writeq) {
-		while (snd_seq_oss_writeq_sync(dp->writeq))
-			;
-	}
-}
-
-
-/*
  * reset sequencer devices
  */
 void
@@ -479,8 +463,7 @@ snd_seq_oss_reset(struct seq_oss_devinfo *dp)
 	snd_seq_oss_timer_stop(dp->timer);
 }
 
-
-#ifdef CONFIG_PROC_FS
+#ifdef CONFIG_SND_PROC_FS
 /*
  * misc. functions for proc interface
  */
@@ -531,4 +514,4 @@ snd_seq_oss_system_info_read(struct snd_info_buffer *buf)
 			snd_seq_oss_readq_info_read(dp->readq, buf);
 	}
 }
-#endif /* CONFIG_PROC_FS */
+#endif /* CONFIG_SND_PROC_FS */

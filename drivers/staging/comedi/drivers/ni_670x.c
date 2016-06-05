@@ -172,18 +172,18 @@ static int ni_670x_auto_attach(struct comedi_device *dev,
 			       unsigned long context)
 {
 	struct pci_dev *pcidev = comedi_to_pci_dev(dev);
-	const struct ni_670x_board *thisboard = NULL;
+	const struct ni_670x_board *board = NULL;
 	struct ni_670x_private *devpriv;
 	struct comedi_subdevice *s;
 	int ret;
 	int i;
 
 	if (context < ARRAY_SIZE(ni_670x_boards))
-		thisboard = &ni_670x_boards[context];
-	if (!thisboard)
+		board = &ni_670x_boards[context];
+	if (!board)
 		return -ENODEV;
-	dev->board_ptr = thisboard;
-	dev->board_name = thisboard->name;
+	dev->board_ptr = board;
+	dev->board_name = board->name;
 
 	ret = comedi_pci_enable(dev);
 	if (ret)
@@ -209,13 +209,14 @@ static int ni_670x_auto_attach(struct comedi_device *dev,
 	/* analog output subdevice */
 	s->type = COMEDI_SUBD_AO;
 	s->subdev_flags = SDF_WRITABLE;
-	s->n_chan = thisboard->ao_chans;
+	s->n_chan = board->ao_chans;
 	s->maxdata = 0xffff;
 	if (s->n_chan == 32) {
 		const struct comedi_lrange **range_table_list;
 
-		range_table_list = kmalloc(sizeof(struct comedi_lrange *) * 32,
-					   GFP_KERNEL);
+		range_table_list = kmalloc_array(32,
+						 sizeof(struct comedi_lrange *),
+						 GFP_KERNEL);
 		if (!range_table_list)
 			return -ENOMEM;
 		s->range_table_list = range_table_list;

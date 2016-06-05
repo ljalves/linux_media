@@ -19,7 +19,7 @@
 #include <asm/kvm_book3s_asm.h>
 #include <asm/opal.h>
 #include <asm/cpuidle.h>
-#include <asm/mmu-hash64.h>
+#include <asm/book3s/64/mmu-hash.h>
 
 #undef DEBUG
 
@@ -52,6 +52,22 @@
 	.text
 
 /*
+ * Used by threads when the lock bit of core_idle_state is set.
+ * Threads will spin in HMT_LOW until the lock bit is cleared.
+ * r14 - pointer to core_idle_state
+ * r15 - used to load contents of core_idle_state
+ */
+
+core_idle_lock_held:
+	HMT_LOW
+3:	lwz	r15,0(r14)
+	andi.   r15,r15,PNV_CORE_IDLE_LOCK_BIT
+	bne	3b
+	HMT_MEDIUM
+	lwarx	r15,0,r14
+	blr
+
+/*
  * Pass requested state in r3:
  *	r3 - PNV_THREAD_NAP/SLEEP/WINKLE
  *
@@ -72,13 +88,6 @@ _GLOBAL(power7_powersave_common)
 	stdu	r1,-INT_FRAME_SIZE(r1)
 	std	r0,_LINK(r1)
 	std	r0,_NIP(r1)
-
-#ifndef CONFIG_SMP
-	/* Make sure FPU, VSX etc... are flushed as we may lose
-	 * state when going to nap mode
-	 */
-	bl	discard_lazy_cpu_state
-#endif /* CONFIG_SMP */
 
 	/* Hard disable interrupts */
 	mfmsr	r9
@@ -150,6 +159,10 @@ power7_enter_nap_mode:
 	ld	r14,PACA_CORE_IDLE_STATE_PTR(r13)
 lwarx_loop1:
 	lwarx	r15,0,r14
+
+	andi.   r9,r15,PNV_CORE_IDLE_LOCK_BIT
+	bnel	core_idle_lock_held
+
 	andc	r15,r15,r7			/* Clear thread bit */
 
 	andi.	r15,r15,PNV_CORE_IDLE_THREAD_BITS
@@ -294,7 +307,7 @@ lwarx_loop2:
 	 * workaround undo code or resyncing timebase or restoring context
 	 * In either case loop until the lock bit is cleared.
 	 */
-	bne	core_idle_lock_held
+	bnel	core_idle_lock_held
 
 	cmpwi	cr2,r15,0
 	lbz	r4,PACA_SUBCORE_SIBLING_MASK(r13)
@@ -318,15 +331,6 @@ lwarx_loop2:
 	bne-	lwarx_loop2
 	isync
 	b	common_exit
-
-core_idle_lock_held:
-	HMT_LOW
-core_idle_lock_loop:
-	lwz	r15,0(14)
-	andi.   r9,r15,PNV_CORE_IDLE_LOCK_BIT
-	bne	core_idle_lock_loop
-	HMT_MEDIUM
-	b	lwarx_loop2
 
 first_thread_in_subcore:
 	/* First thread in subcore to wakeup */

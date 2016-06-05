@@ -617,6 +617,7 @@ static void smsdvb_media_device_unregister(struct smsdvb_client_t *client)
 	if (!coredev->media_dev)
 		return;
 	media_device_unregister(coredev->media_dev);
+	media_device_cleanup(coredev->media_dev);
 	kfree(coredev->media_dev);
 	coredev->media_dev = NULL;
 #endif
@@ -753,7 +754,7 @@ static inline int led_feedback(struct smsdvb_client_t *client)
 				     SMS_LED_HI : SMS_LED_LO);
 }
 
-static int smsdvb_read_status(struct dvb_frontend *fe, fe_status_t *stat)
+static int smsdvb_read_status(struct dvb_frontend *fe, enum fe_status *stat)
 {
 	int rc;
 	struct smsdvb_client_t *client;
@@ -900,7 +901,7 @@ static int smsdvb_dvbt_set_frontend(struct dvb_frontend *fe)
 	/* Disable LNA, if any. An error is returned if no LNA is present */
 	ret = sms_board_lna_control(client->coredev, 0);
 	if (ret == 0) {
-		fe_status_t status;
+		enum fe_status status;
 
 		/* tune with LNA off at first */
 		ret = smsdvb_sendrequest_and_wait(client, &msg, sizeof(msg),
@@ -971,7 +972,7 @@ static int smsdvb_isdbt_set_frontend(struct dvb_frontend *fe)
 	/* Disable LNA, if any. An error is returned if no LNA is present */
 	ret = sms_board_lna_control(client->coredev, 0);
 	if (ret == 0) {
-		fe_status_t status;
+		enum fe_status status;
 
 		/* tune with LNA off at first */
 		ret = smsdvb_sendrequest_and_wait(client, &msg, sizeof(msg),
@@ -1012,12 +1013,6 @@ static int smsdvb_set_frontend(struct dvb_frontend *fe)
 	default:
 		return -EINVAL;
 	}
-}
-
-/* Nothing to do here, as stats are automatically updated */
-static int smsdvb_get_frontend(struct dvb_frontend *fe)
-{
-	return 0;
 }
 
 static int smsdvb_init(struct dvb_frontend *fe)
@@ -1068,7 +1063,6 @@ static struct dvb_frontend_ops smsdvb_fe_ops = {
 	.release = smsdvb_release,
 
 	.set_frontend = smsdvb_set_frontend,
-	.get_frontend = smsdvb_get_frontend,
 	.get_tune_settings = smsdvb_get_tune_settings,
 
 	.read_status = smsdvb_read_status,
@@ -1183,7 +1177,11 @@ static int smsdvb_hotplug(struct smscore_device_t *coredev,
 	if (smsdvb_debugfs_create(client) < 0)
 		pr_info("failed to create debugfs node\n");
 
-	dvb_create_media_graph(&client->adapter);
+	rc = dvb_create_media_graph(&client->adapter, true);
+	if (rc < 0) {
+		pr_err("dvb_create_media_graph failed %d\n", rc);
+		goto client_error;
+	}
 
 	pr_info("DVB interface registered.\n");
 	return 0;

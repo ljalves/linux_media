@@ -403,6 +403,9 @@ static int aha1542_queuecommand(struct Scsi_Host *sh, struct scsi_cmnd *cmd)
 		cptr = kmalloc(sizeof(*cptr) * sg_count, GFP_KERNEL | GFP_DMA);
 		if (!cptr)
 			return SCSI_MLQUEUE_HOST_BUSY;
+	} else {
+		sg_count = 0;
+		cptr = NULL;
 	}
 
 	/* Use the outgoing mailboxes in a round-robin fashion, because this
@@ -950,7 +953,6 @@ static struct scsi_host_template driver_template = {
 	.can_queue		= AHA1542_MAILBOXES, 
 	.this_id		= 7,
 	.sg_tablesize		= 16,
-	.cmd_per_lun		= 1,
 	.unchecked_isa_dma	= 1, 
 	.use_clustering		= ENABLE_CLUSTERING,
 };

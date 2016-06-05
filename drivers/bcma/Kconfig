@@ -29,12 +29,6 @@ config BCMA_HOST_PCI
 	select BCMA_DRIVER_PCI
 	default y
 
-config BCMA_DRIVER_PCI_HOSTMODE
-	bool "Driver for PCI core working in hostmode"
-	depends on BCMA && MIPS && BCMA_HOST_PCI
-	help
-	  PCI core hostmode operation (external PCI bus).
-
 config BCMA_HOST_SOC
 	bool "Support for BCMA in a SoC"
 	depends on BCMA
@@ -61,6 +55,12 @@ config BCMA_DRIVER_PCI
 	  This driver is also prerequisite for a hostmode PCIe core
 	  support.
 
+config BCMA_DRIVER_PCI_HOSTMODE
+	bool "Driver for PCI core working in hostmode"
+	depends on BCMA && MIPS && BCMA_DRIVER_PCI
+	help
+	  PCI core hostmode operation (external PCI bus).
+
 config BCMA_DRIVER_MIPS
 	bool "BCMA Broadcom MIPS core driver"
 	depends on BCMA && MIPS
@@ -69,6 +69,11 @@ config BCMA_DRIVER_MIPS
 	  Advanced Microcontroller Bus.
 
 	  If unsure, say N
+
+config BCMA_PFLASH
+	bool
+	depends on BCMA_DRIVER_MIPS
+	default y
 
 config BCMA_SFLASH
 	bool
@@ -92,7 +97,7 @@ config BCMA_DRIVER_GMAC_CMN
 config BCMA_DRIVER_GPIO
 	bool "BCMA GPIO driver"
 	depends on BCMA && GPIOLIB
-	select IRQ_DOMAIN if BCMA_HOST_SOC
+	select GPIOLIB_IRQCHIP if BCMA_HOST_SOC
 	help
 	  Driver to provide access to the GPIO pins of the bcma bus.
 

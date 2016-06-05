@@ -42,6 +42,7 @@
 #include "bearer.h"
 #include "net.h"
 #include "socket.h"
+#include "bcast.h"
 
 #include <linux/module.h>
 
@@ -68,11 +69,19 @@ static int __net_init tipc_init_net(struct net *net)
 	if (err)
 		goto out_nametbl;
 
-	err = tipc_subscr_start(net);
+	INIT_LIST_HEAD(&tn->dist_queue);
+	err = tipc_topsrv_start(net);
 	if (err)
 		goto out_subscr;
+
+	err = tipc_bcast_init(net);
+	if (err)
+		goto out_bclink;
+
 	return 0;
 
+out_bclink:
+	tipc_bcast_stop(net);
 out_subscr:
 	tipc_nametbl_stop(net);
 out_nametbl:
@@ -83,8 +92,9 @@ out_sk_rht:
 
 static void __net_exit tipc_exit_net(struct net *net)
 {
-	tipc_subscr_stop(net);
+	tipc_topsrv_stop(net);
 	tipc_net_stop(net);
+	tipc_bcast_stop(net);
 	tipc_nametbl_stop(net);
 	tipc_sk_rht_destroy(net);
 }
@@ -102,11 +112,9 @@ static int __init tipc_init(void)
 
 	pr_info("Activated (version " TIPC_MOD_VER ")\n");
 
-	sysctl_tipc_rmem[0] = TIPC_CONN_OVERLOAD_LIMIT >> 4 <<
-			      TIPC_LOW_IMPORTANCE;
-	sysctl_tipc_rmem[1] = TIPC_CONN_OVERLOAD_LIMIT >> 4 <<
-			      TIPC_CRITICAL_IMPORTANCE;
-	sysctl_tipc_rmem[2] = TIPC_CONN_OVERLOAD_LIMIT;
+	sysctl_tipc_rmem[0] = RCVBUF_MIN;
+	sysctl_tipc_rmem[1] = RCVBUF_DEF;
+	sysctl_tipc_rmem[2] = RCVBUF_MAX;
 
 	err = tipc_netlink_start();
 	if (err)

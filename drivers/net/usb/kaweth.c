@@ -938,7 +938,7 @@ static void kaweth_tx_timeout(struct net_device *net)
 
 	dev_warn(&net->dev, "%s: Tx timed out. Resetting.\n", net->name);
 	kaweth->stats.tx_errors++;
-	net->trans_start = jiffies;
+	netif_trans_update(net);
 
 	usb_unlink_urb(kaweth->tx_urb);
 }
@@ -1176,12 +1176,6 @@ err_fw:
 	/* kaweth is zeroed as part of alloc_netdev */
 	INIT_DELAYED_WORK(&kaweth->lowmem_work, kaweth_resubmit_tl);
 	usb_set_intfdata(intf, kaweth);
-
-#if 0
-// dma_supported() is deeply broken on almost all architectures
-	if (dma_supported (dev, 0xffffffffffffffffULL))
-		kaweth->net->features |= NETIF_F_HIGHDMA;
-#endif
 
 	SET_NETDEV_DEV(netdev, dev);
 	if (register_netdev(netdev) != 0) {

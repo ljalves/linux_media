@@ -57,6 +57,7 @@ enum lm75_type {		/* keep sorted in alphabetical order */
 	tmp175,
 	tmp275,
 	tmp75,
+	tmp75c,
 };
 
 /* Addresses scanned */
@@ -76,7 +77,6 @@ static const u8 LM75_REG_TEMP[3] = {
 struct lm75_data {
 	struct i2c_client	*client;
 	struct device		*hwmon_dev;
-	struct thermal_zone_device	*tz;
 	struct mutex		update_lock;
 	u8			orig_conf;
 	u8			resolution;	/* In bits, between 9 and 12 */
@@ -104,7 +104,7 @@ static inline long lm75_reg_to_mc(s16 temp, u8 resolution)
 
 /* sysfs attributes for hwmon */
 
-static int lm75_read_temp(void *dev, long *temp)
+static int lm75_read_temp(void *dev, int *temp)
 {
 	struct lm75_data *data = lm75_update_device(dev);
 
@@ -280,6 +280,11 @@ lm75_probe(struct i2c_client *client, const struct i2c_device_id *id)
 		data->resolution = 12;
 		data->sample_time = HZ / 2;
 		break;
+	case tmp75c:
+		clr_mask |= 1 << 5;		/* not one-shot mode */
+		data->resolution = 12;
+		data->sample_time = HZ / 4;
+		break;
 	}
 
 	/* configure as specified */
@@ -300,11 +305,9 @@ lm75_probe(struct i2c_client *client, const struct i2c_device_id *id)
 	if (IS_ERR(data->hwmon_dev))
 		return PTR_ERR(data->hwmon_dev);
 
-	data->tz = thermal_zone_of_sensor_register(data->hwmon_dev, 0,
-						   data->hwmon_dev,
-						   &lm75_of_thermal_ops);
-	if (IS_ERR(data->tz))
-		data->tz = NULL;
+	devm_thermal_zone_of_sensor_register(data->hwmon_dev, 0,
+					     data->hwmon_dev,
+					     &lm75_of_thermal_ops);
 
 	dev_info(dev, "%s: sensor '%s'\n",
 		 dev_name(data->hwmon_dev), client->name);
@@ -316,7 +319,6 @@ static int lm75_remove(struct i2c_client *client)
 {
 	struct lm75_data *data = i2c_get_clientdata(client);
 
-	thermal_zone_of_sensor_unregister(data->hwmon_dev, data->tz);
 	hwmon_device_unregister(data->hwmon_dev);
 	lm75_write_value(client, LM75_REG_CONF, data->orig_conf);
 	return 0;
@@ -343,6 +345,7 @@ static const struct i2c_device_id lm75_ids[] = {
 	{ "tmp175", tmp175, },
 	{ "tmp275", tmp275, },
 	{ "tmp75", tmp75, },
+	{ "tmp75c", tmp75c, },
 	{ /* LIST END */ }
 };
 MODULE_DEVICE_TABLE(i2c, lm75_ids);

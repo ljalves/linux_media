@@ -21,12 +21,9 @@
  *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
  *  General Public License for more details.
  *
- *  You should have received a copy of the GNU General Public License along
- *  with this program; if not, write to the Free Software Foundation, Inc.,
- *  59 Temple Place, Suite 330, Boston, MA 02111-1307 USA.
- *
  * ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
  */
+#define pr_fmt(fmt) "ACPI: " fmt
 
 #include <linux/module.h>
 #include <linux/acpi.h>
@@ -34,7 +31,6 @@
 #include <linux/sched.h>       /* need_resched() */
 #include <linux/tick.h>
 #include <linux/cpuidle.h>
-#include <linux/syscore_ops.h>
 #include <acpi/processor.h>
 
 /*
@@ -46,8 +42,6 @@
 #ifdef CONFIG_X86
 #include <asm/apic.h>
 #endif
-
-#define PREFIX "ACPI: "
 
 #define ACPI_PROCESSOR_CLASS            "processor"
 #define _COMPONENT              ACPI_PROCESSOR_COMPONENT
@@ -65,8 +59,8 @@ module_param(latency_factor, uint, 0644);
 
 static DEFINE_PER_CPU(struct cpuidle_device *, acpi_cpuidle_device);
 
-static DEFINE_PER_CPU(struct acpi_processor_cx * [CPUIDLE_STATE_MAX],
-								acpi_cstate);
+static
+DEFINE_PER_CPU(struct acpi_processor_cx * [CPUIDLE_STATE_MAX], acpi_cstate);
 
 static int disabled_by_idle_boot_param(void)
 {
@@ -85,16 +79,16 @@ static int set_max_cstate(const struct dmi_system_id *id)
 	if (max_cstate > ACPI_PROCESSOR_MAX_POWER)
 		return 0;
 
-	printk(KERN_NOTICE PREFIX "%s detected - limiting to C%ld max_cstate."
-	       " Override with \"processor.max_cstate=%d\"\n", id->ident,
-	       (long)id->driver_data, ACPI_PROCESSOR_MAX_POWER + 1);
+	pr_notice("%s detected - limiting to C%ld max_cstate."
+		  " Override with \"processor.max_cstate=%d\"\n", id->ident,
+		  (long)id->driver_data, ACPI_PROCESSOR_MAX_POWER + 1);
 
 	max_cstate = (long)id->driver_data;
 
 	return 0;
 }
 
-static struct dmi_system_id processor_power_dmi_table[] = {
+static const struct dmi_system_id processor_power_dmi_table[] = {
 	{ set_max_cstate, "Clevo 5600D", {
 	  DMI_MATCH(DMI_BIOS_VENDOR,"Phoenix Technologies LTD"),
 	  DMI_MATCH(DMI_BIOS_VERSION,"SHE845M0.86C.0013.D.0302131307")},
@@ -197,42 +191,6 @@ static void lapic_timer_state_broadcast(struct acpi_processor *pr,
 }
 
 #endif
-
-#ifdef CONFIG_PM_SLEEP
-static u32 saved_bm_rld;
-
-static int acpi_processor_suspend(void)
-{
-	acpi_read_bit_register(ACPI_BITREG_BUS_MASTER_RLD, &saved_bm_rld);
-	return 0;
-}
-
-static void acpi_processor_resume(void)
-{
-	u32 resumed_bm_rld = 0;
-
-	acpi_read_bit_register(ACPI_BITREG_BUS_MASTER_RLD, &resumed_bm_rld);
-	if (resumed_bm_rld == saved_bm_rld)
-		return;
-
-	acpi_write_bit_register(ACPI_BITREG_BUS_MASTER_RLD, saved_bm_rld);
-}
-
-static struct syscore_ops acpi_processor_syscore_ops = {
-	.suspend = acpi_processor_suspend,
-	.resume = acpi_processor_resume,
-};
-
-void acpi_processor_syscore_init(void)
-{
-	register_syscore_ops(&acpi_processor_syscore_ops);
-}
-
-void acpi_processor_syscore_exit(void)
-{
-	unregister_syscore_ops(&acpi_processor_syscore_ops);
-}
-#endif /* CONFIG_PM_SLEEP */
 
 #if defined(CONFIG_X86)
 static void tsc_check_state(int state)
@@ -355,7 +313,7 @@ static int acpi_processor_get_power_info_cst(struct acpi_processor *pr)
 
 	/* There must be at least 2 elements */
 	if (!cst || (cst->type != ACPI_TYPE_PACKAGE) || cst->package.count < 2) {
-		printk(KERN_ERR PREFIX "not enough elements in _CST\n");
+		pr_err("not enough elements in _CST\n");
 		ret = -EFAULT;
 		goto end;
 	}
@@ -364,7 +322,7 @@ static int acpi_processor_get_power_info_cst(struct acpi_processor *pr)
 
 	/* Validate number of power states. */
 	if (count < 1 || count != cst->package.count - 1) {
-		printk(KERN_ERR PREFIX "count given by _CST is not valid\n");
+		pr_err("count given by _CST is not valid\n");
 		ret = -EFAULT;
 		goto end;
 	}
@@ -473,11 +431,9 @@ static int acpi_processor_get_power_info_cst(struct acpi_processor *pr)
 		 * (From 1 through ACPI_PROCESSOR_MAX_POWER - 1)
 		 */
 		if (current_count >= (ACPI_PROCESSOR_MAX_POWER - 1)) {
-			printk(KERN_WARNING
-			       "Limiting number of power states to max (%d)\n",
-			       ACPI_PROCESSOR_MAX_POWER);
-			printk(KERN_WARNING
-			       "Please increase ACPI_PROCESSOR_MAX_POWER if needed.\n");
+			pr_warn("Limiting number of power states to max (%d)\n",
+				ACPI_PROCESSOR_MAX_POWER);
+			pr_warn("Please increase ACPI_PROCESSOR_MAX_POWER if needed.\n");
 			break;
 		}
 	}
@@ -1101,8 +1057,8 @@ int acpi_processor_power_init(struct acpi_processor *pr)
 			retval = cpuidle_register_driver(&acpi_idle_driver);
 			if (retval)
 				return retval;
-			printk(KERN_DEBUG "ACPI: %s registered with cpuidle\n",
-					acpi_idle_driver.name);
+			pr_debug("%s registered with cpuidle\n",
+				 acpi_idle_driver.name);
 		}
 
 		dev = kzalloc(sizeof(*dev), GFP_KERNEL);

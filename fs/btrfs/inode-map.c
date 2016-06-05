@@ -48,7 +48,7 @@ static int caching_kthread(void *data)
 	/* Since the commit root is read-only, we can safely skip locking. */
 	path->skip_locking = 1;
 	path->search_commit_root = 1;
-	path->reada = 2;
+	path->reada = READA_FORWARD;
 
 	key.objectid = BTRFS_FIRST_FREE_OBJECTID;
 	key.offset = 0;
@@ -246,6 +246,7 @@ void btrfs_unpin_free_ino(struct btrfs_root *root)
 {
 	struct btrfs_free_space_ctl *ctl = root->free_ino_ctl;
 	struct rb_root *rbroot = &root->free_ino_pinned->free_space_offset;
+	spinlock_t *rbroot_lock = &root->free_ino_pinned->tree_lock;
 	struct btrfs_free_space *info;
 	struct rb_node *n;
 	u64 count;
@@ -254,29 +255,35 @@ void btrfs_unpin_free_ino(struct btrfs_root *root)
 		return;
 
 	while (1) {
+		bool add_to_ctl = true;
+
+		spin_lock(rbroot_lock);
 		n = rb_first(rbroot);
-		if (!n)
+		if (!n) {
+			spin_unlock(rbroot_lock);
 			break;
+		}
 
 		info = rb_entry(n, struct btrfs_free_space, offset_index);
 		BUG_ON(info->bitmap); /* Logic error */
 
 		if (info->offset > root->ino_cache_progress)
-			goto free;
+			add_to_ctl = false;
 		else if (info->offset + info->bytes > root->ino_cache_progress)
 			count = root->ino_cache_progress - info->offset + 1;
 		else
 			count = info->bytes;
 
-		__btrfs_add_free_space(ctl, info->offset, count);
-free:
 		rb_erase(&info->offset_index, rbroot);
-		kfree(info);
+		spin_unlock(rbroot_lock);
+		if (add_to_ctl)
+			__btrfs_add_free_space(ctl, info->offset, count);
+		kmem_cache_free(btrfs_free_space_cachep, info);
 	}
 }
 
-#define INIT_THRESHOLD	(((1024 * 32) / 2) / sizeof(struct btrfs_free_space))
-#define INODES_PER_BITMAP (PAGE_CACHE_SIZE * 8)
+#define INIT_THRESHOLD	((SZ_32K / 2) / sizeof(struct btrfs_free_space))
+#define INODES_PER_BITMAP (PAGE_SIZE * 8)
 
 /*
  * The goal is to keep the memory used by the free_ino tree won't
@@ -310,7 +317,7 @@ static void recalculate_thresholds(struct btrfs_free_space_ctl *ctl)
 	}
 
 	ctl->extents_thresh = (max_bitmaps - ctl->total_bitmaps) *
-				PAGE_CACHE_SIZE / sizeof(*info);
+				PAGE_SIZE / sizeof(*info);
 }
 
 /*
@@ -327,7 +334,7 @@ static bool use_bitmap(struct btrfs_free_space_ctl *ctl,
 	return true;
 }
 
-static struct btrfs_free_space_op free_ino_op = {
+static const struct btrfs_free_space_op free_ino_op = {
 	.recalc_thresholds	= recalculate_thresholds,
 	.use_bitmap		= use_bitmap,
 };
@@ -349,7 +356,7 @@ static bool pinned_use_bitmap(struct btrfs_free_space_ctl *ctl,
 	return false;
 }
 
-static struct btrfs_free_space_op pinned_free_ino_op = {
+static const struct btrfs_free_space_op pinned_free_ino_op = {
 	.recalc_thresholds	= pinned_recalc_thresholds,
 	.use_bitmap		= pinned_use_bitmap,
 };
@@ -474,24 +481,24 @@ again:
 
 	spin_lock(&ctl->tree_lock);
 	prealloc = sizeof(struct btrfs_free_space) * ctl->free_extents;
-	prealloc = ALIGN(prealloc, PAGE_CACHE_SIZE);
-	prealloc += ctl->total_bitmaps * PAGE_CACHE_SIZE;
+	prealloc = ALIGN(prealloc, PAGE_SIZE);
+	prealloc += ctl->total_bitmaps * PAGE_SIZE;
 	spin_unlock(&ctl->tree_lock);
 
 	/* Just to make sure we have enough space */
-	prealloc += 8 * PAGE_CACHE_SIZE;
+	prealloc += 8 * PAGE_SIZE;
 
-	ret = btrfs_delalloc_reserve_space(inode, prealloc);
+	ret = btrfs_delalloc_reserve_space(inode, 0, prealloc);
 	if (ret)
 		goto out_put;
 
 	ret = btrfs_prealloc_file_range_trans(inode, trans, 0, 0, prealloc,
 					      prealloc, prealloc, &alloc_hint);
 	if (ret) {
-		btrfs_delalloc_release_space(inode, prealloc);
+		btrfs_delalloc_release_space(inode, 0, prealloc);
 		goto out_put;
 	}
-	btrfs_free_reserved_data_space(inode, prealloc);
+	btrfs_free_reserved_data_space(inode, 0, prealloc);
 
 	ret = btrfs_write_out_ino_cache(root, trans, path, inode);
 out_put:
@@ -508,7 +515,7 @@ out:
 	return ret;
 }
 
-static int btrfs_find_highest_objectid(struct btrfs_root *root, u64 *objectid)
+int btrfs_find_highest_objectid(struct btrfs_root *root, u64 *objectid)
 {
 	struct btrfs_path *path;
 	int ret;
@@ -548,14 +555,10 @@ int btrfs_find_free_objectid(struct btrfs_root *root, u64 *objectid)
 	int ret;
 	mutex_lock(&root->objectid_mutex);
 
-	if (unlikely(root->highest_objectid < BTRFS_FIRST_FREE_OBJECTID)) {
-		ret = btrfs_find_highest_objectid(root,
-						  &root->highest_objectid);
-		if (ret)
-			goto out;
-	}
-
 	if (unlikely(root->highest_objectid >= BTRFS_LAST_FREE_OBJECTID)) {
+		btrfs_warn(root->fs_info,
+			   "the objectid of root %llu reaches its highest value",
+			   root->root_key.objectid);
 		ret = -ENOSPC;
 		goto out;
 	}

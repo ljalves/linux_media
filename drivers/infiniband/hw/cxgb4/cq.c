@@ -156,19 +156,17 @@ static int create_cq(struct c4iw_rdev *rdev, struct t4_cq *cq,
 		goto err4;
 
 	cq->gen = 1;
+	cq->gts = rdev->lldi.gts_reg;
 	cq->rdev = rdev;
-	if (user) {
-		u32 off = (cq->cqid << rdev->cqshift) & PAGE_MASK;
 
-		cq->ugts = (u64)rdev->bar2_pa + off;
-	} else if (is_t4(rdev->lldi.adapter_type)) {
-		cq->gts = rdev->lldi.gts_reg;
-		cq->qid_mask = -1U;
-	} else {
-		u32 off = ((cq->cqid << rdev->cqshift) & PAGE_MASK) + 12;
-
-		cq->gts = rdev->bar2_kva + off;
-		cq->qid_mask = rdev->qpmask;
+	cq->bar2_va = c4iw_bar2_addrs(rdev, cq->cqid, T4_BAR2_QTYPE_INGRESS,
+				      &cq->bar2_qid,
+				      user ? &cq->bar2_pa : NULL);
+	if (user && !cq->bar2_pa) {
+		pr_warn(MOD "%s: cqid %u not in BAR2 range.\n",
+			pci_name(rdev->lldi.pdev), cq->cqid);
+		ret = -EINVAL;
+		goto err4;
 	}
 	return 0;
 err4:
@@ -746,15 +744,12 @@ static int c4iw_poll_cq_one(struct c4iw_cq *chp, struct ib_wc *wc)
 		case FW_RI_SEND_WITH_SE:
 			wc->opcode = IB_WC_SEND;
 			break;
-		case FW_RI_BIND_MW:
-			wc->opcode = IB_WC_BIND_MW;
-			break;
 
 		case FW_RI_LOCAL_INV:
 			wc->opcode = IB_WC_LOCAL_INV;
 			break;
 		case FW_RI_FAST_REGISTER:
-			wc->opcode = IB_WC_FAST_REG_MR;
+			wc->opcode = IB_WC_REG_MR;
 			break;
 		default:
 			printk(KERN_ERR MOD "Unexpected opcode %d "
@@ -816,12 +811,19 @@ static int c4iw_poll_cq_one(struct c4iw_cq *chp, struct ib_wc *wc)
 			printk(KERN_ERR MOD
 			       "Unexpected cqe_status 0x%x for QPID=0x%0x\n",
 			       CQE_STATUS(&cqe), CQE_QPID(&cqe));
-			ret = -EINVAL;
+			wc->status = IB_WC_FATAL_ERR;
 		}
 	}
 out:
-	if (wq)
+	if (wq) {
+		if (unlikely(qhp->attr.state != C4IW_QP_STATE_RTS)) {
+			if (t4_sq_empty(wq))
+				complete(&qhp->sq_drained);
+			if (t4_rq_empty(wq))
+				complete(&qhp->rq_drained);
+		}
 		spin_unlock(&qhp->lock);
+	}
 	return ret;
 }
 
@@ -866,10 +868,13 @@ int c4iw_destroy_cq(struct ib_cq *ib_cq)
 	return 0;
 }
 
-struct ib_cq *c4iw_create_cq(struct ib_device *ibdev, int entries,
-			     int vector, struct ib_ucontext *ib_context,
+struct ib_cq *c4iw_create_cq(struct ib_device *ibdev,
+			     const struct ib_cq_init_attr *attr,
+			     struct ib_ucontext *ib_context,
 			     struct ib_udata *udata)
 {
+	int entries = attr->cqe;
+	int vector = attr->comp_vector;
 	struct c4iw_dev *rhp;
 	struct c4iw_cq *chp;
 	struct c4iw_create_cq_resp uresp;
@@ -879,6 +884,8 @@ struct ib_cq *c4iw_create_cq(struct ib_device *ibdev, int entries,
 	struct c4iw_mm_entry *mm, *mm2;
 
 	PDBG("%s ib_dev %p entries %d\n", __func__, ibdev, entries);
+	if (attr->flags)
+		return ERR_PTR(-EINVAL);
 
 	rhp = to_c4iw_dev(ibdev);
 
@@ -971,7 +978,7 @@ struct ib_cq *c4iw_create_cq(struct ib_device *ibdev, int entries,
 		insert_mmap(ucontext, mm);
 
 		mm2->key = uresp.gts_key;
-		mm2->addr = chp->cq.ugts;
+		mm2->addr = chp->cq.bar2_pa;
 		mm2->len = PAGE_SIZE;
 		insert_mmap(ucontext, mm2);
 	}

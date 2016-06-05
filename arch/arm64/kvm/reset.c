@@ -22,13 +22,16 @@
 #include <linux/errno.h>
 #include <linux/kvm_host.h>
 #include <linux/kvm.h>
+#include <linux/hw_breakpoint.h>
 
 #include <kvm/arm_arch_timer.h>
 
 #include <asm/cputype.h>
 #include <asm/ptrace.h>
 #include <asm/kvm_arm.h>
+#include <asm/kvm_asm.h>
 #include <asm/kvm_coproc.h>
+#include <asm/kvm_mmu.h>
 
 /*
  * ARMv8 Reset Values
@@ -52,10 +55,16 @@ static bool cpu_has_32bit_el1(void)
 {
 	u64 pfr0;
 
-	pfr0 = read_cpuid(ID_AA64PFR0_EL1);
+	pfr0 = read_system_reg(SYS_ID_AA64PFR0_EL1);
 	return !!(pfr0 & 0x20);
 }
 
+/**
+ * kvm_arch_dev_ioctl_check_extension
+ *
+ * We currently assume that the number of HW registers is uniform
+ * across all CPUs (see cpuinfo_sanity_check).
+ */
 int kvm_arch_dev_ioctl_check_extension(long ext)
 {
 	int r;
@@ -63,6 +72,19 @@ int kvm_arch_dev_ioctl_check_extension(long ext)
 	switch (ext) {
 	case KVM_CAP_ARM_EL1_32BIT:
 		r = cpu_has_32bit_el1();
+		break;
+	case KVM_CAP_GUEST_DEBUG_HW_BPS:
+		r = get_num_brps();
+		break;
+	case KVM_CAP_GUEST_DEBUG_HW_WPS:
+		r = get_num_wrps();
+		break;
+	case KVM_CAP_ARM_PMU_V3:
+		r = kvm_arm_support_pmu_v3();
+		break;
+	case KVM_CAP_SET_GUEST_DEBUG:
+	case KVM_CAP_VCPU_ATTRIBUTES:
+		r = 1;
 		break;
 	default:
 		r = 0;
@@ -104,8 +126,37 @@ int kvm_reset_vcpu(struct kvm_vcpu *vcpu)
 	/* Reset system registers */
 	kvm_reset_sys_regs(vcpu);
 
-	/* Reset timer */
-	kvm_timer_vcpu_reset(vcpu, cpu_vtimer_irq);
+	/* Reset PMU */
+	kvm_pmu_vcpu_reset(vcpu);
 
-	return 0;
+	/* Reset timer */
+	return kvm_timer_vcpu_reset(vcpu, cpu_vtimer_irq);
+}
+
+extern char __hyp_idmap_text_start[];
+
+unsigned long kvm_hyp_reset_entry(void)
+{
+	if (!__kvm_cpu_uses_extended_idmap()) {
+		unsigned long offset;
+
+		/*
+		 * Find the address of __kvm_hyp_reset() in the trampoline page.
+		 * This is present in the running page tables, and the boot page
+		 * tables, so we call the code here to start the trampoline
+		 * dance in reverse.
+		 */
+		offset = (unsigned long)__kvm_hyp_reset
+			 - ((unsigned long)__hyp_idmap_text_start & PAGE_MASK);
+
+		return TRAMPOLINE_VA + offset;
+	} else {
+		/*
+		 * KVM is running with merged page tables, which don't have the
+		 * trampoline page mapped. We know the idmap is still mapped,
+		 * but can't be called into directly. Use
+		 * __extended_idmap_trampoline to do the call.
+		 */
+		return (unsigned long)kvm_ksym_ref(__extended_idmap_trampoline);
+	}
 }

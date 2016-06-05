@@ -1810,10 +1810,11 @@ static inline void cvmx_pow_work_submit(cvmx_wqe_t *wqp, uint32_t tag,
 	cvmx_addr_t ptr;
 	cvmx_pow_tag_req_t tag_req;
 
-	wqp->qos = qos;
-	wqp->tag = tag;
-	wqp->tag_type = tag_type;
-	wqp->grp = grp;
+	wqp->word1.tag = tag;
+	wqp->word1.tag_type = tag_type;
+
+	cvmx_wqe_set_qos(wqp, qos);
+	cvmx_wqe_set_grp(wqp, grp);
 
 	tag_req.u64 = 0;
 	tag_req.s.op = CVMX_POW_TAG_OP_ADDWQ;
@@ -2050,7 +2051,7 @@ static inline void cvmx_pow_tag_sw_desched(uint32_t tag,
 }
 
 /**
- * Descchedules the current work queue entry.
+ * Deschedules the current work queue entry.
  *
  * @no_sched: no schedule flag value to be set on the work queue
  *	      entry.  If this is set the entry will not be

@@ -116,7 +116,7 @@ extern void scsi_exit_procfs(void);
 extern char scsi_scan_type[];
 extern int scsi_complete_async_scans(void);
 extern int scsi_scan_host_selected(struct Scsi_Host *, unsigned int,
-				   unsigned int, u64, int);
+				   unsigned int, u64, enum scsi_scan_mode);
 extern void scsi_forget_host(struct Scsi_Host *);
 extern void scsi_rescan_device(struct device *);
 
@@ -169,6 +169,16 @@ static inline void scsi_autopm_put_host(struct Scsi_Host *h) {}
 
 extern struct async_domain scsi_sd_pm_domain;
 extern struct async_domain scsi_sd_probe_domain;
+
+/* scsi_dh.c */
+#ifdef CONFIG_SCSI_DH
+int scsi_dh_add_device(struct scsi_device *sdev);
+void scsi_dh_release_device(struct scsi_device *sdev);
+#else
+static inline int scsi_dh_add_device(struct scsi_device *sdev) { return 0; }
+static inline void scsi_dh_release_device(struct scsi_device *sdev) { }
+#endif
+static inline void scsi_dh_remove_device(struct scsi_device *sdev) { }
 
 /* 
  * internal scsi timeout functions: for use by mid-layer and transport

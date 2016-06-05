@@ -414,7 +414,7 @@ static int saa716x_ff_osd_init(struct saa716x_dev *saa716x)
 			    &sti7109->osd_dev,
 			    &dvbdev_osd,
 			    sti7109,
-			    DVB_DEVICE_OSD);
+			    DVB_DEVICE_OSD, 0);
 
 	return 0;
 }
@@ -490,7 +490,7 @@ static int saa716x_ff_audio_init(struct saa716x_dev *saa716x)
 			    &sti7109->audio_dev,
 			    &dvbdev_audio,
 			    sti7109,
-			    DVB_DEVICE_AUDIO);
+			    DVB_DEVICE_AUDIO, 0);
 
 	return 0;
 }
@@ -952,7 +952,7 @@ static int saa716x_ff_video_init(struct saa716x_dev *saa716x)
 			    &sti7109->video_dev,
 			    &dvbdev_video,
 			    sti7109,
-			    DVB_DEVICE_VIDEO);
+			    DVB_DEVICE_VIDEO, 0);
 
 #if LINUX_VERSION_CODE < KERNEL_VERSION(3, 3, 0)
 	sti7109->fifo_workq = create_singlethread_workqueue("saa716x_fifo_wq");

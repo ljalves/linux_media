@@ -129,22 +129,32 @@ xfs_iomap_write_direct(
 	xfs_trans_t	*tp;
 	xfs_bmap_free_t free_list;
 	uint		qblocks, resblks, resrtextents;
-	int		committed;
 	int		error;
-
-	error = xfs_qm_dqattach(ip, 0);
-	if (error)
-		return error;
+	int		lockmode;
+	int		bmapi_flags = XFS_BMAPI_PREALLOC;
+	uint		tflags = 0;
 
 	rt = XFS_IS_REALTIME_INODE(ip);
 	extsz = xfs_get_extsz_hint(ip);
+	lockmode = XFS_ILOCK_SHARED;	/* locked by caller */
+
+	ASSERT(xfs_isilocked(ip, lockmode));
 
 	offset_fsb = XFS_B_TO_FSBT(mp, offset);
 	last_fsb = XFS_B_TO_FSB(mp, ((xfs_ufsize_t)(offset + count)));
 	if ((offset + count) > XFS_ISIZE(ip)) {
+		/*
+		 * Assert that the in-core extent list is present since this can
+		 * call xfs_iread_extents() and we only have the ilock shared.
+		 * This should be safe because the lock was held around a bmapi
+		 * call in the caller and we only need it to access the in-core
+		 * list.
+		 */
+		ASSERT(XFS_IFORK_PTR(ip, XFS_DATA_FORK)->if_flags &
+								XFS_IFEXTENTS);
 		error = xfs_iomap_eof_align_last_fsb(mp, ip, extsz, &last_fsb);
 		if (error)
-			return error;
+			goto out_unlock;
 	} else {
 		if (nmaps && (imap->br_startblock == HOLESTARTBLOCK))
 			last_fsb = MIN(last_fsb, (xfs_fileoff_t)
@@ -174,20 +184,41 @@ xfs_iomap_write_direct(
 	}
 
 	/*
-	 * Allocate and setup the transaction
+	 * Drop the shared lock acquired by the caller, attach the dquot if
+	 * necessary and move on to transaction setup.
 	 */
-	tp = xfs_trans_alloc(mp, XFS_TRANS_DIOSTRAT);
-	error = xfs_trans_reserve(tp, &M_RES(mp)->tr_write,
-				  resblks, resrtextents);
-	/*
-	 * Check for running out of space, note: need lock to return
-	 */
-	if (error) {
-		xfs_trans_cancel(tp, 0);
+	xfs_iunlock(ip, lockmode);
+	error = xfs_qm_dqattach(ip, 0);
+	if (error)
 		return error;
-	}
 
-	xfs_ilock(ip, XFS_ILOCK_EXCL);
+	/*
+	 * For DAX, we do not allocate unwritten extents, but instead we zero
+	 * the block before we commit the transaction.  Ideally we'd like to do
+	 * this outside the transaction context, but if we commit and then crash
+	 * we may not have zeroed the blocks and this will be exposed on
+	 * recovery of the allocation. Hence we must zero before commit.
+	 *
+	 * Further, if we are mapping unwritten extents here, we need to zero
+	 * and convert them to written so that we don't need an unwritten extent
+	 * callback for DAX. This also means that we need to be able to dip into
+	 * the reserve block pool for bmbt block allocation if there is no space
+	 * left but we need to do unwritten extent conversion.
+	 */
+	if (IS_DAX(VFS_I(ip))) {
+		bmapi_flags = XFS_BMAPI_CONVERT | XFS_BMAPI_ZERO;
+		if (ISUNWRITTEN(imap)) {
+			tflags |= XFS_TRANS_RESERVE;
+			resblks = XFS_DIOSTRAT_SPACE_RES(mp, 0) << 1;
+		}
+	}
+	error = xfs_trans_alloc(mp, &M_RES(mp)->tr_write, resblks, resrtextents,
+			tflags, &tp);
+	if (error)
+		return error;
+
+	lockmode = XFS_ILOCK_EXCL;
+	xfs_ilock(ip, lockmode);
 
 	error = xfs_trans_reserve_quota_nblks(tp, ip, qblocks, 0, quota_flag);
 	if (error)
@@ -202,18 +233,19 @@ xfs_iomap_write_direct(
 	xfs_bmap_init(&free_list, &firstfsb);
 	nimaps = 1;
 	error = xfs_bmapi_write(tp, ip, offset_fsb, count_fsb,
-				XFS_BMAPI_PREALLOC, &firstfsb, 0,
-				imap, &nimaps, &free_list);
+				bmapi_flags, &firstfsb, resblks, imap,
+				&nimaps, &free_list);
 	if (error)
 		goto out_bmap_cancel;
 
 	/*
 	 * Complete the transaction
 	 */
-	error = xfs_bmap_finish(&tp, &free_list, &committed);
+	error = xfs_bmap_finish(&tp, &free_list, NULL);
 	if (error)
 		goto out_bmap_cancel;
-	error = xfs_trans_commit(tp, XFS_TRANS_RELEASE_LOG_RES);
+
+	error = xfs_trans_commit(tp);
 	if (error)
 		goto out_unlock;
 
@@ -229,14 +261,14 @@ xfs_iomap_write_direct(
 		error = xfs_alert_fsblock_zero(ip, imap);
 
 out_unlock:
-	xfs_iunlock(ip, XFS_ILOCK_EXCL);
+	xfs_iunlock(ip, lockmode);
 	return error;
 
 out_bmap_cancel:
 	xfs_bmap_cancel(&free_list);
 	xfs_trans_unreserve_quota_nblks(tp, ip, (long)qblocks, 0, quota_flag);
 out_trans_cancel:
-	xfs_trans_cancel(tp, XFS_TRANS_RELEASE_LOG_RES | XFS_TRANS_ABORT);
+	xfs_trans_cancel(tp);
 	goto out_unlock;
 }
 
@@ -655,7 +687,7 @@ xfs_iomap_write_allocate(
 	xfs_bmap_free_t	free_list;
 	xfs_filblks_t	count_fsb;
 	xfs_trans_t	*tp;
-	int		nimaps, committed;
+	int		nimaps;
 	int		error = 0;
 	int		nres;
 
@@ -670,7 +702,7 @@ xfs_iomap_write_allocate(
 	count_fsb = imap->br_blockcount;
 	map_start_fsb = imap->br_startoff;
 
-	XFS_STATS_ADD(xs_xstrat_bytes, XFS_FSB_TO_B(mp, count_fsb));
+	XFS_STATS_ADD(mp, xs_xstrat_bytes, XFS_FSB_TO_B(mp, count_fsb));
 
 	while (count_fsb != 0) {
 		/*
@@ -684,15 +716,13 @@ xfs_iomap_write_allocate(
 
 		nimaps = 0;
 		while (nimaps == 0) {
-			tp = xfs_trans_alloc(mp, XFS_TRANS_STRAT_WRITE);
-			tp->t_flags |= XFS_TRANS_RESERVE;
 			nres = XFS_EXTENTADD_SPACE_RES(mp, XFS_DATA_FORK);
-			error = xfs_trans_reserve(tp, &M_RES(mp)->tr_write,
-						  nres, 0);
-			if (error) {
-				xfs_trans_cancel(tp, 0);
+
+			error = xfs_trans_alloc(mp, &M_RES(mp)->tr_write, nres,
+					0, XFS_TRANS_RESERVE, &tp);
+			if (error)
 				return error;
-			}
+
 			xfs_ilock(ip, XFS_ILOCK_EXCL);
 			xfs_trans_ijoin(tp, ip, 0);
 
@@ -750,17 +780,17 @@ xfs_iomap_write_allocate(
 			 * pointer that the caller gave to us.
 			 */
 			error = xfs_bmapi_write(tp, ip, map_start_fsb,
-						count_fsb, 0,
-						&first_block, 1,
-						imap, &nimaps, &free_list);
+						count_fsb, 0, &first_block,
+						nres, imap, &nimaps,
+						&free_list);
 			if (error)
 				goto trans_cancel;
 
-			error = xfs_bmap_finish(&tp, &free_list, &committed);
+			error = xfs_bmap_finish(&tp, &free_list, NULL);
 			if (error)
 				goto trans_cancel;
 
-			error = xfs_trans_commit(tp, XFS_TRANS_RELEASE_LOG_RES);
+			error = xfs_trans_commit(tp);
 			if (error)
 				goto error0;
 
@@ -777,7 +807,7 @@ xfs_iomap_write_allocate(
 		if ((offset_fsb >= imap->br_startoff) &&
 		    (offset_fsb < (imap->br_startoff +
 				   imap->br_blockcount))) {
-			XFS_STATS_INC(xs_xstrat_quick);
+			XFS_STATS_INC(mp, xs_xstrat_quick);
 			return 0;
 		}
 
@@ -791,7 +821,7 @@ xfs_iomap_write_allocate(
 
 trans_cancel:
 	xfs_bmap_cancel(&free_list);
-	xfs_trans_cancel(tp, XFS_TRANS_RELEASE_LOG_RES | XFS_TRANS_ABORT);
+	xfs_trans_cancel(tp);
 error0:
 	xfs_iunlock(ip, XFS_ILOCK_EXCL);
 	return error;
@@ -814,7 +844,6 @@ xfs_iomap_write_unwritten(
 	xfs_bmap_free_t free_list;
 	xfs_fsize_t	i_size;
 	uint		resblks;
-	int		committed;
 	int		error;
 
 	trace_xfs_unwritten_convert(ip, offset, count);
@@ -837,25 +866,18 @@ xfs_iomap_write_unwritten(
 
 	do {
 		/*
-		 * set up a transaction to convert the range of extents
+		 * Set up a transaction to convert the range of extents
 		 * from unwritten to real. Do allocations in a loop until
 		 * we have covered the range passed in.
 		 *
-		 * Note that we open code the transaction allocation here
-		 * to pass KM_NOFS--we can't risk to recursing back into
-		 * the filesystem here as we might be asked to write out
-		 * the same inode that we complete here and might deadlock
-		 * on the iolock.
+		 * Note that we can't risk to recursing back into the filesystem
+		 * here as we might be asked to write out the same inode that we
+		 * complete here and might deadlock on the iolock.
 		 */
-		sb_start_intwrite(mp->m_super);
-		tp = _xfs_trans_alloc(mp, XFS_TRANS_STRAT_WRITE, KM_NOFS);
-		tp->t_flags |= XFS_TRANS_RESERVE | XFS_TRANS_FREEZE_PROT;
-		error = xfs_trans_reserve(tp, &M_RES(mp)->tr_write,
-					  resblks, 0);
-		if (error) {
-			xfs_trans_cancel(tp, 0);
+		error = xfs_trans_alloc(mp, &M_RES(mp)->tr_write, resblks, 0,
+				XFS_TRANS_RESERVE | XFS_TRANS_NOFS, &tp);
+		if (error)
 			return error;
-		}
 
 		xfs_ilock(ip, XFS_ILOCK_EXCL);
 		xfs_trans_ijoin(tp, ip, 0);
@@ -866,8 +888,8 @@ xfs_iomap_write_unwritten(
 		xfs_bmap_init(&free_list, &firstfsb);
 		nimaps = 1;
 		error = xfs_bmapi_write(tp, ip, offset_fsb, count_fsb,
-				  XFS_BMAPI_CONVERT, &firstfsb,
-				  1, &imap, &nimaps, &free_list);
+					XFS_BMAPI_CONVERT, &firstfsb, resblks,
+					&imap, &nimaps, &free_list);
 		if (error)
 			goto error_on_bmapi_transaction;
 
@@ -886,11 +908,11 @@ xfs_iomap_write_unwritten(
 			xfs_trans_log_inode(tp, ip, XFS_ILOG_CORE);
 		}
 
-		error = xfs_bmap_finish(&tp, &free_list, &committed);
+		error = xfs_bmap_finish(&tp, &free_list, NULL);
 		if (error)
 			goto error_on_bmapi_transaction;
 
-		error = xfs_trans_commit(tp, XFS_TRANS_RELEASE_LOG_RES);
+		error = xfs_trans_commit(tp);
 		xfs_iunlock(ip, XFS_ILOCK_EXCL);
 		if (error)
 			return error;
@@ -914,7 +936,7 @@ xfs_iomap_write_unwritten(
 
 error_on_bmapi_transaction:
 	xfs_bmap_cancel(&free_list);
-	xfs_trans_cancel(tp, (XFS_TRANS_RELEASE_LOG_RES | XFS_TRANS_ABORT));
+	xfs_trans_cancel(tp);
 	xfs_iunlock(ip, XFS_ILOCK_EXCL);
 	return error;
 }

@@ -83,6 +83,8 @@
 #include <linux/init.h>
 #include <linux/interrupt.h>
 #include <linux/module.h>
+#include <linux/of.h>
+#include <linux/of_dma.h>
 #include <linux/pm_runtime.h>
 #include <linux/seq_file.h>
 #include <linux/slab.h>
@@ -105,16 +107,20 @@ struct pl08x_driver_data;
 /**
  * struct vendor_data - vendor-specific config parameters for PL08x derivatives
  * @channels: the number of channels available in this variant
+ * @signals: the number of request signals available from the hardware
  * @dualmaster: whether this version supports dual AHB masters or not.
  * @nomadik: whether the channels have Nomadik security extension bits
  *	that need to be checked for permission before use and some registers are
  *	missing
  * @pl080s: whether this version is a PL080S, which has separate register and
  *	LLI word for transfer size.
+ * @max_transfer_size: the maximum single element transfer size for this
+ *	PL08x variant.
  */
 struct vendor_data {
 	u8 config_offset;
 	u8 channels;
+	u8 signals;
 	bool dualmaster;
 	bool nomadik;
 	bool pl080s;
@@ -233,7 +239,7 @@ struct pl08x_dma_chan {
 	struct virt_dma_chan vc;
 	struct pl08x_phy_chan *phychan;
 	const char *name;
-	const struct pl08x_channel_data *cd;
+	struct pl08x_channel_data *cd;
 	struct dma_slave_config cfg;
 	struct pl08x_txd *at;
 	struct pl08x_driver_data *host;
@@ -474,7 +480,7 @@ static void pl08x_terminate_phy_chan(struct pl08x_driver_data *pl08x,
 	u32 val = readl(ch->reg_config);
 
 	val &= ~(PL080_CONFIG_ENABLE | PL080_CONFIG_ERR_IRQ_MASK |
-	         PL080_CONFIG_TC_IRQ_MASK);
+		 PL080_CONFIG_TC_IRQ_MASK);
 
 	writel(val, ch->reg_config);
 
@@ -1907,6 +1913,12 @@ static int pl08x_dma_init_virtual_channels(struct pl08x_driver_data *pl08x,
 
 		if (slave) {
 			chan->cd = &pl08x->pd->slave_channels[i];
+			/*
+			 * Some implementations have muxed signals, whereas some
+			 * use a mux in front of the signals and need dynamic
+			 * assignment of signals.
+			 */
+			chan->signal = i;
 			pl08x_dma_slave_init(chan);
 		} else {
 			chan->cd = &pl08x->pd->memcpy_channel;
@@ -2030,10 +2042,204 @@ static inline void init_pl08x_debugfs(struct pl08x_driver_data *pl08x)
 }
 #endif
 
+#ifdef CONFIG_OF
+static struct dma_chan *pl08x_find_chan_id(struct pl08x_driver_data *pl08x,
+					 u32 id)
+{
+	struct pl08x_dma_chan *chan;
+
+	list_for_each_entry(chan, &pl08x->slave.channels, vc.chan.device_node) {
+		if (chan->signal == id)
+			return &chan->vc.chan;
+	}
+
+	return NULL;
+}
+
+static struct dma_chan *pl08x_of_xlate(struct of_phandle_args *dma_spec,
+				       struct of_dma *ofdma)
+{
+	struct pl08x_driver_data *pl08x = ofdma->of_dma_data;
+	struct dma_chan *dma_chan;
+	struct pl08x_dma_chan *plchan;
+
+	if (!pl08x)
+		return NULL;
+
+	if (dma_spec->args_count != 2) {
+		dev_err(&pl08x->adev->dev,
+			"DMA channel translation requires two cells\n");
+		return NULL;
+	}
+
+	dma_chan = pl08x_find_chan_id(pl08x, dma_spec->args[0]);
+	if (!dma_chan) {
+		dev_err(&pl08x->adev->dev,
+			"DMA slave channel not found\n");
+		return NULL;
+	}
+
+	plchan = to_pl08x_chan(dma_chan);
+	dev_dbg(&pl08x->adev->dev,
+		"translated channel for signal %d\n",
+		dma_spec->args[0]);
+
+	/* Augment channel data for applicable AHB buses */
+	plchan->cd->periph_buses = dma_spec->args[1];
+	return dma_get_slave_channel(dma_chan);
+}
+
+static int pl08x_of_probe(struct amba_device *adev,
+			  struct pl08x_driver_data *pl08x,
+			  struct device_node *np)
+{
+	struct pl08x_platform_data *pd;
+	struct pl08x_channel_data *chanp = NULL;
+	u32 cctl_memcpy = 0;
+	u32 val;
+	int ret;
+	int i;
+
+	pd = devm_kzalloc(&adev->dev, sizeof(*pd), GFP_KERNEL);
+	if (!pd)
+		return -ENOMEM;
+
+	/* Eligible bus masters for fetching LLIs */
+	if (of_property_read_bool(np, "lli-bus-interface-ahb1"))
+		pd->lli_buses |= PL08X_AHB1;
+	if (of_property_read_bool(np, "lli-bus-interface-ahb2"))
+		pd->lli_buses |= PL08X_AHB2;
+	if (!pd->lli_buses) {
+		dev_info(&adev->dev, "no bus masters for LLIs stated, assume all\n");
+		pd->lli_buses |= PL08X_AHB1 | PL08X_AHB2;
+	}
+
+	/* Eligible bus masters for memory access */
+	if (of_property_read_bool(np, "mem-bus-interface-ahb1"))
+		pd->mem_buses |= PL08X_AHB1;
+	if (of_property_read_bool(np, "mem-bus-interface-ahb2"))
+		pd->mem_buses |= PL08X_AHB2;
+	if (!pd->mem_buses) {
+		dev_info(&adev->dev, "no bus masters for memory stated, assume all\n");
+		pd->mem_buses |= PL08X_AHB1 | PL08X_AHB2;
+	}
+
+	/* Parse the memcpy channel properties */
+	ret = of_property_read_u32(np, "memcpy-burst-size", &val);
+	if (ret) {
+		dev_info(&adev->dev, "no memcpy burst size specified, using 1 byte\n");
+		val = 1;
+	}
+	switch (val) {
+	default:
+		dev_err(&adev->dev, "illegal burst size for memcpy, set to 1\n");
+		/* Fall through */
+	case 1:
+		cctl_memcpy |= PL080_BSIZE_1 << PL080_CONTROL_SB_SIZE_SHIFT |
+			       PL080_BSIZE_1 << PL080_CONTROL_DB_SIZE_SHIFT;
+		break;
+	case 4:
+		cctl_memcpy |= PL080_BSIZE_4 << PL080_CONTROL_SB_SIZE_SHIFT |
+			       PL080_BSIZE_4 << PL080_CONTROL_DB_SIZE_SHIFT;
+		break;
+	case 8:
+		cctl_memcpy |= PL080_BSIZE_8 << PL080_CONTROL_SB_SIZE_SHIFT |
+			       PL080_BSIZE_8 << PL080_CONTROL_DB_SIZE_SHIFT;
+		break;
+	case 16:
+		cctl_memcpy |= PL080_BSIZE_16 << PL080_CONTROL_SB_SIZE_SHIFT |
+			       PL080_BSIZE_16 << PL080_CONTROL_DB_SIZE_SHIFT;
+		break;
+	case 32:
+		cctl_memcpy |= PL080_BSIZE_32 << PL080_CONTROL_SB_SIZE_SHIFT |
+			       PL080_BSIZE_32 << PL080_CONTROL_DB_SIZE_SHIFT;
+		break;
+	case 64:
+		cctl_memcpy |= PL080_BSIZE_64 << PL080_CONTROL_SB_SIZE_SHIFT |
+			       PL080_BSIZE_64 << PL080_CONTROL_DB_SIZE_SHIFT;
+		break;
+	case 128:
+		cctl_memcpy |= PL080_BSIZE_128 << PL080_CONTROL_SB_SIZE_SHIFT |
+			       PL080_BSIZE_128 << PL080_CONTROL_DB_SIZE_SHIFT;
+		break;
+	case 256:
+		cctl_memcpy |= PL080_BSIZE_256 << PL080_CONTROL_SB_SIZE_SHIFT |
+			       PL080_BSIZE_256 << PL080_CONTROL_DB_SIZE_SHIFT;
+		break;
+	}
+
+	ret = of_property_read_u32(np, "memcpy-bus-width", &val);
+	if (ret) {
+		dev_info(&adev->dev, "no memcpy bus width specified, using 8 bits\n");
+		val = 8;
+	}
+	switch (val) {
+	default:
+		dev_err(&adev->dev, "illegal bus width for memcpy, set to 8 bits\n");
+		/* Fall through */
+	case 8:
+		cctl_memcpy |= PL080_WIDTH_8BIT << PL080_CONTROL_SWIDTH_SHIFT |
+			       PL080_WIDTH_8BIT << PL080_CONTROL_DWIDTH_SHIFT;
+		break;
+	case 16:
+		cctl_memcpy |= PL080_WIDTH_16BIT << PL080_CONTROL_SWIDTH_SHIFT |
+			       PL080_WIDTH_16BIT << PL080_CONTROL_DWIDTH_SHIFT;
+		break;
+	case 32:
+		cctl_memcpy |= PL080_WIDTH_32BIT << PL080_CONTROL_SWIDTH_SHIFT |
+			       PL080_WIDTH_32BIT << PL080_CONTROL_DWIDTH_SHIFT;
+		break;
+	}
+
+	/* This is currently the only thing making sense */
+	cctl_memcpy |= PL080_CONTROL_PROT_SYS;
+
+	/* Set up memcpy channel */
+	pd->memcpy_channel.bus_id = "memcpy";
+	pd->memcpy_channel.cctl_memcpy = cctl_memcpy;
+	/* Use the buses that can access memory, obviously */
+	pd->memcpy_channel.periph_buses = pd->mem_buses;
+
+	/*
+	 * Allocate channel data for all possible slave channels (one
+	 * for each possible signal), channels will then be allocated
+	 * for a device and have it's AHB interfaces set up at
+	 * translation time.
+	 */
+	chanp = devm_kcalloc(&adev->dev,
+			pl08x->vd->signals,
+			sizeof(struct pl08x_channel_data),
+			GFP_KERNEL);
+	if (!chanp)
+		return -ENOMEM;
+
+	pd->slave_channels = chanp;
+	for (i = 0; i < pl08x->vd->signals; i++) {
+		/* chanp->periph_buses will be assigned at translation */
+		chanp->bus_id = kasprintf(GFP_KERNEL, "slave%d", i);
+		chanp++;
+	}
+	pd->num_slave_channels = pl08x->vd->signals;
+
+	pl08x->pd = pd;
+
+	return of_dma_controller_register(adev->dev.of_node, pl08x_of_xlate,
+					  pl08x);
+}
+#else
+static inline int pl08x_of_probe(struct amba_device *adev,
+				 struct pl08x_driver_data *pl08x,
+				 struct device_node *np)
+{
+	return -EINVAL;
+}
+#endif
+
 static int pl08x_probe(struct amba_device *adev, const struct amba_id *id)
 {
 	struct pl08x_driver_data *pl08x;
 	const struct vendor_data *vd = id->data;
+	struct device_node *np = adev->dev.of_node;
 	u32 tsfr_size;
 	int ret = 0;
 	int i;
@@ -2053,6 +2259,10 @@ static int pl08x_probe(struct amba_device *adev, const struct amba_id *id)
 		ret = -ENOMEM;
 		goto out_no_pl08x;
 	}
+
+	/* Assign useful pointers to the driver state */
+	pl08x->adev = adev;
+	pl08x->vd = vd;
 
 	/* Initialize memcpy engine */
 	dma_cap_set(DMA_MEMCPY, pl08x->memcpy.cap_mask);
@@ -2093,14 +2303,16 @@ static int pl08x_probe(struct amba_device *adev, const struct amba_id *id)
 	/* Get the platform data */
 	pl08x->pd = dev_get_platdata(&adev->dev);
 	if (!pl08x->pd) {
-		dev_err(&adev->dev, "no platform data supplied\n");
-		ret = -EINVAL;
-		goto out_no_platdata;
+		if (np) {
+			ret = pl08x_of_probe(adev, pl08x, np);
+			if (ret)
+				goto out_no_platdata;
+		} else {
+			dev_err(&adev->dev, "no platform data supplied\n");
+			ret = -EINVAL;
+			goto out_no_platdata;
+		}
 	}
-
-	/* Assign useful pointers to the driver state */
-	pl08x->adev = adev;
-	pl08x->vd = vd;
 
 	/* By default, AHB1 only.  If dualmaster, from platform */
 	pl08x->lli_buses = PL08X_AHB1;
@@ -2252,6 +2464,7 @@ out_no_pl08x:
 static struct vendor_data vendor_pl080 = {
 	.config_offset = PL080_CH_CONFIG,
 	.channels = 8,
+	.signals = 16,
 	.dualmaster = true,
 	.max_transfer_size = PL080_CONTROL_TRANSFER_SIZE_MASK,
 };
@@ -2259,6 +2472,7 @@ static struct vendor_data vendor_pl080 = {
 static struct vendor_data vendor_nomadik = {
 	.config_offset = PL080_CH_CONFIG,
 	.channels = 8,
+	.signals = 32,
 	.dualmaster = true,
 	.nomadik = true,
 	.max_transfer_size = PL080_CONTROL_TRANSFER_SIZE_MASK,
@@ -2267,6 +2481,7 @@ static struct vendor_data vendor_nomadik = {
 static struct vendor_data vendor_pl080s = {
 	.config_offset = PL080S_CH_CONFIG,
 	.channels = 8,
+	.signals = 32,
 	.pl080s = true,
 	.max_transfer_size = PL080S_CONTROL_TRANSFER_SIZE_MASK,
 };
@@ -2274,6 +2489,7 @@ static struct vendor_data vendor_pl080s = {
 static struct vendor_data vendor_pl081 = {
 	.config_offset = PL080_CH_CONFIG,
 	.channels = 2,
+	.signals = 16,
 	.dualmaster = false,
 	.max_transfer_size = PL080_CONTROL_TRANSFER_SIZE_MASK,
 };

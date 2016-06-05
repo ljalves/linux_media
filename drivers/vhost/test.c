@@ -196,7 +196,7 @@ static long vhost_test_run(struct vhost_test *n, int test)
 		oldpriv = vq->private_data;
 		vq->private_data = priv;
 
-		r = vhost_init_used(&n->vqs[index]);
+		r = vhost_vq_init_access(&n->vqs[index]);
 
 		mutex_unlock(&vq->mutex);
 
@@ -277,10 +277,13 @@ static long vhost_test_ioctl(struct file *f, unsigned int ioctl,
 			return -EFAULT;
 		return 0;
 	case VHOST_SET_FEATURES:
+		printk(KERN_ERR "1\n");
 		if (copy_from_user(&features, featurep, sizeof features))
 			return -EFAULT;
+		printk(KERN_ERR "2\n");
 		if (features & ~VHOST_FEATURES)
 			return -EOPNOTSUPP;
+		printk(KERN_ERR "3\n");
 		return vhost_test_set_features(n, features);
 	case VHOST_RESET_OWNER:
 		return vhost_test_reset_owner(n);

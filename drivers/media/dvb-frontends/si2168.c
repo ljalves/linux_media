@@ -74,14 +74,13 @@ static int si2168_cmd_execute(struct i2c_client *client, struct si2168_cmd *cmd)
 
 	mutex_unlock(&dev->i2c_mutex);
 	return 0;
-
 err_mutex_unlock:
 	mutex_unlock(&dev->i2c_mutex);
 	dev_dbg(&client->dev, "failed=%d\n", ret);
 	return ret;
 }
 
-static int si2168_read_status(struct dvb_frontend *fe, fe_status_t *status)
+static int si2168_read_status(struct dvb_frontend *fe, enum fe_status *status)
 {
 	struct i2c_client *client = fe->demodulator_priv;
 	struct si2168_dev *dev = i2c_get_clientdata(client);
@@ -463,6 +462,10 @@ static int si2168_init(struct dvb_frontend *fe)
 		/* firmware is in the new format */
 		for (remaining = fw->size; remaining > 0; remaining -= 17) {
 			len = fw->data[fw->size - remaining];
+			if (len > SI2168_ARGLEN) {
+				ret = -EINVAL;
+				break;
+			}
 			memcpy(cmd.args, &fw->data[(fw->size - remaining) + 1], len);
 			cmd.wlen = len;
 			cmd.rlen = 1;
@@ -567,62 +570,43 @@ static int si2168_get_tune_settings(struct dvb_frontend *fe,
 	return 0;
 }
 
-/*
- * I2C gate logic
- * We must use unlocked i2c_transfer() here because I2C lock is already taken
- * by tuner driver.
- */
-static int si2168_select(struct i2c_adapter *adap, void *mux_priv, u32 chan)
+static int si2168_select(struct i2c_mux_core *muxc, u32 chan)
 {
-	struct i2c_client *client = mux_priv;
-	struct si2168_dev *dev = i2c_get_clientdata(client);
+	struct i2c_client *client = i2c_mux_priv(muxc);
 	int ret;
-	struct i2c_msg gate_open_msg = {
-		.addr = client->addr,
-		.flags = 0,
-		.len = 3,
-		.buf = "\xc0\x0d\x01",
-	};
+	struct si2168_cmd cmd;
 
-	mutex_lock(&dev->i2c_mutex);
+	/* open I2C gate */
+	memcpy(cmd.args, "\xc0\x0d\x01", 3);
+	cmd.wlen = 3;
+	cmd.rlen = 0;
+	ret = si2168_cmd_execute(client, &cmd);
+	if (ret)
+		goto err;
 
-	/* open tuner I2C gate */
-	ret = __i2c_transfer(client->adapter, &gate_open_msg, 1);
-	if (ret != 1) {
-		dev_warn(&client->dev, "i2c write failed=%d\n", ret);
-		if (ret >= 0)
-			ret = -EREMOTEIO;
-	} else {
-		ret = 0;
-	}
-
+	return 0;
+err:
+	dev_dbg(&client->dev, "failed=%d\n", ret);
 	return ret;
 }
 
-static int si2168_deselect(struct i2c_adapter *adap, void *mux_priv, u32 chan)
+static int si2168_deselect(struct i2c_mux_core *muxc, u32 chan)
 {
-	struct i2c_client *client = mux_priv;
-	struct si2168_dev *dev = i2c_get_clientdata(client);
+	struct i2c_client *client = i2c_mux_priv(muxc);
 	int ret;
-	struct i2c_msg gate_close_msg = {
-		.addr = client->addr,
-		.flags = 0,
-		.len = 3,
-		.buf = "\xc0\x0d\x00",
-	};
+	struct si2168_cmd cmd;
 
-	/* close tuner I2C gate */
-	ret = __i2c_transfer(client->adapter, &gate_close_msg, 1);
-	if (ret != 1) {
-		dev_warn(&client->dev, "i2c write failed=%d\n", ret);
-		if (ret >= 0)
-			ret = -EREMOTEIO;
-	} else {
-		ret = 0;
-	}
+	/* close I2C gate */
+	memcpy(cmd.args, "\xc0\x0d\x00", 3);
+	cmd.wlen = 3;
+	cmd.rlen = 0;
+	ret = si2168_cmd_execute(client, &cmd);
+	if (ret)
+		goto err;
 
-	mutex_unlock(&dev->i2c_mutex);
-
+	return 0;
+err:
+	dev_dbg(&client->dev, "failed=%d\n", ret);
 	return ret;
 }
 
@@ -682,17 +666,22 @@ static int si2168_probe(struct i2c_client *client,
 	mutex_init(&dev->i2c_mutex);
 
 	/* create mux i2c adapter for tuner */
-	dev->adapter = i2c_add_mux_adapter(client->adapter, &client->dev,
-			client, 0, 0, 0, si2168_select, si2168_deselect);
-	if (dev->adapter == NULL) {
-		ret = -ENODEV;
+	dev->muxc = i2c_mux_alloc(client->adapter, &client->dev,
+				  1, 0, I2C_MUX_LOCKED,
+				  si2168_select, si2168_deselect);
+	if (!dev->muxc) {
+		ret = -ENOMEM;
 		goto err_kfree;
 	}
+	dev->muxc->priv = client;
+	ret = i2c_mux_add_adapter(dev->muxc, 0, 0, 0);
+	if (ret)
+		goto err_kfree;
 
 	/* create dvb_frontend */
 	memcpy(&dev->fe.ops, &si2168_ops, sizeof(struct dvb_frontend_ops));
 	dev->fe.demodulator_priv = client;
-	*config->i2c_adapter = dev->adapter;
+	*config->i2c_adapter = dev->muxc->adapter[0];
 	*config->fe = &dev->fe;
 	dev->ts_mode = config->ts_mode;
 	dev->ts_clock_inv = config->ts_clock_inv;
@@ -716,7 +705,7 @@ static int si2168_remove(struct i2c_client *client)
 
 	dev_dbg(&client->dev, "\n");
 
-	i2c_del_mux_adapter(dev->adapter);
+	i2c_mux_del_adapters(dev->muxc);
 
 	dev->fe.ops.release = NULL;
 	dev->fe.demodulator_priv = NULL;
@@ -734,7 +723,6 @@ MODULE_DEVICE_TABLE(i2c, si2168_id_table);
 
 static struct i2c_driver si2168_driver = {
 	.driver = {
-		.owner	= THIS_MODULE,
 		.name	= "si2168",
 	},
 	.probe		= si2168_probe,
