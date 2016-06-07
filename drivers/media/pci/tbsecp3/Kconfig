@@ -1,0 +1,11 @@
+config DVB_TBSECP3
+	tristate "TBS ECP3 FPGA based cards"
+	depends on DVB_CORE && PCI && I2C
+	select I2C_ALGOBIT
+	select DVB_TAS2101 if MEDIA_SUBDRV_AUTOSELECT
+	select MEDIA_TUNER_AV201X if MEDIA_SUBDRV_AUTOSELECT
+	help
+	  Support for cards with TBS ECP3 FPGA based PCIe bridge.
+
+	  Say Y or M if you own such a device and want to use it.
+	  If unsure say N.

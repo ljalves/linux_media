@@ -52,6 +52,7 @@ source "drivers/media/pci/ngene/Kconfig"
 source "drivers/media/pci/ddbridge/Kconfig"
 source "drivers/media/pci/smipcie/Kconfig"
 source "drivers/media/pci/netup_unidvb/Kconfig"
+source "drivers/media/pci/tbsecp3/Kconfig"
 endif
 
 endif #MEDIA_PCI_SUPPORT
