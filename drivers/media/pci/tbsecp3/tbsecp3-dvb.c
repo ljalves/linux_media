@@ -149,6 +149,30 @@ static struct av201x_config tbs6904_av201x_cfg = {
 	.xtal_freq   = 27000,		/* kHz */
 };
 
+
+static struct tas2101_config tbs6910_demod_cfg[] = {
+	{
+		.i2c_address   = 0x68,
+		.id            = ID_TAS2101,
+		.lnb_power     = tbs6904_lnb0_power,
+		.init          = {0x21, 0x43, 0x65, 0xb0, 0xa8, 0x97, 0xb1},
+		.init2         = 0,
+	},
+	{
+		.i2c_address   = 0x60,
+		.id            = ID_TAS2101,
+		.lnb_power     = tbs6904_lnb1_power,
+		.init          = {0xb0, 0xa8, 0x21, 0x43, 0x65, 0x97, 0xb1},
+		.init2         = 0,
+	},
+};
+
+static struct av201x_config tbs6910_av201x_cfg = {
+	.i2c_address = 0x62,
+	.id          = ID_AV2018,
+	.xtal_freq   = 27000,		/* kHz */
+};
+
 #if 0
 static int max_set_voltage(struct i2c_adapter *i2c,
 		enum fe_sec_voltage voltage, u8 rf_in)
@@ -407,6 +431,23 @@ static int tbsecp3_frontend_attach(struct tbsecp3_adapter *adapter)
 
 		break;
 #endif
+	case 0x6910:
+		adapter->fe = dvb_attach(tas2101_attach, &tbs6910_demod_cfg[adapter->nr], i2c);
+		if (adapter->fe == NULL)
+			goto frontend_atach_fail;
+
+		if (dvb_attach(av201x_attach, adapter->fe, &tbs6910_av201x_cfg,
+				tas2101_get_i2c_adapter(adapter->fe, 2)) == NULL) {
+			dvb_frontend_detach(adapter->fe);
+			adapter->fe = NULL;
+			dev_err(&dev->pci_dev->dev,
+				"TBS_PCIE frontend %d tuner attach failed\n",
+				adapter->nr);
+			goto frontend_atach_fail;
+		}
+
+		tbsecp3_ca_init(adapter, adapter->nr);
+		break;
 	default:
 		dev_warn(&dev->pci_dev->dev, "unknonw card\n");
 		return -ENODEV;
@@ -547,6 +588,7 @@ void tbsecp3_dvb_exit(struct tbsecp3_adapter *adapter)
 	struct dvb_demux *dvbdemux = &adapter->demux;
 
 	if (adapter->fe) {
+		tbsecp3_ca_release(adapter);
 		dvb_unregister_frontend(adapter->fe);
 		dvb_frontend_detach(adapter->fe);
 		adapter->fe = NULL;
