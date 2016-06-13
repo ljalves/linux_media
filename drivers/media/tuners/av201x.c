@@ -190,7 +190,7 @@ static int av201x_set_params(struct dvb_frontend *fe)
 	n = DIV_ROUND_CLOSEST((c->frequency / 1000) << 17, priv->cfg->xtal_freq / 1000);
 	buf[2] = (u8) (n >> 9);
 	buf[3] = (u8) (n >> 1);
-	buf[4] = (u8) ((n << 7) | 0x50);
+	buf[4] = (u8) (((n << 7) & 0x80) | 0x50);
 	ret = av201x_wrm(priv, buf, 5);
 	if (ret)
 		goto exit;
