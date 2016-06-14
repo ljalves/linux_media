@@ -22,9 +22,10 @@
 
 #include "si2168.h"
 #include "si2157.h"
-#if 0
+
 #include "mxl5xx.h"
 
+#if 0
 #include "stv0910.h"
 #include "stv6120.h"
 #endif
@@ -173,7 +174,6 @@ static struct av201x_config tbs6910_av201x_cfg = {
 	.xtal_freq   = 27000,		/* kHz */
 };
 
-#if 0
 static int max_set_voltage(struct i2c_adapter *i2c,
 		enum fe_sec_voltage voltage, u8 rf_in)
 {
@@ -228,6 +228,7 @@ static struct mxl5xx_cfg tbs6909_mxl5xx_cfg = {
 	.set_voltage	= max_set_voltage,
 };
 
+#if 0
 static struct stv0910_cfg tbs6903_stv0910_cfg = {
 	.adr      = 0x68,
 	.parallel = 1,
@@ -247,7 +248,7 @@ struct stv6120_cfg tbs6903_stv6120_cfg = {
 static int tbsecp3_set_mac(struct tbsecp3_adapter *adap)
 {
 	struct tbsecp3_dev *dev = adap->dev;
-	int eeprom_bus_nr = dev->info->eeprom_i2c;
+	u8 eeprom_bus_nr = dev->info->eeprom_i2c;
 	struct i2c_adapter *i2c = &dev->i2c_bus[eeprom_bus_nr].i2c_adap;
 	u8 eep_addr;
 	int ret;
@@ -259,7 +260,11 @@ static int tbsecp3_set_mac(struct tbsecp3_adapter *adap)
 		  .buf = adap->dvb_adapter.proposed_mac, .len = 6 }
 	};
 
-	eep_addr = 0xa0 + 0x10 * adap->nr;
+	if (dev->info->eeprom_addr)
+		eep_addr = dev->info->eeprom_addr;
+	else
+		eep_addr = 0xa0;
+	eep_addr += 0x10 * adap->nr;
 	ret = i2c_transfer(i2c, msg, 2);
 	if (ret != 2) {
 		dev_warn(&dev->pci_dev->dev,
@@ -405,7 +410,6 @@ static int tbsecp3_frontend_attach(struct tbsecp3_adapter *adapter)
 		adapter->i2c_client_tuner = client_tuner;
 #endif
 		break;
-#if 0
 	case 0x6909:
 /*
 		tmp = tbs_read(TBS_GPIO_BASE, 0x20);
@@ -430,7 +434,6 @@ static int tbsecp3_frontend_attach(struct tbsecp3_adapter *adapter)
 		adapter->fe->ops.diseqc_send_burst = max_send_burst;
 
 		break;
-#endif
 	case 0x6910:
 		adapter->fe = dvb_attach(tas2101_attach, &tbs6910_demod_cfg[adapter->nr], i2c);
 		if (adapter->fe == NULL)

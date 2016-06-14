@@ -882,6 +882,14 @@ config DVB_TAS2101
 	help
 	Say Y when you want to support this frontend.
 
+config DVB_MXL5XX
+	tristate "MaxLinear MXL5XX based"
+	depends on DVB_CORE && I2C
+	default m if !MEDIA_SUBDRV_AUTOSELECT
+	help
+	  A DVB-S demod and tuner module.
+	  Say Y when you want to support this frontend.
+
 comment "Tools to develop new frontends"
 
 config DVB_DUMMY_FE

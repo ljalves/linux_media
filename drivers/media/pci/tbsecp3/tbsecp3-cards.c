@@ -99,11 +99,12 @@ struct tbsecp3_board tbsecp3_boards[] = {
 			}
 		}
 	},
-#if 0
 	[TBSECP3_BOARD_TBS6909] = {
-		.name			= "TurboSight TBS 6909 (Octa DVB-S/S2)",
-		.adapters		= 8,
-		.adap_config		= {
+		.name		= "TurboSight TBS 6909 (Octa DVB-S/S2)",
+		.adapters	= 8,
+		.eeprom_i2c	= 0,
+		.eeprom_addr	= 0x10,
+		.adap_config	= {
 			{
 				.ts_in = 0,
 				.i2c_bus_nr = 0,
@@ -140,9 +141,8 @@ struct tbsecp3_board tbsecp3_boards[] = {
 			}
 		}
 	},
-#endif
 	[TBSECP3_BOARD_TBS6910] = {
-	.name		= "TurboSight TBS 6910 (Dual DVB-S/S2 + 2xCI)",
+		.name		= "TurboSight TBS 6910 (Dual DVB-S/S2 + 2xCI)",
 		.adapters	= 2,
 		.i2c_speed	= 39,
 		.eeprom_i2c	= 1,

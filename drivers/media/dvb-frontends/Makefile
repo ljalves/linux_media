@@ -127,4 +127,5 @@ obj-$(CONFIG_DVB_HORUS3A) += horus3a.o
 obj-$(CONFIG_DVB_ASCOT2E) += ascot2e.o
 obj-$(CONFIG_DVB_HELENE) += helene.o
 obj-$(CONFIG_DVB_TAS2101) += tas2101.o
+obj-$(CONFIG_DVB_MXL5XX) += mxl5xx.o
 
