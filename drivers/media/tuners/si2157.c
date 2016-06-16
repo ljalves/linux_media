@@ -301,7 +301,6 @@ static int si2157_set_params(struct dvb_frontend *fe)
 			break;
 	case SYS_DVBC_ANNEX_A:
 			delivery_system = 0x30;
-			bandwidth = 0x08;
 			break;
 	default:
 			ret = -EINVAL;
