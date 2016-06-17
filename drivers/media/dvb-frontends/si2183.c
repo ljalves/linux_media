@@ -481,8 +481,10 @@ static int si2183_set_frontend(struct dvb_frontend *fe)
 
 	if (fe->ops.tuner_ops.set_params) {
 		ret = fe->ops.tuner_ops.set_params(fe);
-		if (ret)
+		if (ret) {
+			dev_err(&client->dev, "err setting tuner params\n");
 			goto err;
+		}
 	}
 
 	switch (c->delivery_system) {
