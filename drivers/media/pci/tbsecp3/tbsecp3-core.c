@@ -307,18 +307,20 @@ static int tbsecp3_resume(struct pci_dev *pdev)
 }
 
 /* PCI IDs */
-#define TBSECP3_ID(_subvend, _driverdata_idx) { \
+#define TBSECP3_ID(_subvend) { \
 	.vendor = TBSECP3_VID, .device = TBSECP3_PID, \
 	.subvendor = _subvend, .subdevice = PCI_ANY_ID, \
-	.driver_data = (unsigned long)&tbsecp3_boards[_driverdata_idx] }
+	.driver_data = (unsigned long)&tbsecp3_boards[_subvend] }
 
 static const struct pci_device_id tbsecp3_id_table[] = {
-	TBSECP3_ID(0x6205, TBSECP3_BOARD_TBS6205),
-	TBSECP3_ID(0x6522, TBSECP3_BOARD_TBS6522),
-//	TBSECP3_ID(0x6903, TBSECP3_BOARD_TBS6903),
-	TBSECP3_ID(0x6904, TBSECP3_BOARD_TBS6904),
-	TBSECP3_ID(0x6909, TBSECP3_BOARD_TBS6909),
-	TBSECP3_ID(0x6910, TBSECP3_BOARD_TBS6910),
+	TBSECP3_ID(TBSECP3_BOARD_TBS6205),
+	TBSECP3_ID(TBSECP3_BOARD_TBS6522),
+	TBSECP3_ID(TBSECP3_BOARD_TBS6903),
+	TBSECP3_ID(TBSECP3_BOARD_TBS6904),
+	TBSECP3_ID(TBSECP3_BOARD_TBS6905),
+	TBSECP3_ID(TBSECP3_BOARD_TBS6908),
+	TBSECP3_ID(TBSECP3_BOARD_TBS6909),
+	TBSECP3_ID(TBSECP3_BOARD_TBS6910),
 	{0}
 };
 MODULE_DEVICE_TABLE(pci, tbsecp3_id_table);

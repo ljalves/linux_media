@@ -27,10 +27,8 @@
 
 #include "si2183.h"
 
-#if 0
 #include "stv0910.h"
 #include "stv6120.h"
-#endif
 
 DVB_DEFINE_MOD_OPT_ADAPTER_NR(adapter_nr);
 
@@ -282,14 +280,11 @@ static struct mxl5xx_cfg tbs6909_mxl5xx_cfg = {
 	.set_voltage	= max_set_voltage,
 };
 
-#if 0
 static struct stv0910_cfg tbs6903_stv0910_cfg = {
 	.adr      = 0x68,
 	.parallel = 1,
 	.rptlvl   = 4,
 	.clk      = 30000000,
-
-	.set_voltage = max_set_voltage,
 };
 
 struct stv6120_cfg tbs6903_stv6120_cfg = {
@@ -297,8 +292,6 @@ struct stv6120_cfg tbs6903_stv6120_cfg = {
 	.Rdiv     = 2,
 	.xtal     = 30000,
 };
-#endif
-
 
 
 static struct av201x_config tbs6522_av201x_cfg[] = {
@@ -313,9 +306,6 @@ static struct av201x_config tbs6522_av201x_cfg[] = {
 		.xtal_freq   = 27000,
 	},
 };
-
-
-
 
 
 
@@ -468,10 +458,9 @@ static int tbsecp3_frontend_attach(struct tbsecp3_adapter *adapter)
 		}
 
 		break;
-
-
-#if 0
 	case 0x6903:
+	case 0x6905:
+	case 0x6908:
 		adapter->fe = dvb_attach(stv0910_attach, i2c,
 				&tbs6903_stv0910_cfg, adapter->nr & 1);
 		if (adapter->fe == NULL)
@@ -486,9 +475,13 @@ static int tbsecp3_frontend_attach(struct tbsecp3_adapter *adapter)
 				adapter->nr);
 			goto frontend_atach_fail;
 		}
+		if (tbsecp3_attach_sec(adapter, adapter->fe) == NULL) {
+			dev_warn(&dev->pci_dev->dev,
+				"error attaching lnb control on adapter %d\n",
+				adapter->nr);
+		}
 
 		break;
-#endif
 	case 0x6904:
 		adapter->fe = dvb_attach(tas2101_attach, &tbs6904_demod_cfg[adapter->nr], i2c);
 		if (adapter->fe == NULL)
