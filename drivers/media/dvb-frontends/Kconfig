@@ -890,6 +890,12 @@ config DVB_MXL5XX
 	  A DVB-S demod and tuner module.
 	  Say Y when you want to support this frontend.
 
+config DVB_SI2183
+	tristate "Silicon Labs Si2183"
+	depends on DVB_CORE && I2C
+	default m if !MEDIA_SUBDRV_AUTOSELECT
+	help
+	  Say Y when you want to support this frontend.
 comment "Tools to develop new frontends"
 
 config DVB_DUMMY_FE
