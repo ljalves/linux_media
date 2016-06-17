@@ -898,6 +898,14 @@ config DVB_SI2183
 	  Say Y when you want to support this frontend.
 comment "Tools to develop new frontends"
 
+config DVB_STV0910
+	tristate "STV0910 based"
+	depends on DVB_CORE && I2C
+	default m if !MEDIA_SUBDRV_AUTOSELECT
+	help
+	  DVB-S/S2/DSS Multistandard Professional/Broadcast demodulators.
+	  Say Y when you want to support these frontends.
+
 config DVB_DUMMY_FE
 	tristate "Dummy frontend driver"
 	default n
