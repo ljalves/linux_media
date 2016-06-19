@@ -39,6 +39,9 @@ static const struct dvb_frontend_ops si2183_ops;
 LIST_HEAD(silist);
 
 struct si_base {
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 7, 0)
+	struct i2c_mux_core *muxc;
+#endif
 	struct list_head     silist;
 
 	u8                   adr;
@@ -776,9 +779,15 @@ static int si2183_get_tune_settings(struct dvb_frontend *fe,
 	return 0;
 }
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 7, 0)
+static int si2183_select(struct i2c_mux_core *muxc, u32 chan)
+{
+	struct i2c_client *client = i2c_mux_priv(muxc);
+#else
 static int si2183_select(struct i2c_adapter *adap, void *mux_priv, u32 chan)
 {
 	struct i2c_client *client = mux_priv;
+#endif
 	int ret;
 	struct si2183_cmd cmd;
 
@@ -796,9 +805,15 @@ err:
 	return ret;
 }
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 7, 0)
+static int si2183_deselect(struct i2c_mux_core *muxc, u32 chan)
+{
+	struct i2c_client *client = i2c_mux_priv(muxc);
+#else
 static int si2183_deselect(struct i2c_adapter *adap, void *mux_priv, u32 chan)
 {
 	struct i2c_client *client = mux_priv;
+#endif
 	int ret;
 	struct si2183_cmd cmd;
 
@@ -996,6 +1011,21 @@ static int si2183_probe(struct i2c_client *client,
 		dev->base = base;
 		list_add(&base->silist, &silist);
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 7, 0)
+		/* create mux i2c adapter for tuner */
+		base->muxc = i2c_mux_alloc(client->adapter, &client->adapter->dev,
+					  1, 0, I2C_MUX_LOCKED,
+					  si2183_select, si2183_deselect);
+		if (!base->muxc) {
+			ret = -ENOMEM;
+			goto err_base_kfree;
+		}
+		base->muxc->priv = client;
+		ret = i2c_mux_add_adapter(base->muxc, 0, 0, 0);
+		if (ret)
+			goto err_base_kfree;
+		base->tuner_adapter = base->muxc->adapter[0];
+#else
 		/* create mux i2c adapter for tuners */
 		base->tuner_adapter = i2c_add_mux_adapter(client->adapter, &client->adapter->dev,
 				client, 0, 0, 0, si2183_select, si2183_deselect);
@@ -1003,8 +1033,7 @@ static int si2183_probe(struct i2c_client *client,
 			ret = -ENODEV;
 			goto err_base_kfree;
 		}
-
-
+#endif
 	}
 
 	/* create dvb_frontend */
@@ -1040,7 +1069,11 @@ static int si2183_remove(struct i2c_client *client)
 
 	dev->base->count--;
 	if (dev->base->count == 0) {
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 7, 0)
+		i2c_mux_del_adapters(dev->base->muxc);
+#else
 		i2c_del_mux_adapter(dev->base->tuner_adapter);
+#endif
 		list_del(&dev->base->silist);
 		kfree(dev->base);
 	}

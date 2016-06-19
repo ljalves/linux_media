@@ -22,6 +22,9 @@
 #define TAS2101_PRIV_H
 
 struct tas2101_priv {
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 7, 0)
+	struct i2c_mux_core *muxc;
+#endif
 	/* master i2c adapter */
 	struct i2c_adapter *i2c;
 	/* muxed i2c adapter for the demod */

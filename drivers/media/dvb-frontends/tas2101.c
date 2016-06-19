@@ -460,8 +460,12 @@ static void tas2101_release(struct dvb_frontend *fe)
 
 	dev_dbg(&priv->i2c->dev, "%s\n", __func__);
 #ifdef TAS2101_USE_I2C_MUX
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 7, 0)
+	i2c_mux_del_adapters(priv->muxc);
+#else
 	i2c_del_mux_adapter(priv->i2c_demod);
 	i2c_del_mux_adapter(priv->i2c_tuner);
+#endif
 #endif
 	kfree(priv);
 }
@@ -469,10 +473,17 @@ static void tas2101_release(struct dvb_frontend *fe)
 #ifdef TAS2101_USE_I2C_MUX
 /* channel 0: demod */
 /* channel 1: tuner */
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 7, 0)
+static int tas2101_i2c_select(struct i2c_mux_core *muxc, u32 chan)
+{
+	struct tas2101_priv *priv = i2c_mux_priv(muxc);
+	struct i2c_adapter *adap = priv->i2c;
+#else
 static int tas2101_i2c_select(struct i2c_adapter *adap,
 	void *mux_priv, u32 chan_id)
 {
 	struct tas2101_priv *priv = mux_priv;
+#endif
 	int ret;
 	u8 buf[2];
 	struct i2c_msg msg_wr[] = {
@@ -535,6 +546,25 @@ struct dvb_frontend *tas2101_attach(const struct tas2101_config *cfg,
 	priv->i2c_ch = 0;
 
 #ifdef TAS2101_USE_I2C_MUX
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 7, 0)
+	/* create mux i2c adapter for tuner */
+	priv->muxc = i2c_mux_alloc(i2c, &i2c->dev,
+				  2, 0, I2C_MUX_LOCKED,
+				  tas2101_i2c_select, NULL);
+	if (!priv->muxc) {
+		ret = -ENOMEM;
+		goto err1;
+	}
+	priv->muxc->priv = priv;
+	ret = i2c_mux_add_adapter(priv->muxc, 0, 0, 0);
+	if (ret)
+		goto err1;
+	ret = i2c_mux_add_adapter(priv->muxc, 0, 1, 0);
+	if (ret)
+		goto err1;
+	priv->i2c_demod = priv->muxc->adapter[0];
+	priv->i2c_tuner = priv->muxc->adapter[1];
+#else
 	/* create muxed i2c adapter for the demod */
 	priv->i2c_demod = i2c_add_mux_adapter(i2c, &i2c->dev, priv, 0, 0, 0,
 		tas2101_i2c_select, NULL);
@@ -546,6 +576,7 @@ struct dvb_frontend *tas2101_attach(const struct tas2101_config *cfg,
 		tas2101_i2c_select, NULL);
 	if (priv->i2c_tuner == NULL)
 		goto err2;
+#endif
 #else
 	priv->i2c_demod = i2c;
 	priv->i2c_tuner = i2c;
@@ -573,9 +604,13 @@ struct dvb_frontend *tas2101_attach(const struct tas2101_config *cfg,
 
 err3:
 #ifdef TAS2101_USE_I2C_MUX
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 7, 0)
+	i2c_mux_del_adapters(priv->muxc);
+#else
 	i2c_del_mux_adapter(priv->i2c_tuner);
 err2:
 	i2c_del_mux_adapter(priv->i2c_demod);
+#endif
 #endif
 err1:
 	kfree(priv);
