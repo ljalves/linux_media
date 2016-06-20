@@ -481,7 +481,7 @@ static int read_snr(struct dvb_frontend *fe, u16 *snr)
 			     &regData);
 	HYDRA_DEMOD_STATUS_UNLOCK(state, state->demod);
 	mutex_unlock(&state->base->status_lock);
-	*snr = (s16) (regData & 0xFFFF);
+	*snr = (s16) (regData & 0xFFFF)*220;
 	//printk("snr dmd%d=%d\n", state->demod, *snr);
 	return stat;
 }
