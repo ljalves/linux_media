@@ -474,7 +474,7 @@ static void tas2101_release(struct dvb_frontend *fe)
 /* channel 0: demod */
 /* channel 1: tuner */
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 7, 0)
-static int tas2101_i2c_select(struct i2c_mux_core *muxc, u32 chan)
+static int tas2101_i2c_select(struct i2c_mux_core *muxc, u32 chan_id)
 {
 	struct tas2101_priv *priv = i2c_mux_priv(muxc);
 	struct i2c_adapter *adap = priv->i2c;
