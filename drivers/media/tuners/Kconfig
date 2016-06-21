@@ -299,4 +299,12 @@ config MEDIA_TUNER_STV6120
 	help
 	  STV6120 silicon tuner driver.
 
+config MEDIA_TUNER_R848
+        tristate "Rafael Micro R848 silicon tuner"
+        depends on MEDIA_SUPPORT && I2C
+        default m if !MEDIA_SUBDRV_AUTOSELECT
+        select BITREVERSE
+        help
+          Rafael Micro R848 silicon tuner driver.
+
 endmenu
