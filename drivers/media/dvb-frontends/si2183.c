@@ -927,22 +927,35 @@ static int si2183_set_property(struct dvb_frontend *fe,
 	return ret;
 }
 
+
+static int send_diseqc_cmd(struct dvb_frontend *fe,
+	u8 cont_tone, u8 tone_burst, u8 burst_sel,
+	u8 end_seq, u8 msg_len, u8 *msg)
+{
+	struct i2c_client *client = fe->demodulator_priv;
+	struct si2183_cmd cmd;
+	u8 enable = 1;
+
+	cmd.args[0] = 0x8c;
+	cmd.args[1] |= enable | (cont_tone << 1)
+		    | (tone_burst << 2) | (burst_sel << 3)
+		    | (end_seq << 4) | (msg_len << 5);
+
+	if (msg_len > 0)
+		memcpy(&cmd.args[2], msg, msg_len);
+
+	cmd.wlen = 8;
+	cmd.rlen = 1;
+	return si2183_cmd_execute(client, &cmd);
+}
+
 static int set_tone(struct dvb_frontend *fe, enum fe_sec_tone_mode tone)
 {
 	struct i2c_client *client = fe->demodulator_priv;
 	int ret;
-	struct si2183_cmd cmd;
+	u8 cont_tone;
 
-	u8	enable = 1,
-		cont_tone = 1,
-		tone_burst = 0,
-		burst_sel = 0,
-		end_seq = 1,
-		msg_len = 0;
-
-	dev_dbg(&client->dev, "\n");
-
-	switch(tone) {
+	switch (tone) {
 	case SEC_TONE_ON:
 		cont_tone = 1;
 		break;
@@ -952,14 +965,64 @@ static int set_tone(struct dvb_frontend *fe, enum fe_sec_tone_mode tone)
 	default:
 		return -EINVAL;
 	}
-	
-	memcpy(cmd.args, "\x8c\x00\x00\x00\x00\x00\x00\x00", 8);
-	cmd.args[1] |= enable | (cont_tone << 1) | (tone_burst << 2) | (burst_sel << 3) | (end_seq << 4) | (msg_len << 5);
-	cmd.wlen = 8;
-	cmd.rlen = 1;
-	ret = si2183_cmd_execute(client, &cmd);
+
+	ret = send_diseqc_cmd(fe, cont_tone, 0, 0, 1, 0, NULL);
 	if (ret)
 		goto err;
+
+	return 0;
+err:
+	dev_err(&client->dev, "set_tone failed=%d\n", ret);
+	return ret;
+}
+
+static int diseqc_send_burst(struct dvb_frontend *fe,
+	enum fe_sec_mini_cmd burst)
+{
+	struct i2c_client *client = fe->demodulator_priv;
+	int ret;
+	u8 burst_sel;
+
+	switch (burst) {
+	case SEC_MINI_A:
+		burst_sel = 0;
+		break;
+	case SEC_MINI_B:
+		burst_sel = 1;
+		break;
+	default:
+		return -EINVAL;
+	}
+
+	ret = send_diseqc_cmd(fe, 0, 1, burst_sel, 1, 0, NULL);
+	if (ret)
+		goto err;
+
+	return 0;
+err:
+	dev_err(&client->dev, "set_tone failed=%d\n", ret);
+	return ret;
+}
+
+static int send_diseqc_msg(struct dvb_frontend *fe,
+	struct dvb_diseqc_master_cmd *d)
+{
+	struct i2c_client *client = fe->demodulator_priv;
+	int ret;
+	u8 remaining = d->msg_len;
+	u8 *p = d->msg;
+	u8 len = 0;
+
+	while (remaining > 0) {
+		p += len;
+		len = (remaining > 6) ? 6 : remaining;
+		remaining -= len;
+		ret = send_diseqc_cmd(fe, 0, 0, 0,
+			(remaining == 0) ? 1 : 0, len, p);
+		if (ret)
+			goto err;
+		msleep(50);
+	}
 
 	return 0;
 err:
@@ -1010,7 +1073,10 @@ static const struct dvb_frontend_ops si2183_ops = {
 	.tune = si2183_tune,
 
 	.set_property			= si2183_set_property,
+
 	.set_tone			= set_tone,
+	.diseqc_send_burst		= diseqc_send_burst,
+	.diseqc_send_master_cmd		= send_diseqc_msg,
 };
 
 
