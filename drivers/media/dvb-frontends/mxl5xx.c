@@ -468,22 +468,43 @@ static int sleep(struct dvb_frontend *fe)
 	return 0;
 }
 
-static int read_snr(struct dvb_frontend *fe, u16 *snr)
+
+static int get_property(struct dvb_frontend *fe,
+		struct dtv_property *p)
 {
 	struct mxl *state = fe->demodulator_priv;
-	int stat;
-	u32 regData = 0;
+	int ret = 0;
+	s16 tmp;
+	u32 reg;
 
-	mutex_lock(&state->base->status_lock);
-	HYDRA_DEMOD_STATUS_LOCK(state, state->demod);
-	stat = read_register(state, (HYDRA_DMD_SNR_ADDR_OFFSET +
-				     HYDRA_DMD_STATUS_OFFSET(state->demod)),
-			     &regData);
-	HYDRA_DEMOD_STATUS_UNLOCK(state, state->demod);
-	mutex_unlock(&state->base->status_lock);
-	*snr = (s16) (regData & 0xFFFF);
-	//printk("snr dmd%d=%d\n", state->demod, *snr);
-	return stat;
+	switch (p->cmd) {
+	case DTV_STAT_CNR:
+		mutex_lock(&state->base->status_lock);
+		HYDRA_DEMOD_STATUS_LOCK(state, state->demod);
+		ret = read_register(state, HYDRA_DMD_SNR_ADDR_OFFSET +
+				HYDRA_DMD_STATUS_OFFSET(state->demod), &reg);
+		HYDRA_DEMOD_STATUS_UNLOCK(state, state->demod);
+		mutex_unlock(&state->base->status_lock);
+
+		tmp = (s16) (reg & 0xFFFF);
+		p->u.st.stat[0].scale = FE_SCALE_DECIBEL;
+		p->u.st.stat[0].svalue = tmp * 10;
+
+		/* 25 dB = 100% */
+		if (tmp > 25000)
+			reg = 0xffff;
+		else
+			reg = (tmp * 0xffff) / 25000;
+		p->u.st.stat[1].scale = FE_SCALE_RELATIVE;
+		p->u.st.stat[1].svalue = (u16) reg;
+		p->u.st.len = 2;
+		break;
+	default:
+		break;
+
+
+	}
+	return ret;
 }
 
 static int read_ber(struct dvb_frontend *fe, u32 *ber)
@@ -604,13 +625,12 @@ static struct dvb_frontend_ops mxl_ops = {
 	.tune                           = tune,
 	.read_status			= read_status,
 	.sleep				= sleep,
-	.read_snr			= read_snr,
 	.read_ber			= read_ber,
 	.read_signal_strength		= read_signal_strength,
 	.read_ucblocks			= read_ucblocks,
 	.get_frontend                   = get_frontend,
 	.diseqc_send_master_cmd		= send_master_cmd,
-
+	.get_property			= get_property,
 	.set_tone			= set_tone,
 	.set_voltage			= set_voltage,
 };
