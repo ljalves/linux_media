@@ -17,6 +17,10 @@
 #include <linux/firmware.h>
 #include <linux/i2c-mux.h>
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 7, 0)
+#define SI2183_USE_I2C_MUX
+#endif
+
 #define SI2183_B60_FIRMWARE "dvb-demod-si2183-b60-01.fw"
 
 #define SI2183_PROP_MODE	0x100a
@@ -49,6 +53,10 @@ struct si_base {
 	u32                  count;
 
 	struct i2c_adapter  *tuner_adapter;
+
+#ifndef SI2183_USE_I2C_MUX
+	struct i2c_client *i2c_gate_client;
+#endif
 };
 
 /* state struct */
@@ -185,7 +193,7 @@ static int si2183_set_prop(struct i2c_client *client, u16 prop, u16 *val)
 	*val = (cmd.args[2] | (cmd.args[3] << 8));
 	return ret;
 }
-
+#if 0
 static int si2183_get_prop(struct i2c_client *client, u16 prop, u16 *val)
 {
 	struct si2183_cmd cmd;
@@ -201,7 +209,7 @@ static int si2183_get_prop(struct i2c_client *client, u16 prop, u16 *val)
 	*val = (cmd.args[2] | (cmd.args[3] << 8));
 	return ret;
 }
-
+#endif
 static int si2183_read_status(struct dvb_frontend *fe, enum fe_status *status)
 {
 	struct i2c_client *client = fe->demodulator_priv;
@@ -518,7 +526,15 @@ static int si2183_set_frontend(struct dvb_frontend *fe)
 	}
 
 	if (fe->ops.tuner_ops.set_params) {
+#ifndef SI2183_USE_I2C_MUX
+		if (fe->ops.i2c_gate_ctrl)
+			fe->ops.i2c_gate_ctrl(fe, 1);
+#endif
 		ret = fe->ops.tuner_ops.set_params(fe);
+#ifndef SI2183_USE_I2C_MUX
+		if (fe->ops.i2c_gate_ctrl)
+			fe->ops.i2c_gate_ctrl(fe, 0);
+#endif
 		if (ret) {
 			dev_err(&client->dev, "err setting tuner params\n");
 			goto err;
@@ -817,6 +833,7 @@ static int si2183_get_tune_settings(struct dvb_frontend *fe,
 	return 0;
 }
 
+#ifdef SI2183_USE_I2C_MUX
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 7, 0)
 static int si2183_select(struct i2c_mux_core *muxc, u32 chan)
 {
@@ -868,6 +885,21 @@ err:
 	dev_dbg(&client->dev, "failed=%d\n", ret);
 	return ret;
 }
+#else
+static int i2c_gate_ctrl(struct dvb_frontend* fe, int enable)
+{
+	struct i2c_client *client = fe->demodulator_priv;
+	struct si2183_dev *dev = i2c_get_clientdata(client);
+	struct si2183_cmd cmd;
+
+	memcpy(cmd.args, "\xc0\x0d\x00", 3);
+	if (enable)
+		cmd.args[2] = 1;
+	cmd.wlen = 3;
+	cmd.rlen = 0;
+	return si2183_cmd_execute(dev->base->i2c_gate_client, &cmd);
+}
+#endif
 
 static int si2183_tune(struct dvb_frontend *fe, bool re_tune,
 	unsigned int mode_flags, unsigned int *delay, enum fe_status *status)
@@ -1077,6 +1109,9 @@ static const struct dvb_frontend_ops si2183_ops = {
 	.set_tone			= set_tone,
 	.diseqc_send_burst		= diseqc_send_burst,
 	.diseqc_send_master_cmd		= send_diseqc_msg,
+#ifndef SI2183_USE_I2C_MUX
+	.i2c_gate_ctrl			= i2c_gate_ctrl,
+#endif
 };
 
 
@@ -1089,8 +1124,6 @@ static struct si_base *match_base(struct i2c_adapter *i2c, u8 adr)
 			return p;
 	return NULL;
 }
-
-
 
 static int si2183_probe(struct i2c_client *client,
 		const struct i2c_device_id *id)
@@ -1123,6 +1156,7 @@ static int si2183_probe(struct i2c_client *client,
 		dev->base = base;
 		list_add(&base->silist, &silist);
 
+#ifdef SI2183_USE_I2C_MUX
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 7, 0)
 		/* create mux i2c adapter for tuner */
 		base->muxc = i2c_mux_alloc(client->adapter, &client->adapter->dev,
@@ -1146,6 +1180,10 @@ static int si2183_probe(struct i2c_client *client,
 			goto err_base_kfree;
 		}
 #endif
+#else
+		base->tuner_adapter = client->adapter;
+		base->i2c_gate_client = client;
+#endif
 	}
 
 	/* create dvb_frontend */
@@ -1162,6 +1200,10 @@ static int si2183_probe(struct i2c_client *client,
 
 	i2c_set_clientdata(client, dev);
 
+#ifndef SI2183_USE_I2C_MUX
+	/* leave gate open for tuner to init */
+	i2c_gate_ctrl(&dev->fe, 1);
+#endif
 	dev_info(&client->dev, "Silicon Labs Si2183 successfully attached\n");
 	return 0;
 err_base_kfree:
@@ -1181,10 +1223,12 @@ static int si2183_remove(struct i2c_client *client)
 
 	dev->base->count--;
 	if (dev->base->count == 0) {
+#ifdef SI2183_USE_I2C_MUX
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 7, 0)
 		i2c_mux_del_adapters(dev->base->muxc);
 #else
 		i2c_del_mux_adapter(dev->base->tuner_adapter);
+#endif
 #endif
 		list_del(&dev->base->silist);
 		kfree(dev->base);
