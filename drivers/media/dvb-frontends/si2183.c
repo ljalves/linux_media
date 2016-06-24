@@ -18,7 +18,9 @@
 #include <linux/i2c-mux.h>
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 7, 0)
+#if IS_ENABLED(CONFIG_I2C_MUX)
 #define SI2183_USE_I2C_MUX
+#endif
 #endif
 
 #define SI2183_B60_FIRMWARE "dvb-demod-si2183-b60-01.fw"

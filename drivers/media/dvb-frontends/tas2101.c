@@ -31,7 +31,9 @@
 #include "tas2101_priv.h"
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 7, 0)
+#if IS_ENABLED(CONFIG_I2C_MUX)
 #define TAS2101_USE_I2C_MUX
+#endif
 #endif
 
 /* return i2c adapter */
