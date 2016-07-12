@@ -16,10 +16,15 @@
 #define SI2183_H
 
 #include <linux/dvb/frontend.h>
-/*
- * I2C address
- * 0x64
- */
+
+#define SI2183_MP_A		2
+#define SI2183_MP_B		3
+#define SI2183_MP_C		4
+#define SI2183_MP_D		5
+
+#define SI2183_TS_PARALLEL	0x06
+#define SI2183_TS_SERIAL	0x03
+
 struct si2183_config {
 	/*
 	 * frontend
@@ -33,9 +38,16 @@ struct si2183_config {
 	 */
 	struct i2c_adapter **i2c_adapter;
 
+	/* Tuner AGC config */
+	u8 ter_agc_pin;
+	u8 sat_agc_pin;
+	bool ter_agc_inv;
+	bool sat_agc_inv;
+
+	/* DVB-T2 FEF flag pin */
+	u8 fef_pin;
+
 	/* TS mode */
-#define SI2183_TS_PARALLEL	0x06
-#define SI2183_TS_SERIAL	0x03
 	u8 ts_mode;
 
 	/* TS clock inverted */

@@ -383,6 +383,11 @@ static int tbsecp3_frontend_attach(struct tbsecp3_adapter *adapter)
 		/* attach demod */
 		memset(&si2183_config, 0, sizeof(si2183_config));
 		si2183_config.i2c_adapter = &i2c;
+		si2183_config.ter_agc_pin = (adapter->nr == 0) ?
+				SI2183_MP_C : SI2183_MP_D;
+		si2183_config.ter_agc_inv = false;
+		si2183_config.sat_agc_pin = si2183_config.ter_agc_pin;
+		si2183_config.sat_agc_inv = true;
 		si2183_config.fe = &adapter->fe;
 		si2183_config.ts_mode = SI2183_TS_PARALLEL;
 		si2183_config.ts_clock_gapped = true;

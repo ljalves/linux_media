@@ -67,6 +67,11 @@ struct si2183_dev {
 	enum fe_delivery_system delivery_system;
 	bool active;
 	bool fw_loaded;
+	u8 ter_agc_pin;
+	u8 sat_agc_pin;
+	bool ter_agc_inv;
+	bool sat_agc_inv;
+	u8 fef_pin;
 	u8 ts_mode;
 	bool ts_clock_inv;
 	bool ts_clock_gapped;
@@ -128,7 +133,7 @@ static int si2183_cmd_execute_unlocked(struct i2c_client *client,
 
 	if (cmd->rlen) {
 		/* wait cmd execution terminate */
-		#define TIMEOUT 70
+		#define TIMEOUT 500
 		timeout = jiffies + msecs_to_jiffies(TIMEOUT);
 		while (!time_after(jiffies, timeout)) {
 			ret = si2183_i2c_master_recv_unlocked(client, cmd->args,
@@ -293,7 +298,6 @@ err:
 	return ret;
 }
 
-
 static int si2183_set_dvbc(struct dvb_frontend *fe)
 {
 	struct dtv_frontend_properties *c = &fe->dtv_property_cache;
@@ -355,7 +359,7 @@ static int si2183_set_dvbs(struct dvb_frontend *fe)
 	struct si2183_cmd cmd;
 	int ret;
 	u16 prop;
-	
+
 	/* set mode */
 	prop = 0x8;
 	switch (c->delivery_system) {
@@ -766,6 +770,21 @@ static int si2183_init(struct dvb_frontend *fe)
 		dev_err(&client->dev, "err set x88\n");
 	}
 */
+
+	/* ter tuner agc loop setup */
+	memcpy(cmd.args, "\x89\x10\x12\x12\x00\x00", 6);
+	cmd.args[1] = (dev->ter_agc_pin & 0x07);
+	if (dev->ter_agc_inv)
+		cmd.args[1] |= 0x8;
+	ret = si2183_cmd_execute(client, &cmd);
+
+	/* sat tuner agc loop setup */
+	memcpy(cmd.args, "\x8a\x00\x12\x12\x00\x00", 6);
+	cmd.args[1] = (dev->sat_agc_pin & 0x07) << 4;
+	if (dev->sat_agc_inv)
+		cmd.args[1] |= 0x80;
+	ret = si2183_cmd_execute(client, &cmd);
+
 
 	prop = 0x10;
 	ret = si2183_set_prop(client, 0x100f, &prop);
@@ -1193,6 +1212,11 @@ static int si2183_probe(struct i2c_client *client,
 	dev->fe.demodulator_priv = client;
 	*config->i2c_adapter = base->tuner_adapter;
 	*config->fe = &dev->fe;
+	dev->ter_agc_pin = config->ter_agc_pin;
+	dev->ter_agc_inv = config->ter_agc_inv;
+	dev->sat_agc_pin = config->sat_agc_pin;
+	dev->sat_agc_inv = config->sat_agc_inv;
+	dev->fef_pin = config->fef_pin;
 	dev->ts_mode = config->ts_mode;
 	dev->ts_clock_inv = config->ts_clock_inv;
 	dev->ts_clock_gapped = config->ts_clock_gapped;
