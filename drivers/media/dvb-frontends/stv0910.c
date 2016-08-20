@@ -1300,6 +1300,7 @@ static int gate_ctrl(struct dvb_frontend *fe, int enable)
 {
 	struct stv *state = fe->demodulator_priv;
 	u8 i2crpt = state->i2crpt & ~0x86;
+	int ret = 0;
 
 	if (enable)
 		mutex_lock(&state->base->i2c_lock);
@@ -1311,13 +1312,13 @@ static int gate_ctrl(struct dvb_frontend *fe, int enable)
 
 	if (write_reg(state, RSTV0910_P1_I2CRPT, i2crpt) < 0)//state->nr ? RSTV0910_P2_I2CRPT :
 		      //RSTV0910_P1_I2CRPT, i2crpt) < 0)
-		return -EIO;
+		ret = -EIO;
 
 	state->i2crpt = i2crpt;
 
 	if (!enable)
 		mutex_unlock(&state->base->i2c_lock);
-	return 0;
+	return ret;
 }
 
 static void release(struct dvb_frontend *fe)
