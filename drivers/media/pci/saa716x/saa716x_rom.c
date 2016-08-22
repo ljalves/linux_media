@@ -1083,3 +1083,25 @@ err:
 	return ret;
 }
 EXPORT_SYMBOL_GPL(saa716x_eeprom_data);
+
+int saa716x_tbs_mac(struct saa716x_dev *saa716x, int count, u8 *proposed_mac)
+{
+	int ret = 0;
+	u8 mac[6];
+
+	ret = saa716x_read_rombytes(saa716x,
+		(0x02 << 8) | ((saa716x->id_offst - 5 + 16 * count) & 0xFF), 6, mac);
+	if (ret < 0) {
+		dev_err(&saa716x->pdev->dev,
+			"%s frontend %d tuner mac read failed\n",
+			saa716x->config->model_name, count);
+		return ret;
+	}
+
+	memcpy(proposed_mac, mac, 6);
+	printk(KERN_INFO "%s tuner=%d MAC=%pM\n",
+		saa716x->config->model_name, count, proposed_mac);
+
+	return 0;
+}
+EXPORT_SYMBOL_GPL(saa716x_tbs_mac);
