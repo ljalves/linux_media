@@ -3314,14 +3314,14 @@ static int r848_set_frequency(struct r848_priv *priv)
 
 
 
-static int r848_release(struct dvb_frontend *fe)
+static void r848_release(struct dvb_frontend *fe)
 {
 	struct r848_priv *priv = fe->tuner_priv;
 	dev_dbg(&priv->i2c->dev, "%s()\n", __func__);
 
 	kfree(fe->tuner_priv);
 	fe->tuner_priv = NULL;
-	return 0;
+	return;
 }
 
 static int r848_init(struct dvb_frontend *fe)

@@ -154,18 +154,6 @@ static struct tda18271_config pv_tda18271_config = {
 	.small_i2c = TDA18271_03_BYTE_CHUNK_INIT,
 };
 
-static const struct si2165_config hauppauge_930C_HD_1113xx_si2165_config = {
-	.i2c_addr	= 0x64,
-	.chip_mode	= SI2165_MODE_PLL_XTAL,
-	.ref_freq_Hz	= 16000000,
-};
-
-static const struct si2165_config pctv_quatro_stick_1114xx_si2165_config = {
-	.i2c_addr	= 0x64,
-	.chip_mode	= SI2165_MODE_PLL_EXT,
-	.ref_freq_Hz	= 24000000,
-};
-
 static struct lgdt3306a_config hauppauge_955q_lgdt3306a_config = {
 	.i2c_addr           = 0x59,
 	.qam_if_khz         = 4000,

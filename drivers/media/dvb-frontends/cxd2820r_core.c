@@ -181,9 +181,6 @@ static int cxd2820r_read_status(struct dvb_frontend *fe, enum fe_status *status)
 		break;
 	}
 
-	if (priv->cfg.set_lock_led)
-		priv->cfg.set_lock_led(fe, *status & FE_HAS_LOCK);
-
 	return ret;
 }
 
@@ -289,8 +286,6 @@ static int cxd2820r_sleep(struct dvb_frontend *fe)
 	int ret;
 
 	dev_dbg(&client->dev, "delivery_system=%d\n", c->delivery_system);
-	if (priv->cfg.set_lock_led)
-		priv->cfg.set_lock_led(fe, 0);
 
 	switch (c->delivery_system) {
 	case SYS_DVBT:
@@ -420,9 +415,6 @@ static void cxd2820r_release(struct dvb_frontend *fe)
 	struct i2c_client *client = priv->client[0];
 
 	dev_dbg(&client->dev, "\n");
-
-	if (priv->cfg.set_lock_led)
-		priv->cfg.set_lock_led(fe, 0);
 
 	i2c_unregister_device(client);
 
