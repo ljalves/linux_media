@@ -15,11 +15,7 @@
  *
  * You should have received a copy of the GNU General Public License
  * version 2 along with this program; If not, see
- * http://www.sun.com/software/products/lustre/docs/GPLv2.pdf
- *
- * Please contact Sun Microsystems, Inc., 4150 Network Circle, Santa Clara,
- * CA 95054 USA or visit www.sun.com if you need additional information or
- * have any questions.
+ * http://www.gnu.org/licenses/gpl-2.0.html
  *
  * GPL HEADER END
  */
@@ -197,7 +193,7 @@ add_nidrange(const struct cfs_lstr *src,
 	struct netstrfns *nf;
 	struct nidrange *nr;
 	int endlen;
-	unsigned netnum;
+	unsigned int netnum;
 
 	if (src->ls_len >= LNET_NIDSTR_SIZE)
 		return NULL;
@@ -251,10 +247,8 @@ parse_nidrange(struct cfs_lstr *src, struct list_head *nidlist)
 {
 	struct cfs_lstr addrrange;
 	struct cfs_lstr net;
-	struct cfs_lstr tmp;
 	struct nidrange *nr;
 
-	tmp = *src;
 	if (!cfs_gettok(src, '@', &addrrange))
 		goto failed;
 
@@ -1160,7 +1154,7 @@ EXPORT_SYMBOL(libcfs_nid2str_r);
 static struct netstrfns *
 libcfs_str2net_internal(const char *str, __u32 *net)
 {
-	struct netstrfns *uninitialized_var(nf);
+	struct netstrfns *nf = NULL;
 	int nob;
 	unsigned int netnum;
 	int i;

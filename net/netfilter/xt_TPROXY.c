@@ -127,6 +127,8 @@ nf_tproxy_get_sock_v4(struct net *net, struct sk_buff *skb, void *hp,
 						    daddr, dport,
 						    in->ifindex);
 
+			if (sk && !atomic_inc_not_zero(&sk->sk_refcnt))
+				sk = NULL;
 			/* NOTE: we return listeners even if bound to
 			 * 0.0.0.0, those are filtered out in
 			 * xt_socket, since xt_TPROXY needs 0 bound
@@ -195,6 +197,8 @@ nf_tproxy_get_sock_v6(struct net *net, struct sk_buff *skb, int thoff, void *hp,
 						   daddr, ntohs(dport),
 						   in->ifindex);
 
+			if (sk && !atomic_inc_not_zero(&sk->sk_refcnt))
+				sk = NULL;
 			/* NOTE: we return listeners even if bound to
 			 * 0.0.0.0, those are filtered out in
 			 * xt_socket, since xt_TPROXY needs 0 bound
@@ -360,7 +364,8 @@ tproxy_tg4_v0(struct sk_buff *skb, const struct xt_action_param *par)
 {
 	const struct xt_tproxy_target_info *tgi = par->targinfo;
 
-	return tproxy_tg4(par->net, skb, tgi->laddr, tgi->lport, tgi->mark_mask, tgi->mark_value);
+	return tproxy_tg4(xt_net(par), skb, tgi->laddr, tgi->lport,
+			  tgi->mark_mask, tgi->mark_value);
 }
 
 static unsigned int
@@ -368,7 +373,8 @@ tproxy_tg4_v1(struct sk_buff *skb, const struct xt_action_param *par)
 {
 	const struct xt_tproxy_target_info_v1 *tgi = par->targinfo;
 
-	return tproxy_tg4(par->net, skb, tgi->laddr.ip, tgi->lport, tgi->mark_mask, tgi->mark_value);
+	return tproxy_tg4(xt_net(par), skb, tgi->laddr.ip, tgi->lport,
+			  tgi->mark_mask, tgi->mark_value);
 }
 
 #ifdef XT_TPROXY_HAVE_IPV6
@@ -438,7 +444,7 @@ tproxy_handle_time_wait6(struct sk_buff *skb, int tproto, int thoff,
 		 * to a listener socket if there's one */
 		struct sock *sk2;
 
-		sk2 = nf_tproxy_get_sock_v6(par->net, skb, thoff, hp, tproto,
+		sk2 = nf_tproxy_get_sock_v6(xt_net(par), skb, thoff, hp, tproto,
 					    &iph->saddr,
 					    tproxy_laddr6(skb, &tgi->laddr.in6, &iph->daddr),
 					    hp->source,
@@ -481,10 +487,10 @@ tproxy_tg6_v1(struct sk_buff *skb, const struct xt_action_param *par)
 	 * addresses, this happens if the redirect already happened
 	 * and the current packet belongs to an already established
 	 * connection */
-	sk = nf_tproxy_get_sock_v6(par->net, skb, thoff, hp, tproto,
+	sk = nf_tproxy_get_sock_v6(xt_net(par), skb, thoff, hp, tproto,
 				   &iph->saddr, &iph->daddr,
 				   hp->source, hp->dest,
-				   par->in, NFT_LOOKUP_ESTABLISHED);
+				   xt_in(par), NFT_LOOKUP_ESTABLISHED);
 
 	laddr = tproxy_laddr6(skb, &tgi->laddr.in6, &iph->daddr);
 	lport = tgi->lport ? tgi->lport : hp->dest;
@@ -496,10 +502,10 @@ tproxy_tg6_v1(struct sk_buff *skb, const struct xt_action_param *par)
 	else if (!sk)
 		/* no there's no established connection, check if
 		 * there's a listener on the redirected addr/port */
-		sk = nf_tproxy_get_sock_v6(par->net, skb, thoff, hp,
+		sk = nf_tproxy_get_sock_v6(xt_net(par), skb, thoff, hp,
 					   tproto, &iph->saddr, laddr,
 					   hp->source, lport,
-					   par->in, NFT_LOOKUP_LISTENER);
+					   xt_in(par), NFT_LOOKUP_LISTENER);
 
 	/* NOTE: assign_sock consumes our sk reference */
 	if (sk && tproxy_sk_is_transparent(sk)) {
@@ -525,6 +531,11 @@ tproxy_tg6_v1(struct sk_buff *skb, const struct xt_action_param *par)
 static int tproxy_tg6_check(const struct xt_tgchk_param *par)
 {
 	const struct ip6t_ip6 *i = par->entryinfo;
+	int err;
+
+	err = nf_defrag_ipv6_enable(par->net);
+	if (err)
+		return err;
 
 	if ((i->proto == IPPROTO_TCP || i->proto == IPPROTO_UDP) &&
 	    !(i->invflags & IP6T_INV_PROTO))
@@ -539,6 +550,11 @@ static int tproxy_tg6_check(const struct xt_tgchk_param *par)
 static int tproxy_tg4_check(const struct xt_tgchk_param *par)
 {
 	const struct ipt_ip *i = par->entryinfo;
+	int err;
+
+	err = nf_defrag_ipv4_enable(par->net);
+	if (err)
+		return err;
 
 	if ((i->proto == IPPROTO_TCP || i->proto == IPPROTO_UDP)
 	    && !(i->invflags & IPT_INV_PROTO))
@@ -590,11 +606,6 @@ static struct xt_target tproxy_tg_reg[] __read_mostly = {
 
 static int __init tproxy_tg_init(void)
 {
-	nf_defrag_ipv4_enable();
-#ifdef XT_TPROXY_HAVE_IPV6
-	nf_defrag_ipv6_enable();
-#endif
-
 	return xt_register_targets(tproxy_tg_reg, ARRAY_SIZE(tproxy_tg_reg));
 }
 

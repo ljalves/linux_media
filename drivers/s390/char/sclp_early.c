@@ -46,7 +46,8 @@ struct read_info_sccb {
 	u64	rnmax2;			/* 104-111 */
 	u8	_pad_112[116 - 112];	/* 112-115 */
 	u8	fac116;			/* 116 */
-	u8	_pad_117[119 - 117];	/* 117-118 */
+	u8	fac117;			/* 117 */
+	u8	_pad_118;		/* 118 */
 	u8	fac119;			/* 119 */
 	u16	hcpua;			/* 120-121 */
 	u8	_pad_122[124 - 122];	/* 122-123 */
@@ -114,7 +115,12 @@ static void __init sclp_facilities_detect(struct read_info_sccb *sccb)
 	sclp.facilities = sccb->facilities;
 	sclp.has_sprp = !!(sccb->fac84 & 0x02);
 	sclp.has_core_type = !!(sccb->fac84 & 0x01);
+	sclp.has_gsls = !!(sccb->fac85 & 0x80);
+	sclp.has_64bscao = !!(sccb->fac116 & 0x80);
+	sclp.has_cmma = !!(sccb->fac116 & 0x40);
 	sclp.has_esca = !!(sccb->fac116 & 0x08);
+	sclp.has_pfmfi = !!(sccb->fac117 & 0x40);
+	sclp.has_ibs = !!(sccb->fac117 & 0x20);
 	sclp.has_hvs = !!(sccb->fac119 & 0x80);
 	if (sccb->fac85 & 0x02)
 		S390_lowcore.machine_flags |= MACHINE_FLAG_ESOP;
@@ -145,6 +151,10 @@ static void __init sclp_facilities_detect(struct read_info_sccb *sccb)
 		sclp.has_siif = cpue->siif;
 		sclp.has_sigpif = cpue->sigpif;
 		sclp.has_sief2 = cpue->sief2;
+		sclp.has_gpere = cpue->gpere;
+		sclp.has_ib = cpue->ib;
+		sclp.has_cei = cpue->cei;
+		sclp.has_skey = cpue->skey;
 		break;
 	}
 
@@ -209,6 +219,36 @@ static int __init sclp_set_event_mask(struct init_sccb *sccb,
 	sccb->receive_mask = receive_mask;
 	sccb->send_mask = send_mask;
 	return sclp_cmd_early(SCLP_CMDW_WRITE_EVENT_MASK, sccb);
+}
+
+static struct sclp_core_info sclp_core_info_early __initdata;
+static int sclp_core_info_early_valid __initdata;
+
+static void __init sclp_init_core_info_early(struct read_cpu_info_sccb *sccb)
+{
+	int rc;
+
+	if (!SCLP_HAS_CPU_INFO)
+		return;
+	memset(sccb, 0, sizeof(*sccb));
+	sccb->header.length = sizeof(*sccb);
+	do {
+		rc = sclp_cmd_sync_early(SCLP_CMDW_READ_CPU_INFO, sccb);
+	} while (rc == -EBUSY);
+	if (rc)
+		return;
+	if (sccb->header.response_code != 0x0010)
+		return;
+	sclp_fill_core_info(&sclp_core_info_early, sccb);
+	sclp_core_info_early_valid = 1;
+}
+
+int __init _sclp_get_core_info_early(struct sclp_core_info *info)
+{
+	if (!sclp_core_info_early_valid)
+		return -EIO;
+	*info = sclp_core_info_early;
+	return 0;
 }
 
 static long __init sclp_hsa_size_init(struct sdias_sccb *sccb)
@@ -283,6 +323,7 @@ void __init sclp_early_detect(void)
 	void *sccb = &sccb_early;
 
 	sclp_facilities_detect(sccb);
+	sclp_init_core_info_early(sccb);
 	sclp_hsa_size_detect(sccb);
 
 	/* Turn off SCLP event notifications.  Also save remote masks in the

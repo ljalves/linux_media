@@ -10,7 +10,8 @@
 
 #include <linux/random.h>
 #include <linux/string.h>
-#include <linux/fscrypto.h>
+#include <linux/mount.h>
+#include "fscrypt_private.h"
 
 static int inode_has_encryption_context(struct inode *inode)
 {
@@ -92,32 +93,57 @@ static int create_encryption_context_from_policy(struct inode *inode,
 	return inode->i_sb->s_cop->set_context(inode, &ctx, sizeof(ctx), NULL);
 }
 
-int fscrypt_process_policy(struct inode *inode,
-				const struct fscrypt_policy *policy)
+int fscrypt_ioctl_set_policy(struct file *filp, const void __user *arg)
 {
-	if (policy->version != 0)
+	struct fscrypt_policy policy;
+	struct inode *inode = file_inode(filp);
+	int ret;
+
+	if (copy_from_user(&policy, arg, sizeof(policy)))
+		return -EFAULT;
+
+	if (!inode_owner_or_capable(inode))
+		return -EACCES;
+
+	if (policy.version != 0)
 		return -EINVAL;
 
+	ret = mnt_want_write_file(filp);
+	if (ret)
+		return ret;
+
+	inode_lock(inode);
+
 	if (!inode_has_encryption_context(inode)) {
-		if (!inode->i_sb->s_cop->empty_dir)
-			return -EOPNOTSUPP;
-		if (!inode->i_sb->s_cop->empty_dir(inode))
-			return -ENOTEMPTY;
-		return create_encryption_context_from_policy(inode, policy);
+		if (!S_ISDIR(inode->i_mode))
+			ret = -EINVAL;
+		else if (!inode->i_sb->s_cop->empty_dir)
+			ret = -EOPNOTSUPP;
+		else if (!inode->i_sb->s_cop->empty_dir(inode))
+			ret = -ENOTEMPTY;
+		else
+			ret = create_encryption_context_from_policy(inode,
+								    &policy);
+	} else if (!is_encryption_context_consistent_with_policy(inode,
+								 &policy)) {
+		printk(KERN_WARNING
+		       "%s: Policy inconsistent with encryption context\n",
+		       __func__);
+		ret = -EINVAL;
 	}
 
-	if (is_encryption_context_consistent_with_policy(inode, policy))
-		return 0;
+	inode_unlock(inode);
 
-	printk(KERN_WARNING "%s: Policy inconsistent with encryption context\n",
-	       __func__);
-	return -EINVAL;
+	mnt_drop_write_file(filp);
+	return ret;
 }
-EXPORT_SYMBOL(fscrypt_process_policy);
+EXPORT_SYMBOL(fscrypt_ioctl_set_policy);
 
-int fscrypt_get_policy(struct inode *inode, struct fscrypt_policy *policy)
+int fscrypt_ioctl_get_policy(struct file *filp, void __user *arg)
 {
+	struct inode *inode = file_inode(filp);
 	struct fscrypt_context ctx;
+	struct fscrypt_policy policy;
 	int res;
 
 	if (!inode->i_sb->s_cop->get_context ||
@@ -130,15 +156,18 @@ int fscrypt_get_policy(struct inode *inode, struct fscrypt_policy *policy)
 	if (ctx.format != FS_ENCRYPTION_CONTEXT_FORMAT_V1)
 		return -EINVAL;
 
-	policy->version = 0;
-	policy->contents_encryption_mode = ctx.contents_encryption_mode;
-	policy->filenames_encryption_mode = ctx.filenames_encryption_mode;
-	policy->flags = ctx.flags;
-	memcpy(&policy->master_key_descriptor, ctx.master_key_descriptor,
+	policy.version = 0;
+	policy.contents_encryption_mode = ctx.contents_encryption_mode;
+	policy.filenames_encryption_mode = ctx.filenames_encryption_mode;
+	policy.flags = ctx.flags;
+	memcpy(policy.master_key_descriptor, ctx.master_key_descriptor,
 				FS_KEY_DESCRIPTOR_SIZE);
+
+	if (copy_to_user(arg, &policy, sizeof(policy)))
+		return -EFAULT;
 	return 0;
 }
-EXPORT_SYMBOL(fscrypt_get_policy);
+EXPORT_SYMBOL(fscrypt_ioctl_get_policy);
 
 int fscrypt_has_permitted_context(struct inode *parent, struct inode *child)
 {

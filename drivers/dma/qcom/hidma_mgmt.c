@@ -282,6 +282,7 @@ static const struct acpi_device_id hidma_mgmt_acpi_ids[] = {
 	{"QCOM8060"},
 	{},
 };
+MODULE_DEVICE_TABLE(acpi, hidma_mgmt_acpi_ids);
 #endif
 
 static const struct of_device_id hidma_mgmt_match[] = {
@@ -371,12 +372,19 @@ static int __init hidma_mgmt_of_populate_channels(struct device_node *np)
 		pdevinfo.size_data = 0;
 		pdevinfo.dma_mask = DMA_BIT_MASK(64);
 		new_pdev = platform_device_register_full(&pdevinfo);
-		if (!new_pdev) {
-			ret = -ENODEV;
+		if (IS_ERR(new_pdev)) {
+			ret = PTR_ERR(new_pdev);
 			goto out;
 		}
+		of_node_get(child);
+		new_pdev->dev.of_node = child;
 		of_dma_configure(&new_pdev->dev, child);
-
+		/*
+		 * It is assumed that calling of_msi_configure is safe on
+		 * platforms with or without MSI support.
+		 */
+		of_msi_configure(&new_pdev->dev, child);
+		of_node_put(child);
 		kfree(res);
 		res = NULL;
 	}
@@ -392,11 +400,9 @@ static int __init hidma_mgmt_init(void)
 #if defined(CONFIG_OF) && defined(CONFIG_OF_IRQ)
 	struct device_node *child;
 
-	for (child = of_find_matching_node(NULL, hidma_mgmt_match); child;
-	     child = of_find_matching_node(child, hidma_mgmt_match)) {
+	for_each_matching_node(child, hidma_mgmt_match) {
 		/* device tree based firmware here */
 		hidma_mgmt_of_populate_channels(child);
-		of_node_put(child);
 	}
 #endif
 	platform_driver_register(&hidma_mgmt_driver);

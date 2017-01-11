@@ -287,7 +287,6 @@ struct cal_ctx {
 	/* Several counters */
 	unsigned long		jiffies;
 
-	struct vb2_alloc_ctx	*alloc_ctx;
 	struct cal_dmaqueue	vidq;
 
 	/* Input Number */
@@ -484,11 +483,7 @@ static void cal_get_hwinfo(struct cal_dev *dev)
 
 static inline int cal_runtime_get(struct cal_dev *dev)
 {
-	int r;
-
-	r = pm_runtime_get_sync(&dev->pdev->dev);
-
-	return r;
+	return pm_runtime_get_sync(&dev->pdev->dev);
 }
 
 static inline void cal_runtime_put(struct cal_dev *dev)
@@ -1226,14 +1221,13 @@ static int cal_enum_frameintervals(struct file *file, void *priv,
  */
 static int cal_queue_setup(struct vb2_queue *vq,
 			   unsigned int *nbuffers, unsigned int *nplanes,
-			   unsigned int sizes[], void *alloc_ctxs[])
+			   unsigned int sizes[], struct device *alloc_devs[])
 {
 	struct cal_ctx *ctx = vb2_get_drv_priv(vq);
 	unsigned size = ctx->v_fmt.fmt.pix.sizeimage;
 
 	if (vq->num_buffers + *nbuffers < 3)
 		*nbuffers = 3 - vq->num_buffers;
-	alloc_ctxs[0] = ctx->alloc_ctx;
 
 	if (*nplanes) {
 		if (sizes[0] < size)
@@ -1381,7 +1375,7 @@ static void cal_stop_streaming(struct vb2_queue *vq)
 	cal_runtime_put(ctx->dev);
 }
 
-static struct vb2_ops cal_video_qops = {
+static const struct vb2_ops cal_video_qops = {
 	.queue_setup		= cal_queue_setup,
 	.buf_prepare		= cal_buffer_prepare,
 	.buf_queue		= cal_buffer_queue,
@@ -1551,6 +1545,7 @@ static int cal_complete_ctx(struct cal_ctx *ctx)
 	q->timestamp_flags = V4L2_BUF_FLAG_TIMESTAMP_MONOTONIC;
 	q->lock = &ctx->mutex;
 	q->min_buffers_needed = 3;
+	q->dev = ctx->v4l2_dev.dev;
 
 	ret = vb2_queue_init(q);
 	if (ret)
@@ -1578,18 +1573,7 @@ static int cal_complete_ctx(struct cal_ctx *ctx)
 	v4l2_info(&ctx->v4l2_dev, "V4L2 device registered as %s\n",
 		  video_device_node_name(vfd));
 
-	ctx->alloc_ctx = vb2_dma_contig_init_ctx(vfd->v4l2_dev->dev);
-	if (IS_ERR(ctx->alloc_ctx)) {
-		ctx_err(ctx, "Failed to alloc vb2 context\n");
-		ret = PTR_ERR(ctx->alloc_ctx);
-		goto vdev_unreg;
-	}
-
 	return 0;
-
-vdev_unreg:
-	video_unregister_device(vfd);
-	return ret;
 }
 
 static struct device_node *
@@ -1761,13 +1745,13 @@ static int of_cal_create_instance(struct cal_ctx *ctx, int inst)
 	}
 
 cleanup_exit:
-	if (!remote_ep)
+	if (remote_ep)
 		of_node_put(remote_ep);
-	if (!sensor_node)
+	if (sensor_node)
 		of_node_put(sensor_node);
-	if (!ep_node)
+	if (ep_node)
 		of_node_put(ep_node);
-	if (!port)
+	if (port)
 		of_node_put(port);
 
 	return ret;
@@ -1914,7 +1898,6 @@ static int cal_remove(struct platform_device *pdev)
 				video_device_node_name(&ctx->vdev));
 			camerarx_phy_disable(ctx);
 			v4l2_async_notifier_unregister(&ctx->notifier);
-			vb2_dma_contig_cleanup_ctx(ctx->alloc_ctx);
 			v4l2_ctrl_handler_free(&ctx->ctrl_handler);
 			v4l2_device_unregister(&ctx->v4l2_dev);
 			video_unregister_device(&ctx->vdev);

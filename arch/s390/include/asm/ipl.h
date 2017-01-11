@@ -97,7 +97,7 @@ void __init save_area_add_vxrs(struct save_area *, __vector128 *vxrs);
 extern void do_reipl(void);
 extern void do_halt(void);
 extern void do_poff(void);
-extern void ipl_save_parameters(void);
+extern void ipl_verify_parameters(void);
 extern void ipl_update_parameters(void);
 extern size_t append_ipl_vmparm(char *, size_t);
 extern size_t append_ipl_scpdata(char *, size_t);
@@ -141,11 +141,11 @@ extern void setup_ipl(void);
  * DIAG 308 support
  */
 enum diag308_subcode  {
-	DIAG308_REL_HSA	= 2,
-	DIAG308_IPL	= 3,
-	DIAG308_DUMP	= 4,
-	DIAG308_SET	= 5,
-	DIAG308_STORE	= 6,
+	DIAG308_REL_HSA = 2,
+	DIAG308_LOAD_CLEAR = 3,
+	DIAG308_LOAD_NORMAL_DUMP = 4,
+	DIAG308_SET = 5,
+	DIAG308_STORE = 6,
 };
 
 enum diag308_ipl_type {

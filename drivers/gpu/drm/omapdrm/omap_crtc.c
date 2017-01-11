@@ -34,7 +34,7 @@ struct omap_crtc {
 	const char *name;
 	enum omap_channel channel;
 
-	struct omap_video_timings timings;
+	struct videomode vm;
 
 	struct omap_drm_irq vblank_irq;
 	struct omap_drm_irq error_irq;
@@ -56,10 +56,10 @@ uint32_t pipe2vbl(struct drm_crtc *crtc)
 	return dispc_mgr_get_vsync_irq(omap_crtc->channel);
 }
 
-struct omap_video_timings *omap_crtc_timings(struct drm_crtc *crtc)
+struct videomode *omap_crtc_timings(struct drm_crtc *crtc)
 {
 	struct omap_crtc *omap_crtc = to_omap_crtc(crtc);
-	return &omap_crtc->timings;
+	return &omap_crtc->vm;
 }
 
 enum omap_channel omap_crtc_channel(struct drm_crtc *crtc)
@@ -201,7 +201,7 @@ static int omap_crtc_dss_enable(enum omap_channel channel)
 
 	dispc_mgr_setup(omap_crtc->channel, &info);
 	dispc_mgr_set_timings(omap_crtc->channel,
-			&omap_crtc->timings);
+			&omap_crtc->vm);
 	omap_crtc_set_enabled(&omap_crtc->base, true);
 
 	return 0;
@@ -215,11 +215,11 @@ static void omap_crtc_dss_disable(enum omap_channel channel)
 }
 
 static void omap_crtc_dss_set_timings(enum omap_channel channel,
-		const struct omap_video_timings *timings)
+		const struct videomode *vm)
 {
 	struct omap_crtc *omap_crtc = omap_crtcs[channel];
 	DBG("%s", omap_crtc->name);
-	omap_crtc->timings = *timings;
+	omap_crtc->vm = *vm;
 }
 
 static void omap_crtc_dss_set_lcd_config(enum omap_channel channel,
@@ -369,7 +369,24 @@ static void omap_crtc_mode_set_nofb(struct drm_crtc *crtc)
 	    mode->vdisplay, mode->vsync_start, mode->vsync_end, mode->vtotal,
 	    mode->type, mode->flags);
 
-	copy_timings_drm_to_omap(&omap_crtc->timings, mode);
+	drm_display_mode_to_videomode(mode, &omap_crtc->vm);
+	omap_crtc->vm.flags |= DISPLAY_FLAGS_DE_HIGH |
+			       DISPLAY_FLAGS_PIXDATA_POSEDGE |
+			       DISPLAY_FLAGS_SYNC_NEGEDGE;
+}
+
+static int omap_crtc_atomic_check(struct drm_crtc *crtc,
+				struct drm_crtc_state *state)
+{
+	if (state->color_mgmt_changed && state->gamma_lut) {
+		uint length = state->gamma_lut->length /
+			sizeof(struct drm_color_lut);
+
+		if (length < 2)
+			return -EINVAL;
+	}
+
+	return 0;
 }
 
 static void omap_crtc_atomic_begin(struct drm_crtc *crtc,
@@ -383,6 +400,19 @@ static void omap_crtc_atomic_flush(struct drm_crtc *crtc,
 	struct omap_crtc *omap_crtc = to_omap_crtc(crtc);
 
 	WARN_ON(omap_crtc->vblank_irq.registered);
+
+	if (crtc->state->color_mgmt_changed) {
+		struct drm_color_lut *lut = NULL;
+		uint length = 0;
+
+		if (crtc->state->gamma_lut) {
+			lut = (struct drm_color_lut *)
+				crtc->state->gamma_lut->data;
+			length = crtc->state->gamma_lut->length /
+				sizeof(*lut);
+		}
+		dispc_mgr_set_gamma(omap_crtc->channel, lut, length);
+	}
 
 	if (dispc_mgr_is_enabled(omap_crtc->channel)) {
 
@@ -398,13 +428,14 @@ static void omap_crtc_atomic_flush(struct drm_crtc *crtc,
 	}
 }
 
-static bool omap_crtc_is_plane_prop(struct drm_device *dev,
+static bool omap_crtc_is_plane_prop(struct drm_crtc *crtc,
 	struct drm_property *property)
 {
+	struct drm_device *dev = crtc->dev;
 	struct omap_drm_private *priv = dev->dev_private;
 
 	return property == priv->zorder_prop ||
-		property == dev->mode_config.rotation_property;
+		property == crtc->primary->rotation_property;
 }
 
 static int omap_crtc_atomic_set_property(struct drm_crtc *crtc,
@@ -412,9 +443,7 @@ static int omap_crtc_atomic_set_property(struct drm_crtc *crtc,
 					 struct drm_property *property,
 					 uint64_t val)
 {
-	struct drm_device *dev = crtc->dev;
-
-	if (omap_crtc_is_plane_prop(dev, property)) {
+	if (omap_crtc_is_plane_prop(crtc, property)) {
 		struct drm_plane_state *plane_state;
 		struct drm_plane *plane = crtc->primary;
 
@@ -439,9 +468,7 @@ static int omap_crtc_atomic_get_property(struct drm_crtc *crtc,
 					 struct drm_property *property,
 					 uint64_t *val)
 {
-	struct drm_device *dev = crtc->dev;
-
-	if (omap_crtc_is_plane_prop(dev, property)) {
+	if (omap_crtc_is_plane_prop(crtc, property)) {
 		/*
 		 * Delegate property get to the primary plane. The
 		 * drm_atomic_plane_get_property() function isn't exported, but
@@ -460,6 +487,7 @@ static const struct drm_crtc_funcs omap_crtc_funcs = {
 	.set_config = drm_atomic_helper_set_config,
 	.destroy = omap_crtc_destroy,
 	.page_flip = drm_atomic_helper_page_flip,
+	.gamma_set = drm_atomic_helper_legacy_gamma_set,
 	.set_property = drm_atomic_helper_crtc_set_property,
 	.atomic_duplicate_state = drm_atomic_helper_crtc_duplicate_state,
 	.atomic_destroy_state = drm_atomic_helper_crtc_destroy_state,
@@ -471,6 +499,7 @@ static const struct drm_crtc_helper_funcs omap_crtc_helper_funcs = {
 	.mode_set_nofb = omap_crtc_mode_set_nofb,
 	.disable = omap_crtc_disable,
 	.enable = omap_crtc_enable,
+	.atomic_check = omap_crtc_atomic_check,
 	.atomic_begin = omap_crtc_atomic_begin,
 	.atomic_flush = omap_crtc_atomic_flush,
 };
@@ -533,6 +562,20 @@ struct drm_crtc *omap_crtc_init(struct drm_device *dev,
 	}
 
 	drm_crtc_helper_add(crtc, &omap_crtc_helper_funcs);
+
+	/* The dispc API adapts to what ever size, but the HW supports
+	 * 256 element gamma table for LCDs and 1024 element table for
+	 * OMAP_DSS_CHANNEL_DIGIT. X server assumes 256 element gamma
+	 * tables so lets use that. Size of HW gamma table can be
+	 * extracted with dispc_mgr_gamma_size(). If it returns 0
+	 * gamma table is not supprted.
+	 */
+	if (dispc_mgr_gamma_size(channel)) {
+		uint gamma_lut_size = 256;
+
+		drm_crtc_enable_color_mgmt(crtc, 0, false, gamma_lut_size);
+		drm_mode_crtc_set_gamma_size(crtc, gamma_lut_size);
+	}
 
 	omap_plane_install_properties(crtc->primary, &crtc->base);
 

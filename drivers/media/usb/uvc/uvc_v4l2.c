@@ -66,19 +66,14 @@ static int uvc_ioctl_ctrl_map(struct uvc_video_chain *chain,
 		if (xmap->menu_count == 0 ||
 		    xmap->menu_count > UVC_MAX_CONTROL_MENU_ENTRIES) {
 			ret = -EINVAL;
-			goto done;
+			goto free_map;
 		}
 
 		size = xmap->menu_count * sizeof(*map->menu_info);
-		map->menu_info = kmalloc(size, GFP_KERNEL);
-		if (map->menu_info == NULL) {
-			ret = -ENOMEM;
-			goto done;
-		}
-
-		if (copy_from_user(map->menu_info, xmap->menu_info, size)) {
-			ret = -EFAULT;
-			goto done;
+		map->menu_info = memdup_user(xmap->menu_info, size);
+		if (IS_ERR(map->menu_info)) {
+			ret = PTR_ERR(map->menu_info);
+			goto free_map;
 		}
 
 		map->menu_count = xmap->menu_count;
@@ -88,13 +83,13 @@ static int uvc_ioctl_ctrl_map(struct uvc_video_chain *chain,
 		uvc_trace(UVC_TRACE_CONTROL, "Unsupported V4L2 control type "
 			  "%u.\n", xmap->v4l2_type);
 		ret = -ENOTTY;
-		goto done;
+		goto free_map;
 	}
 
 	ret = uvc_ctrl_add_mapping(chain, map);
 
-done:
 	kfree(map->menu_info);
+free_map:
 	kfree(map);
 
 	return ret;
@@ -1289,8 +1284,6 @@ struct uvc_xu_control_mapping32 {
 static int uvc_v4l2_get_xu_mapping(struct uvc_xu_control_mapping *kp,
 			const struct uvc_xu_control_mapping32 __user *up)
 {
-	struct uvc_menu_info __user *umenus;
-	struct uvc_menu_info __user *kmenus;
 	compat_caddr_t p;
 
 	if (!access_ok(VERIFY_READ, up, sizeof(*up)) ||
@@ -1307,17 +1300,7 @@ static int uvc_v4l2_get_xu_mapping(struct uvc_xu_control_mapping *kp,
 
 	if (__get_user(p, &up->menu_info))
 		return -EFAULT;
-	umenus = compat_ptr(p);
-	if (!access_ok(VERIFY_READ, umenus, kp->menu_count * sizeof(*umenus)))
-		return -EFAULT;
-
-	kmenus = compat_alloc_user_space(kp->menu_count * sizeof(*kmenus));
-	if (kmenus == NULL)
-		return -EFAULT;
-	kp->menu_info = kmenus;
-
-	if (copy_in_user(kmenus, umenus, kp->menu_count * sizeof(*umenus)))
-		return -EFAULT;
+	kp->menu_info = compat_ptr(p);
 
 	return 0;
 }
@@ -1325,26 +1308,12 @@ static int uvc_v4l2_get_xu_mapping(struct uvc_xu_control_mapping *kp,
 static int uvc_v4l2_put_xu_mapping(const struct uvc_xu_control_mapping *kp,
 			struct uvc_xu_control_mapping32 __user *up)
 {
-	struct uvc_menu_info __user *umenus;
-	struct uvc_menu_info __user *kmenus = kp->menu_info;
-	compat_caddr_t p;
-
 	if (!access_ok(VERIFY_WRITE, up, sizeof(*up)) ||
 	    __copy_to_user(up, kp, offsetof(typeof(*up), menu_info)) ||
 	    __put_user(kp->menu_count, &up->menu_count))
 		return -EFAULT;
 
 	if (__clear_user(up->reserved, sizeof(up->reserved)))
-		return -EFAULT;
-
-	if (kp->menu_count == 0)
-		return 0;
-
-	if (get_user(p, &up->menu_info))
-		return -EFAULT;
-	umenus = compat_ptr(p);
-
-	if (copy_in_user(umenus, kmenus, kp->menu_count * sizeof(*umenus)))
 		return -EFAULT;
 
 	return 0;
@@ -1361,8 +1330,6 @@ struct uvc_xu_control_query32 {
 static int uvc_v4l2_get_xu_query(struct uvc_xu_control_query *kp,
 			const struct uvc_xu_control_query32 __user *up)
 {
-	u8 __user *udata;
-	u8 __user *kdata;
 	compat_caddr_t p;
 
 	if (!access_ok(VERIFY_READ, up, sizeof(*up)) ||
@@ -1376,17 +1343,7 @@ static int uvc_v4l2_get_xu_query(struct uvc_xu_control_query *kp,
 
 	if (__get_user(p, &up->data))
 		return -EFAULT;
-	udata = compat_ptr(p);
-	if (!access_ok(VERIFY_READ, udata, kp->size))
-		return -EFAULT;
-
-	kdata = compat_alloc_user_space(kp->size);
-	if (kdata == NULL)
-		return -EFAULT;
-	kp->data = kdata;
-
-	if (copy_in_user(kdata, udata, kp->size))
-		return -EFAULT;
+	kp->data = compat_ptr(p);
 
 	return 0;
 }
@@ -1394,24 +1351,8 @@ static int uvc_v4l2_get_xu_query(struct uvc_xu_control_query *kp,
 static int uvc_v4l2_put_xu_query(const struct uvc_xu_control_query *kp,
 			struct uvc_xu_control_query32 __user *up)
 {
-	u8 __user *udata;
-	u8 __user *kdata = kp->data;
-	compat_caddr_t p;
-
 	if (!access_ok(VERIFY_WRITE, up, sizeof(*up)) ||
 	    __copy_to_user(up, kp, offsetof(typeof(*up), data)))
-		return -EFAULT;
-
-	if (kp->size == 0)
-		return 0;
-
-	if (get_user(p, &up->data))
-		return -EFAULT;
-	udata = compat_ptr(p);
-	if (!access_ok(VERIFY_READ, udata, kp->size))
-		return -EFAULT;
-
-	if (copy_in_user(udata, kdata, kp->size))
 		return -EFAULT;
 
 	return 0;
@@ -1423,45 +1364,42 @@ static int uvc_v4l2_put_xu_query(const struct uvc_xu_control_query *kp,
 static long uvc_v4l2_compat_ioctl32(struct file *file,
 		     unsigned int cmd, unsigned long arg)
 {
+	struct uvc_fh *handle = file->private_data;
 	union {
 		struct uvc_xu_control_mapping xmap;
 		struct uvc_xu_control_query xqry;
 	} karg;
 	void __user *up = compat_ptr(arg);
-	mm_segment_t old_fs;
 	long ret;
 
 	switch (cmd) {
 	case UVCIOC_CTRL_MAP32:
-		cmd = UVCIOC_CTRL_MAP;
 		ret = uvc_v4l2_get_xu_mapping(&karg.xmap, up);
+		if (ret)
+			return ret;
+		ret = uvc_ioctl_ctrl_map(handle->chain, &karg.xmap);
+		if (ret)
+			return ret;
+		ret = uvc_v4l2_put_xu_mapping(&karg.xmap, up);
+		if (ret)
+			return ret;
+
 		break;
 
 	case UVCIOC_CTRL_QUERY32:
-		cmd = UVCIOC_CTRL_QUERY;
 		ret = uvc_v4l2_get_xu_query(&karg.xqry, up);
+		if (ret)
+			return ret;
+		ret = uvc_xu_ctrl_query(handle->chain, &karg.xqry);
+		if (ret)
+			return ret;
+		ret = uvc_v4l2_put_xu_query(&karg.xqry, up);
+		if (ret)
+			return ret;
 		break;
 
 	default:
 		return -ENOIOCTLCMD;
-	}
-
-	old_fs = get_fs();
-	set_fs(KERNEL_DS);
-	ret = video_ioctl2(file, cmd, (unsigned long)&karg);
-	set_fs(old_fs);
-
-	if (ret < 0)
-		return ret;
-
-	switch (cmd) {
-	case UVCIOC_CTRL_MAP:
-		ret = uvc_v4l2_put_xu_mapping(&karg.xmap, up);
-		break;
-
-	case UVCIOC_CTRL_QUERY:
-		ret = uvc_v4l2_put_xu_query(&karg.xqry, up);
-		break;
 	}
 
 	return ret;

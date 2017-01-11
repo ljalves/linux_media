@@ -26,19 +26,15 @@
 #define AMD_MAX_USEC_TIMEOUT		100000  /* 100 ms */
 
 /*
-* Supported GPU families (aligned with amdgpu_drm.h)
-*/
-#define AMD_FAMILY_UNKNOWN              0
-#define AMD_FAMILY_CI                   120 /* Bonaire, Hawaii */
-#define AMD_FAMILY_KV                   125 /* Kaveri, Kabini, Mullins */
-#define AMD_FAMILY_VI                   130 /* Iceland, Tonga */
-#define AMD_FAMILY_CZ                   135 /* Carrizo */
-
-/*
  * Supported ASIC types
  */
 enum amd_asic_type {
-	CHIP_BONAIRE = 0,
+	CHIP_TAHITI = 0,
+	CHIP_PITCAIRN,
+	CHIP_VERDE,
+	CHIP_OLAND,
+	CHIP_HAINAN,
+	CHIP_BONAIRE,
 	CHIP_KAVERI,
 	CHIP_KABINI,
 	CHIP_HAWAII,
@@ -88,6 +84,29 @@ enum amd_powergating_state {
 	AMD_PG_STATE_UNGATE,
 };
 
+struct amd_vce_state {
+	/* vce clocks */
+	u32 evclk;
+	u32 ecclk;
+	/* gpu clocks */
+	u32 sclk;
+	u32 mclk;
+	u8 clk_idx;
+	u8 pstate;
+};
+
+
+#define AMD_MAX_VCE_LEVELS 6
+
+enum amd_vce_level {
+	AMD_VCE_LEVEL_AC_ALL = 0,     /* AC, All cases */
+	AMD_VCE_LEVEL_DC_EE = 1,      /* DC, entropy encoding */
+	AMD_VCE_LEVEL_DC_LL_LOW = 2,  /* DC, low latency queue, res <= 720 */
+	AMD_VCE_LEVEL_DC_LL_HIGH = 3, /* DC, low latency queue, 1080 >= res > 720 */
+	AMD_VCE_LEVEL_DC_GP_LOW = 4,  /* DC, general purpose queue, res <= 720 */
+	AMD_VCE_LEVEL_DC_GP_HIGH = 5, /* DC, general purpose queue, 1080 >= res > 720 */
+};
+
 /* CG flags */
 #define AMD_CG_SUPPORT_GFX_MGCG			(1 << 0)
 #define AMD_CG_SUPPORT_GFX_MGLS			(1 << 1)
@@ -107,6 +126,10 @@ enum amd_powergating_state {
 #define AMD_CG_SUPPORT_HDP_LS			(1 << 15)
 #define AMD_CG_SUPPORT_HDP_MGCG			(1 << 16)
 #define AMD_CG_SUPPORT_ROM_MGCG			(1 << 17)
+#define AMD_CG_SUPPORT_DRM_LS			(1 << 18)
+#define AMD_CG_SUPPORT_BIF_MGCG			(1 << 19)
+#define AMD_CG_SUPPORT_GFX_3D_CGCG		(1 << 20)
+#define AMD_CG_SUPPORT_GFX_3D_CGLS		(1 << 21)
 
 /* PG flags */
 #define AMD_PG_SUPPORT_GFX_PG			(1 << 0)
@@ -120,6 +143,8 @@ enum amd_powergating_state {
 #define AMD_PG_SUPPORT_SDMA			(1 << 8)
 #define AMD_PG_SUPPORT_ACP			(1 << 9)
 #define AMD_PG_SUPPORT_SAMU			(1 << 10)
+#define AMD_PG_SUPPORT_GFX_QUICK_MG		(1 << 11)
+#define AMD_PG_SUPPORT_GFX_PIPELINE		(1 << 12)
 
 enum amd_pm_state_type {
 	/* not used for dpm */
@@ -157,6 +182,7 @@ struct amd_ip_funcs {
 	int (*hw_init)(void *handle);
 	/* tears down the hw state */
 	int (*hw_fini)(void *handle);
+	void (*late_fini)(void *handle);
 	/* handles IP specific hw/sw changes for suspend */
 	int (*suspend)(void *handle);
 	/* handles IP specific hw/sw changes for resume */
@@ -165,8 +191,14 @@ struct amd_ip_funcs {
 	bool (*is_idle)(void *handle);
 	/* poll for idle */
 	int (*wait_for_idle)(void *handle);
+	/* check soft reset the IP block */
+	bool (*check_soft_reset)(void *handle);
+	/* pre soft reset the IP block */
+	int (*pre_soft_reset)(void *handle);
 	/* soft reset the IP block */
 	int (*soft_reset)(void *handle);
+	/* post soft reset the IP block */
+	int (*post_soft_reset)(void *handle);
 	/* enable/disable cg for the IP block */
 	int (*set_clockgating_state)(void *handle,
 				     enum amd_clockgating_state state);

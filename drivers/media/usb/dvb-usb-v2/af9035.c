@@ -496,7 +496,8 @@ static int af9035_identify_state(struct dvb_usb_device *d, const char **name)
 {
 	struct state *state = d_to_priv(d);
 	struct usb_interface *intf = d->intf;
-	int ret;
+	int ret, ts_mode_invalid;
+	u8 tmp;
 	u8 wbuf[1] = { 1 };
 	u8 rbuf[4];
 	struct usb_req req = { CMD_FW_QUERYINFO, 0, sizeof(wbuf), wbuf,
@@ -529,6 +530,36 @@ static int af9035_identify_state(struct dvb_usb_device *d, const char **name)
 		*name = AF9035_FIRMWARE_AF9035;
 		state->eeprom_addr = EEPROM_BASE_AF9035;
 	}
+
+
+	/* check for dual tuner mode */
+	ret = af9035_rd_reg(d, state->eeprom_addr + EEPROM_TS_MODE, &tmp);
+	if (ret < 0)
+		goto err;
+
+	ts_mode_invalid = 0;
+	switch (tmp) {
+	case 0:
+		break;
+	case 1:
+	case 3:
+		state->dual_mode = true;
+		break;
+	case 5:
+		if (state->chip_type != 0x9135 && state->chip_type != 0x9306)
+			state->dual_mode = true;	/* AF9035 */
+		else
+			ts_mode_invalid = 1;
+		break;
+	default:
+		ts_mode_invalid = 1;
+	}
+
+	dev_dbg(&intf->dev, "ts mode=%d dual mode=%d\n", tmp, state->dual_mode);
+
+	if (ts_mode_invalid)
+		dev_info(&intf->dev, "ts mode=%d not supported, defaulting to single tuner mode!", tmp);
+
 
 	ret = af9035_ctrl_msg(d, &req);
 	if (ret < 0)
@@ -698,11 +729,7 @@ static int af9035_download_firmware(struct dvb_usb_device *d,
 	 * which is done by master demod.
 	 * Master feeds also clock and controls power via GPIO.
 	 */
-	ret = af9035_rd_reg(d, state->eeprom_addr + EEPROM_TS_MODE, &tmp);
-	if (ret < 0)
-		goto err;
-
-	if (tmp == 1 || tmp == 3 || tmp == 5) {
+	if (state->dual_mode) {
 		/* configure gpioh1, reset & power slave demod */
 		ret = af9035_wr_reg_mask(d, 0x00d8b0, 0x01, 0x01);
 		if (ret < 0)
@@ -834,17 +861,6 @@ static int af9035_read_config(struct dvb_usb_device *d)
 		return 0;
 	}
 
-
-
-	/* check if there is dual tuners */
-	ret = af9035_rd_reg(d, state->eeprom_addr + EEPROM_TS_MODE, &tmp);
-	if (ret < 0)
-		goto err;
-
-	if (tmp == 1 || tmp == 3 || tmp == 5)
-		state->dual_mode = true;
-
-	dev_dbg(&intf->dev, "ts mode=%d dual mode=%d\n", tmp, state->dual_mode);
 
 	if (state->dual_mode) {
 		/* read 2nd demodulator I2C address */
@@ -1812,6 +1828,7 @@ static int af9035_rc_query(struct dvb_usb_device *d)
 {
 	struct usb_interface *intf = d->intf;
 	int ret;
+	enum rc_type proto;
 	u32 key;
 	u8 buf[4];
 	struct usb_req req = { CMD_IR_GET, 0, 0, NULL, 4, buf };
@@ -1826,19 +1843,22 @@ static int af9035_rc_query(struct dvb_usb_device *d)
 		if ((buf[0] + buf[1]) == 0xff) {
 			/* NEC standard 16bit */
 			key = RC_SCANCODE_NEC(buf[0], buf[2]);
+			proto = RC_TYPE_NEC;
 		} else {
 			/* NEC extended 24bit */
 			key = RC_SCANCODE_NECX(buf[0] << 8 | buf[1], buf[2]);
+			proto = RC_TYPE_NECX;
 		}
 	} else {
 		/* NEC full code 32bit */
 		key = RC_SCANCODE_NEC32(buf[0] << 24 | buf[1] << 16 |
 					buf[2] << 8  | buf[3]);
+		proto = RC_TYPE_NEC32;
 	}
 
 	dev_dbg(&intf->dev, "%*ph\n", 4, buf);
 
-	rc_keydown(d->rc_dev, RC_TYPE_NEC, key, 0);
+	rc_keydown(d->rc_dev, proto, key, 0);
 
 	return 0;
 
@@ -1873,7 +1893,8 @@ static int af9035_get_rc_config(struct dvb_usb_device *d, struct dvb_usb_rc *rc)
 		switch (tmp) {
 		case 0: /* NEC */
 		default:
-			rc->allowed_protos = RC_BIT_NEC;
+			rc->allowed_protos = RC_BIT_NEC | RC_BIT_NECX |
+								RC_BIT_NEC32;
 			break;
 		case 1: /* RC6 */
 			rc->allowed_protos = RC_BIT_RC6_MCE;
@@ -2074,6 +2095,8 @@ static const struct usb_device_id af9035_id_table[] = {
 		&af9035_props, "TerraTec Cinergy T Stick (rev. 2)", NULL) },
 	{ DVB_USB_DEVICE(USB_VID_AVERMEDIA, 0x0337,
 		&af9035_props, "AVerMedia HD Volar (A867)", NULL) },
+       { DVB_USB_DEVICE(USB_VID_GTEK, USB_PID_EVOLVEO_XTRATV_STICK,
+	       &af9035_props, "EVOLVEO XtraTV stick", NULL) },
 
 	/* IT9135 devices */
 	{ DVB_USB_DEVICE(USB_VID_ITETECH, USB_PID_ITETECH_IT9135,

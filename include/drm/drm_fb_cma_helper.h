@@ -12,6 +12,8 @@ struct drm_fb_helper;
 struct drm_device;
 struct drm_file;
 struct drm_mode_fb_cmd2;
+struct drm_plane;
+struct drm_plane_state;
 
 struct drm_fbdev_cma *drm_fbdev_cma_init_with_funcs(struct drm_device *dev,
 	unsigned int preferred_bpp, unsigned int num_crtc,
@@ -23,6 +25,7 @@ void drm_fbdev_cma_fini(struct drm_fbdev_cma *fbdev_cma);
 
 void drm_fbdev_cma_restore_mode(struct drm_fbdev_cma *fbdev_cma);
 void drm_fbdev_cma_hotplug_event(struct drm_fbdev_cma *fbdev_cma);
+void drm_fbdev_cma_set_suspend(struct drm_fbdev_cma *fbdev_cma, int state);
 int drm_fbdev_cma_create_with_funcs(struct drm_fb_helper *helper,
 	struct drm_fb_helper_surface_size *sizes,
 	const struct drm_framebuffer_funcs *funcs);
@@ -39,6 +42,9 @@ struct drm_framebuffer *drm_fb_cma_create(struct drm_device *dev,
 
 struct drm_gem_cma_object *drm_fb_cma_get_gem_obj(struct drm_framebuffer *fb,
 	unsigned int plane);
+
+int drm_fb_cma_prepare_fb(struct drm_plane *plane,
+			  struct drm_plane_state *state);
 
 #ifdef CONFIG_DEBUG_FS
 struct seq_file;

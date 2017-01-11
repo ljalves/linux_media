@@ -15,11 +15,7 @@
  *
  * You should have received a copy of the GNU General Public License
  * version 2 along with this program; If not, see
- * http://www.sun.com/software/products/lustre/docs/GPLv2.pdf
- *
- * Please contact Sun Microsystems, Inc., 4150 Network Circle, Santa Clara,
- * CA 95054 USA or visit www.sun.com if you need additional information or
- * have any questions.
+ * http://www.gnu.org/licenses/gpl-2.0.html
  *
  * GPL HEADER END
  */
@@ -115,7 +111,9 @@ int ptlrpc_replay_next(struct obd_import *imp, int *inflight)
 			 * all of it's requests being replayed, it's safe to
 			 * use a cursor to accelerate the search
 			 */
-			imp->imp_replay_cursor = imp->imp_replay_cursor->next;
+			if (!imp->imp_resend_replay ||
+			    imp->imp_replay_cursor == &imp->imp_committed_list)
+				imp->imp_replay_cursor = imp->imp_replay_cursor->next;
 
 			while (imp->imp_replay_cursor !=
 			       &imp->imp_committed_list) {
@@ -159,10 +157,24 @@ int ptlrpc_replay_next(struct obd_import *imp, int *inflight)
 		lustre_msg_add_flags(req->rq_reqmsg, MSG_RESENT);
 
 	spin_lock(&imp->imp_lock);
+	/* The resend replay request may have been removed from the
+	 * unreplied list.
+	 */
+	if (req && imp->imp_resend_replay &&
+	    list_empty(&req->rq_unreplied_list)) {
+		ptlrpc_add_unreplied(req);
+		imp->imp_known_replied_xid = ptlrpc_known_replied_xid(imp);
+	}
+
 	imp->imp_resend_replay = 0;
 	spin_unlock(&imp->imp_lock);
 
 	if (req) {
+		/* The request should have been added back in unreplied list
+		 * by ptlrpc_prepare_replay().
+		 */
+		LASSERT(!list_empty(&req->rq_unreplied_list));
+
 		rc = ptlrpc_replay_req(req);
 		if (rc) {
 			CERROR("recovery replay error %d for req %llu\n",
@@ -198,14 +210,19 @@ int ptlrpc_resend(struct obd_import *imp)
 		LASSERTF((long)req > PAGE_SIZE && req != LP_POISON,
 			 "req %p bad\n", req);
 		LASSERTF(req->rq_type != LI_POISON, "req %p freed\n", req);
-		if (!ptlrpc_no_resend(req))
+
+		/*
+		 * If the request is allowed to be sent during replay and it
+		 * is not timeout yet, then it does not need to be resent.
+		 */
+		if (!ptlrpc_no_resend(req) &&
+		    (req->rq_timedout || !req->rq_allow_replay))
 			ptlrpc_resend_req(req);
 	}
 	spin_unlock(&imp->imp_lock);
 
 	return 0;
 }
-EXPORT_SYMBOL(ptlrpc_resend);
 
 /**
  * Go through all requests in delayed list and wake their threads
@@ -225,7 +242,6 @@ void ptlrpc_wake_delayed(struct obd_import *imp)
 	}
 	spin_unlock(&imp->imp_lock);
 }
-EXPORT_SYMBOL(ptlrpc_wake_delayed);
 
 void ptlrpc_request_handle_notconn(struct ptlrpc_request *failed_req)
 {

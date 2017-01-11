@@ -202,10 +202,10 @@ net2272_enable(struct usb_ep *_ep, const struct usb_endpoint_descriptor *desc)
 	if (!dev->driver || dev->gadget.speed == USB_SPEED_UNKNOWN)
 		return -ESHUTDOWN;
 
-	max = usb_endpoint_maxp(desc) & 0x1fff;
+	max = usb_endpoint_maxp(desc);
 
 	spin_lock_irqsave(&dev->lock, flags);
-	_ep->maxpacket = max & 0x7fff;
+	_ep->maxpacket = max;
 	ep->desc = desc;
 
 	/* net2272_ep_reset() has already been called */
@@ -329,12 +329,10 @@ static int net2272_disable(struct usb_ep *_ep)
 static struct usb_request *
 net2272_alloc_request(struct usb_ep *_ep, gfp_t gfp_flags)
 {
-	struct net2272_ep *ep;
 	struct net2272_request *req;
 
 	if (!_ep)
 		return NULL;
-	ep = container_of(_ep, struct net2272_ep, ep);
 
 	req = kzalloc(sizeof(*req), gfp_flags);
 	if (!req)
@@ -348,10 +346,8 @@ net2272_alloc_request(struct usb_ep *_ep, gfp_t gfp_flags)
 static void
 net2272_free_request(struct usb_ep *_ep, struct usb_request *_req)
 {
-	struct net2272_ep *ep;
 	struct net2272_request *req;
 
-	ep = container_of(_ep, struct net2272_ep, ep);
 	if (!_ep || !_req)
 		return;
 

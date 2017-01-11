@@ -776,7 +776,7 @@ static int mxl5007t_get_if_frequency(struct dvb_frontend *fe, u32 *frequency)
 	return 0;
 }
 
-static int mxl5007t_release(struct dvb_frontend *fe)
+static void mxl5007t_release(struct dvb_frontend *fe)
 {
 	struct mxl5007t_state *state = fe->tuner_priv;
 
@@ -788,13 +788,11 @@ static int mxl5007t_release(struct dvb_frontend *fe)
 	mutex_unlock(&mxl5007t_list_mutex);
 
 	fe->tuner_priv = NULL;
-
-	return 0;
 }
 
 /* ------------------------------------------------------------------------- */
 
-static struct dvb_tuner_ops mxl5007t_tuner_ops = {
+static const struct dvb_tuner_ops mxl5007t_tuner_ops = {
 	.info = {
 		.name = "MaxLinear MxL5007T",
 	},

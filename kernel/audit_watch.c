@@ -19,6 +19,7 @@
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  */
 
+#include <linux/file.h>
 #include <linux/kernel.h>
 #include <linux/audit.h>
 #include <linux/kthread.h>
@@ -241,10 +242,9 @@ static void audit_watch_log_rule_change(struct audit_krule *r, struct audit_watc
 		ab = audit_log_start(NULL, GFP_NOFS, AUDIT_CONFIG_CHANGE);
 		if (unlikely(!ab))
 			return;
-		audit_log_format(ab, "auid=%u ses=%u op=",
+		audit_log_format(ab, "auid=%u ses=%u op=%s",
 				 from_kuid(&init_user_ns, audit_get_loginuid(current)),
-				 audit_get_sessionid(current));
-		audit_log_string(ab, op);
+				 audit_get_sessionid(current), op);
 		audit_log_format(ab, " path=");
 		audit_log_untrustedstring(ab, w->path);
 		audit_log_key(ab, r->filterkey);
@@ -471,10 +471,10 @@ static int audit_watch_handle_event(struct fsnotify_group *group,
 				    struct inode *to_tell,
 				    struct fsnotify_mark *inode_mark,
 				    struct fsnotify_mark *vfsmount_mark,
-				    u32 mask, void *data, int data_type,
+				    u32 mask, const void *data, int data_type,
 				    const unsigned char *dname, u32 cookie)
 {
-	struct inode *inode;
+	const struct inode *inode;
 	struct audit_parent *parent;
 
 	parent = container_of(inode_mark, struct audit_parent, mark);
@@ -483,10 +483,10 @@ static int audit_watch_handle_event(struct fsnotify_group *group,
 
 	switch (data_type) {
 	case (FSNOTIFY_EVENT_PATH):
-		inode = d_backing_inode(((struct path *)data)->dentry);
+		inode = d_backing_inode(((const struct path *)data)->dentry);
 		break;
 	case (FSNOTIFY_EVENT_INODE):
-		inode = (struct inode *)data;
+		inode = (const struct inode *)data;
 		break;
 	default:
 		BUG();
@@ -544,10 +544,11 @@ int audit_exe_compare(struct task_struct *tsk, struct audit_fsnotify_mark *mark)
 	unsigned long ino;
 	dev_t dev;
 
-	rcu_read_lock();
-	exe_file = rcu_dereference(tsk->mm->exe_file);
-	ino = exe_file->f_inode->i_ino;
-	dev = exe_file->f_inode->i_sb->s_dev;
-	rcu_read_unlock();
+	exe_file = get_task_exe_file(tsk);
+	if (!exe_file)
+		return 0;
+	ino = file_inode(exe_file)->i_ino;
+	dev = file_inode(exe_file)->i_sb->s_dev;
+	fput(exe_file);
 	return audit_mark_compare(mark, ino, dev);
 }

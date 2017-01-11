@@ -11,6 +11,7 @@
  * published by the Free Software Foundation.
  */
 
+#include <linux/acpi.h>
 #include <linux/bcd.h>
 #include <linux/i2c.h>
 #include <linux/init.h>
@@ -186,9 +187,30 @@ static const struct i2c_device_id ds1307_id[] = {
 	{ "mcp7941x", mcp794xx },
 	{ "pt7c4338", ds_1307 },
 	{ "rx8025", rx_8025 },
+	{ "isl12057", ds_1337 },
 	{ }
 };
 MODULE_DEVICE_TABLE(i2c, ds1307_id);
+
+#ifdef CONFIG_ACPI
+static const struct acpi_device_id ds1307_acpi_ids[] = {
+	{ .id = "DS1307", .driver_data = ds_1307 },
+	{ .id = "DS1337", .driver_data = ds_1337 },
+	{ .id = "DS1338", .driver_data = ds_1338 },
+	{ .id = "DS1339", .driver_data = ds_1339 },
+	{ .id = "DS1388", .driver_data = ds_1388 },
+	{ .id = "DS1340", .driver_data = ds_1340 },
+	{ .id = "DS3231", .driver_data = ds_3231 },
+	{ .id = "M41T00", .driver_data = m41t00 },
+	{ .id = "MCP7940X", .driver_data = mcp794xx },
+	{ .id = "MCP7941X", .driver_data = mcp794xx },
+	{ .id = "PT7C4338", .driver_data = ds_1307 },
+	{ .id = "RX8025", .driver_data = rx_8025 },
+	{ .id = "ISL12057", .driver_data = ds_1337 },
+	{ }
+};
+MODULE_DEVICE_TABLE(acpi, ds1307_acpi_ids);
+#endif
 
 /*----------------------------------------------------------------------*/
 
@@ -382,9 +404,24 @@ static int ds1307_get_time(struct device *dev, struct rtc_time *t)
 	t->tm_mday = bcd2bin(ds1307->regs[DS1307_REG_MDAY] & 0x3f);
 	tmp = ds1307->regs[DS1307_REG_MONTH] & 0x1f;
 	t->tm_mon = bcd2bin(tmp) - 1;
-
-	/* assume 20YY not 19YY, and ignore DS1337_BIT_CENTURY */
 	t->tm_year = bcd2bin(ds1307->regs[DS1307_REG_YEAR]) + 100;
+
+#ifdef CONFIG_RTC_DRV_DS1307_CENTURY
+	switch (ds1307->type) {
+	case ds_1337:
+	case ds_1339:
+	case ds_3231:
+		if (ds1307->regs[DS1307_REG_MONTH] & DS1337_BIT_CENTURY)
+			t->tm_year += 100;
+		break;
+	case ds_1340:
+		if (ds1307->regs[DS1307_REG_HOUR] & DS1340_BIT_CENTURY)
+			t->tm_year += 100;
+		break;
+	default:
+		break;
+	}
+#endif
 
 	dev_dbg(dev, "%s secs=%d, mins=%d, "
 		"hours=%d, mday=%d, mon=%d, year=%d, wday=%d\n",
@@ -409,6 +446,27 @@ static int ds1307_set_time(struct device *dev, struct rtc_time *t)
 		t->tm_hour, t->tm_mday,
 		t->tm_mon, t->tm_year, t->tm_wday);
 
+#ifdef CONFIG_RTC_DRV_DS1307_CENTURY
+	if (t->tm_year < 100)
+		return -EINVAL;
+
+	switch (ds1307->type) {
+	case ds_1337:
+	case ds_1339:
+	case ds_3231:
+	case ds_1340:
+		if (t->tm_year > 299)
+			return -EINVAL;
+	default:
+		if (t->tm_year > 199)
+			return -EINVAL;
+		break;
+	}
+#else
+	if (t->tm_year < 100 || t->tm_year > 199)
+		return -EINVAL;
+#endif
+
 	buf[DS1307_REG_SECS] = bin2bcd(t->tm_sec);
 	buf[DS1307_REG_MIN] = bin2bcd(t->tm_min);
 	buf[DS1307_REG_HOUR] = bin2bcd(t->tm_hour);
@@ -424,11 +482,13 @@ static int ds1307_set_time(struct device *dev, struct rtc_time *t)
 	case ds_1337:
 	case ds_1339:
 	case ds_3231:
-		buf[DS1307_REG_MONTH] |= DS1337_BIT_CENTURY;
+		if (t->tm_year > 199)
+			buf[DS1307_REG_MONTH] |= DS1337_BIT_CENTURY;
 		break;
 	case ds_1340:
-		buf[DS1307_REG_HOUR] |= DS1340_BIT_CENTURY_EN
-				| DS1340_BIT_CENTURY;
+		buf[DS1307_REG_HOUR] |= DS1340_BIT_CENTURY_EN;
+		if (t->tm_year > 199)
+			buf[DS1307_REG_HOUR] |= DS1340_BIT_CENTURY;
 		break;
 	case mcp794xx:
 		/*
@@ -482,11 +542,6 @@ static int ds1337_read_alarm(struct device *dev, struct rtc_wkalrm *t)
 	t->time.tm_min = bcd2bin(ds1307->regs[1] & 0x7f);
 	t->time.tm_hour = bcd2bin(ds1307->regs[2] & 0x3f);
 	t->time.tm_mday = bcd2bin(ds1307->regs[3] & 0x3f);
-	t->time.tm_mon = -1;
-	t->time.tm_year = -1;
-	t->time.tm_wday = -1;
-	t->time.tm_yday = -1;
-	t->time.tm_isdst = -1;
 
 	/* ... and status */
 	t->enabled = !!(ds1307->regs[7] & DS1337_BIT_A1IE);
@@ -602,6 +657,8 @@ static const struct rtc_class_ops ds13xx_rtc_ops = {
  * Alarm support for mcp794xx devices.
  */
 
+#define MCP794XX_REG_WEEKDAY		0x3
+#define MCP794XX_REG_WEEKDAY_WDAY_MASK	0x7
 #define MCP794XX_REG_CONTROL		0x07
 #	define MCP794XX_BIT_ALM0_EN	0x10
 #	define MCP794XX_BIT_ALM1_EN	0x20
@@ -838,17 +895,17 @@ static u8 do_trickle_setup_ds1339(struct i2c_client *client,
 	return setup;
 }
 
-static void ds1307_trickle_of_init(struct i2c_client *client,
-				   struct chip_desc *chip)
+static void ds1307_trickle_init(struct i2c_client *client,
+				struct chip_desc *chip)
 {
 	uint32_t ohms = 0;
 	bool diode = true;
 
 	if (!chip->do_trickle_setup)
 		goto out;
-	if (of_property_read_u32(client->dev.of_node, "trickle-resistor-ohms" , &ohms))
+	if (device_property_read_u32(&client->dev, "trickle-resistor-ohms", &ohms))
 		goto out;
-	if (of_property_read_bool(client->dev.of_node, "trickle-diode-disable"))
+	if (device_property_read_bool(&client->dev, "trickle-diode-disable"))
 		diode = false;
 	chip->trickle_charger_setup = chip->do_trickle_setup(client,
 							     ohms, diode);
@@ -1231,13 +1288,16 @@ static int ds1307_probe(struct i2c_client *client,
 {
 	struct ds1307		*ds1307;
 	int			err = -ENODEV;
-	int			tmp;
-	struct chip_desc	*chip = &chips[id->driver_data];
+	int			tmp, wday;
+	struct chip_desc	*chip;
 	struct i2c_adapter	*adapter = to_i2c_adapter(client->dev.parent);
 	bool			want_irq = false;
 	bool			ds1307_can_wakeup_device = false;
 	unsigned char		*buf;
 	struct ds1307_platform_data *pdata = dev_get_platdata(&client->dev);
+	struct rtc_time		tm;
+	unsigned long		timestamp;
+
 	irq_handler_t	irq_handler = ds1307_irq;
 
 	static const int	bbsqi_bitpos[] = {
@@ -1258,11 +1318,23 @@ static int ds1307_probe(struct i2c_client *client,
 	i2c_set_clientdata(client, ds1307);
 
 	ds1307->client	= client;
-	ds1307->type	= id->driver_data;
+	if (id) {
+		chip = &chips[id->driver_data];
+		ds1307->type = id->driver_data;
+	} else {
+		const struct acpi_device_id *acpi_id;
 
-	if (!pdata && client->dev.of_node)
-		ds1307_trickle_of_init(client, chip);
-	else if (pdata && pdata->trickle_charger_setup)
+		acpi_id = acpi_match_device(ACPI_PTR(ds1307_acpi_ids),
+					    &client->dev);
+		if (!acpi_id)
+			return -ENODEV;
+		chip = &chips[acpi_id->driver_data];
+		ds1307->type = acpi_id->driver_data;
+	}
+
+	if (!pdata)
+		ds1307_trickle_init(client, chip);
+	else if (pdata->trickle_charger_setup)
 		chip->trickle_charger_setup = pdata->trickle_charger_setup;
 
 	if (chip->trickle_charger_setup && chip->trickle_charger_reg) {
@@ -1293,6 +1365,11 @@ static int ds1307_probe(struct i2c_client *client,
  * if supported by the RTC.
  */
 	if (of_property_read_bool(client->dev.of_node, "wakeup-source")) {
+		ds1307_can_wakeup_device = true;
+	}
+	/* Intersil ISL12057 DT backward compatibility */
+	if (of_property_read_bool(client->dev.of_node,
+				  "isil,irq2-can-wakeup-machine")) {
 		ds1307_can_wakeup_device = true;
 	}
 #endif
@@ -1526,6 +1603,27 @@ read_rtc:
 				bin2bcd(tmp));
 	}
 
+	/*
+	 * Some IPs have weekday reset value = 0x1 which might not correct
+	 * hence compute the wday using the current date/month/year values
+	 */
+	ds1307_get_time(&client->dev, &tm);
+	wday = tm.tm_wday;
+	timestamp = rtc_tm_to_time64(&tm);
+	rtc_time64_to_tm(timestamp, &tm);
+
+	/*
+	 * Check if reset wday is different from the computed wday
+	 * If different then set the wday which we computed using
+	 * timestamp
+	 */
+	if (wday != tm.tm_wday) {
+		wday = i2c_smbus_read_byte_data(client, MCP794XX_REG_WEEKDAY);
+		wday = wday & ~MCP794XX_REG_WEEKDAY_WDAY_MASK;
+		wday = wday | (tm.tm_wday + 1);
+		i2c_smbus_write_byte_data(client, MCP794XX_REG_WEEKDAY, wday);
+	}
+
 	if (want_irq) {
 		device_set_wakeup_capable(&client->dev, true);
 		set_bit(HAS_ALARM, &ds1307->flags);
@@ -1613,6 +1711,7 @@ static int ds1307_remove(struct i2c_client *client)
 static struct i2c_driver ds1307_driver = {
 	.driver = {
 		.name	= "rtc-ds1307",
+		.acpi_match_table = ACPI_PTR(ds1307_acpi_ids),
 	},
 	.probe		= ds1307_probe,
 	.remove		= ds1307_remove,

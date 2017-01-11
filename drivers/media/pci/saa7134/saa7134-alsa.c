@@ -813,8 +813,7 @@ static int snd_card_saa7134_capture_open(struct snd_pcm_substream * substream)
 	int amux, err;
 
 	if (!saa7134) {
-		pr_err("BUG: saa7134 can't find device struct."
-				" Can't proceed with open\n");
+		pr_err("BUG: saa7134 can't find device struct. Can't proceed with open\n");
 		return -ENODEV;
 	}
 	dev = saa7134->dev;
@@ -877,7 +876,7 @@ static struct page *snd_card_saa7134_page(struct snd_pcm_substream *substream,
  * ALSA capture callbacks definition
  */
 
-static struct snd_pcm_ops snd_card_saa7134_capture_ops = {
+static const struct snd_pcm_ops snd_card_saa7134_capture_ops = {
 	.open =			snd_card_saa7134_capture_open,
 	.close =		snd_card_saa7134_capture_close,
 	.ioctl =		snd_pcm_lib_ioctl,

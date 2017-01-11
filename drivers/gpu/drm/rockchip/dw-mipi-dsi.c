@@ -964,25 +964,10 @@ static enum drm_mode_status dw_mipi_dsi_mode_valid(
 	return mode_status;
 }
 
-static struct drm_encoder *dw_mipi_dsi_connector_best_encoder(
-					struct drm_connector *connector)
-{
-	struct dw_mipi_dsi *dsi = con_to_dsi(connector);
-
-	return &dsi->encoder;
-}
-
 static struct drm_connector_helper_funcs dw_mipi_dsi_connector_helper_funcs = {
 	.get_modes = dw_mipi_dsi_connector_get_modes,
 	.mode_valid = dw_mipi_dsi_mode_valid,
-	.best_encoder = dw_mipi_dsi_connector_best_encoder,
 };
-
-static enum drm_connector_status
-dw_mipi_dsi_detect(struct drm_connector *connector, bool force)
-{
-	return connector_status_connected;
-}
 
 static void dw_mipi_dsi_drm_connector_destroy(struct drm_connector *connector)
 {
@@ -993,7 +978,6 @@ static void dw_mipi_dsi_drm_connector_destroy(struct drm_connector *connector)
 static struct drm_connector_funcs dw_mipi_dsi_atomic_connector_funcs = {
 	.dpms = drm_atomic_helper_connector_dpms,
 	.fill_modes = drm_helper_probe_single_connector_modes,
-	.detect = dw_mipi_dsi_detect,
 	.destroy = dw_mipi_dsi_drm_connector_destroy,
 	.reset = drm_atomic_helper_connector_reset,
 	.atomic_duplicate_state = drm_atomic_helper_connector_duplicate_state,

@@ -1252,7 +1252,7 @@ static int mos7720_write(struct tty_struct *tty, struct usb_serial_port *port,
 
 	if (urb->transfer_buffer == NULL) {
 		urb->transfer_buffer = kmalloc(URB_TRANSFER_BUFFER_SIZE,
-					       GFP_KERNEL);
+					       GFP_ATOMIC);
 		if (!urb->transfer_buffer)
 			goto exit;
 	}
@@ -1861,9 +1861,6 @@ static int get_serial_info(struct moschip_port *mos7720_port,
 {
 	struct serial_struct tmp;
 
-	if (!retinfo)
-		return -EFAULT;
-
 	memset(&tmp, 0, sizeof(tmp));
 
 	tmp.type		= PORT_16550A;
@@ -2007,6 +2004,7 @@ static void mos7720_release(struct usb_serial *serial)
 				    urblist_entry)
 			usb_unlink_urb(urbtrack->urb);
 		spin_unlock_irqrestore(&mos_parport->listlock, flags);
+		parport_del_port(mos_parport->pp);
 
 		kref_put(&mos_parport->ref_count, destroy_mos_parport);
 	}

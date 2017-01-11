@@ -29,7 +29,7 @@
 #include <linux/mfd/syscon.h>
 #include <linux/regmap.h>
 
-#include <video/omapdss.h>
+#include <linux/platform_data/omapdss.h>
 #include "omap_hwmod.h"
 #include "omap_device.h"
 #include "omap-pm.h"
@@ -563,11 +563,6 @@ int omap_dss_reset(struct omap_hwmod *oh)
 	r = (c == MAX_MODULE_SOFTRESET_WAIT) ? -ETIMEDOUT : 0;
 
 	return r;
-}
-
-void __init omapdss_early_init_of(void)
-{
-
 }
 
 static const char * const omapdss_compat_names[] __initconst = {

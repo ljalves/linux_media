@@ -210,10 +210,8 @@ static int psb_driver_unload(struct drm_device *dev)
 			iounmap(dev_priv->aux_reg);
 			dev_priv->aux_reg = NULL;
 		}
-		if (dev_priv->aux_pdev)
-			pci_dev_put(dev_priv->aux_pdev);
-		if (dev_priv->lpc_pdev)
-			pci_dev_put(dev_priv->lpc_pdev);
+		pci_dev_put(dev_priv->aux_pdev);
+		pci_dev_put(dev_priv->lpc_pdev);
 
 		/* Destroy VBT data */
 		psb_intel_destroy_bios(dev);
@@ -475,6 +473,7 @@ static const struct file_operations psb_gem_fops = {
 	.open = drm_open,
 	.release = drm_release,
 	.unlocked_ioctl = psb_unlocked_ioctl,
+	.compat_ioctl = drm_compat_ioctl,
 	.mmap = drm_gem_mmap,
 	.poll = drm_poll,
 	.read = drm_read,

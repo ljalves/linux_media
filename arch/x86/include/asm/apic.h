@@ -11,7 +11,6 @@
 #include <asm/fixmap.h>
 #include <asm/mpspec.h>
 #include <asm/msr.h>
-#include <asm/idle.h>
 
 #define ARCH_APICTIMER_STOPS_ON_C3	1
 
@@ -135,6 +134,7 @@ extern void init_apic_mappings(void);
 void register_lapic_address(unsigned long address);
 extern void setup_boot_APIC_clock(void);
 extern void setup_secondary_APIC_clock(void);
+extern void lapic_update_tsc_freq(void);
 extern int APIC_init_uniprocessor(void);
 
 #ifdef CONFIG_X86_64
@@ -170,6 +170,7 @@ static inline void init_apic_mappings(void) { }
 static inline void disable_local_APIC(void) { }
 # define setup_boot_APIC_clock x86_init_noop
 # define setup_secondary_APIC_clock x86_init_noop
+static inline void lapic_update_tsc_freq(void) { }
 #endif /* !CONFIG_X86_LOCAL_APIC */
 
 #ifdef CONFIG_X86_X2APIC
@@ -194,7 +195,7 @@ static inline void native_apic_msr_write(u32 reg, u32 v)
 
 static inline void native_apic_msr_eoi_write(u32 reg, u32 v)
 {
-	wrmsr(APIC_BASE_MSR + (APIC_EOI >> 4), APIC_EOI_ACK, 0);
+	wrmsr_notrace(APIC_BASE_MSR + (APIC_EOI >> 4), APIC_EOI_ACK, 0);
 }
 
 static inline u32 native_apic_msr_read(u32 reg)
@@ -300,7 +301,6 @@ struct apic {
 
 	unsigned int (*get_apic_id)(unsigned long x);
 	unsigned long (*set_apic_id)(unsigned int id);
-	unsigned long apic_id_mask;
 
 	int (*cpu_mask_to_apicid_and)(const struct cpumask *cpumask,
 				      const struct cpumask *andmask,
@@ -331,6 +331,7 @@ struct apic {
 	 * on write for EOI.
 	 */
 	void (*eoi_write)(u32 reg, u32 v);
+	void (*native_eoi_write)(u32 reg, u32 v);
 	u64 (*icr_read)(void);
 	void (*icr_write)(u32 low, u32 high);
 	void (*wait_icr_idle)(void);
@@ -638,7 +639,6 @@ extern void irq_exit(void);
 static inline void entering_irq(void)
 {
 	irq_enter();
-	exit_idle();
 }
 
 static inline void entering_ack_irq(void)
@@ -649,8 +649,8 @@ static inline void entering_ack_irq(void)
 
 static inline void ipi_entering_ack_irq(void)
 {
-	ack_APIC_irq();
 	irq_enter();
+	ack_APIC_irq();
 }
 
 static inline void exiting_irq(void)
@@ -660,9 +660,8 @@ static inline void exiting_irq(void)
 
 static inline void exiting_ack_irq(void)
 {
-	irq_exit();
-	/* Ack only at the end to avoid potential reentry */
 	ack_APIC_irq();
+	irq_exit();
 }
 
 extern void ioapic_zap_locks(void);

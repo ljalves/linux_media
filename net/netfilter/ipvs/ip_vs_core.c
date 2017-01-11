@@ -70,7 +70,7 @@ EXPORT_SYMBOL(ip_vs_get_debug_level);
 #endif
 EXPORT_SYMBOL(ip_vs_new_conn_out);
 
-static int ip_vs_net_id __read_mostly;
+static unsigned int ip_vs_net_id __read_mostly;
 /* netns cnt used for uniqueness */
 static atomic_t ipvs_netns_cnt = ATOMIC_INIT(0);
 
@@ -321,7 +321,7 @@ ip_vs_sched_persist(struct ip_vs_service *svc,
 
 	/* Check if a template already exists */
 	ct = ip_vs_ct_in_get(&param);
-	if (!ct || !ip_vs_check_template(ct)) {
+	if (!ct || !ip_vs_check_template(ct, NULL)) {
 		struct ip_vs_scheduler *sched;
 
 		/*
@@ -1154,7 +1154,8 @@ struct ip_vs_conn *ip_vs_new_conn_out(struct ip_vs_service *svc,
 						  vport, &param) < 0)
 			return NULL;
 		ct = ip_vs_ct_in_get(&param);
-		if (!ct) {
+		/* check if template exists and points to the same dest */
+		if (!ct || !ip_vs_check_template(ct, dest)) {
 			ct = ip_vs_conn_new(&param, dest->af, daddr, dport,
 					    IP_VS_CONN_F_TEMPLATE, dest, 0);
 			if (!ct) {

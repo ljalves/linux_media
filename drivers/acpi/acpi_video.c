@@ -37,23 +37,12 @@
 #include <linux/suspend.h>
 #include <linux/acpi.h>
 #include <acpi/video.h>
-#include <asm/uaccess.h>
+#include <linux/uaccess.h>
 
 #define PREFIX "ACPI: "
 
 #define ACPI_VIDEO_BUS_NAME		"Video Bus"
 #define ACPI_VIDEO_DEVICE_NAME		"Video Device"
-#define ACPI_VIDEO_NOTIFY_SWITCH	0x80
-#define ACPI_VIDEO_NOTIFY_PROBE		0x81
-#define ACPI_VIDEO_NOTIFY_CYCLE		0x82
-#define ACPI_VIDEO_NOTIFY_NEXT_OUTPUT	0x83
-#define ACPI_VIDEO_NOTIFY_PREV_OUTPUT	0x84
-
-#define ACPI_VIDEO_NOTIFY_CYCLE_BRIGHTNESS	0x85
-#define	ACPI_VIDEO_NOTIFY_INC_BRIGHTNESS	0x86
-#define ACPI_VIDEO_NOTIFY_DEC_BRIGHTNESS	0x87
-#define ACPI_VIDEO_NOTIFY_ZERO_BRIGHTNESS	0x88
-#define ACPI_VIDEO_NOTIFY_DISPLAY_OFF		0x89
 
 #define MAX_NAME_LEN	20
 
@@ -754,7 +743,8 @@ static int acpi_video_bqc_quirk(struct acpi_video_device *device,
 }
 
 int acpi_video_get_levels(struct acpi_device *device,
-			  struct acpi_video_device_brightness **dev_br)
+			  struct acpi_video_device_brightness **dev_br,
+			  int *pmax_level)
 {
 	union acpi_object *obj = NULL;
 	int i, max_level = 0, count = 0, level_ac_battery = 0;
@@ -841,6 +831,8 @@ int acpi_video_get_levels(struct acpi_device *device,
 
 	br->count = count;
 	*dev_br = br;
+	if (pmax_level)
+		*pmax_level = max_level;
 
 out:
 	kfree(obj);
@@ -869,7 +861,7 @@ acpi_video_init_brightness(struct acpi_video_device *device)
 	struct acpi_video_device_brightness *br = NULL;
 	int result = -EINVAL;
 
-	result = acpi_video_get_levels(device->dev, &br);
+	result = acpi_video_get_levels(device->dev, &br, &max_level);
 	if (result)
 		return result;
 	device->brightness = br;
@@ -1242,6 +1234,9 @@ static int acpi_video_device_enumerate(struct acpi_video_bus *video)
 	struct acpi_buffer buffer = { ACPI_ALLOCATE_BUFFER, NULL };
 	union acpi_object *dod = NULL;
 	union acpi_object *obj;
+
+	if (!video->cap._DOD)
+		return AE_NOT_EXIST;
 
 	status = acpi_evaluate_object(video->device->handle, "_DOD", NULL, &buffer);
 	if (!ACPI_SUCCESS(status)) {
@@ -1737,7 +1732,7 @@ static void acpi_video_run_bcl_for_osi(struct acpi_video_bus *video)
 
 	mutex_lock(&video->device_list_lock);
 	list_for_each_entry(dev, &video->video_device_list, entry) {
-		if (!acpi_video_device_lcd_query_levels(dev, &levels))
+		if (!acpi_video_device_lcd_query_levels(dev->dev->handle, &levels))
 			kfree(levels);
 	}
 	mutex_unlock(&video->device_list_lock);

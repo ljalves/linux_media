@@ -24,6 +24,7 @@
 #include <drm/drm_fb_cma_helper.h>
 #include <drm/drm_atomic_helper.h>
 #include <drm/drm_crtc_helper.h>
+#include <drm/drm_of.h>
 
 #include "kirin_drm_drv.h"
 
@@ -151,9 +152,7 @@ static const struct file_operations kirin_drm_fops = {
 	.open		= drm_open,
 	.release	= drm_release,
 	.unlocked_ioctl	= drm_ioctl,
-#ifdef CONFIG_COMPAT
 	.compat_ioctl	= drm_compat_ioctl,
-#endif
 	.poll		= drm_poll,
 	.read		= drm_read,
 	.llseek		= no_llseek,
@@ -169,11 +168,10 @@ static int kirin_gem_cma_dumb_create(struct drm_file *file,
 
 static struct drm_driver kirin_drm_driver = {
 	.driver_features	= DRIVER_GEM | DRIVER_MODESET | DRIVER_PRIME |
-				  DRIVER_ATOMIC | DRIVER_HAVE_IRQ,
+				  DRIVER_ATOMIC,
 	.fops			= &kirin_drm_fops,
-	.set_busid		= drm_platform_set_busid,
 
-	.gem_free_object	= drm_gem_cma_free_object,
+	.gem_free_object_unlocked = drm_gem_cma_free_object,
 	.gem_vm_ops		= &drm_gem_cma_vm_ops,
 	.dumb_create		= kirin_gem_cma_dumb_create,
 	.dumb_map_offset	= drm_gem_cma_dumb_map_offset,
@@ -208,8 +206,8 @@ static int kirin_drm_bind(struct device *dev)
 	int ret;
 
 	drm_dev = drm_dev_alloc(driver, dev);
-	if (!drm_dev)
-		return -ENOMEM;
+	if (IS_ERR(drm_dev))
+		return PTR_ERR(drm_dev);
 
 	drm_dev->platformdev = to_platform_device(dev);
 
@@ -221,19 +219,12 @@ static int kirin_drm_bind(struct device *dev)
 	if (ret)
 		goto err_kms_cleanup;
 
-	/* connectors should be registered after drm device register */
-	ret = drm_connector_register_all(drm_dev);
-	if (ret)
-		goto err_drm_dev_unregister;
-
 	DRM_INFO("Initialized %s %d.%d.%d %s on minor %d\n",
 		 driver->name, driver->major, driver->minor, driver->patchlevel,
 		 driver->date, drm_dev->primary->index);
 
 	return 0;
 
-err_drm_dev_unregister:
-	drm_dev_unregister(drm_dev);
 err_kms_cleanup:
 	kirin_drm_kms_cleanup(drm_dev);
 err_drm_dev_unref:
@@ -246,7 +237,6 @@ static void kirin_drm_unbind(struct device *dev)
 {
 	struct drm_device *drm_dev = dev_get_drvdata(dev);
 
-	drm_connector_unregister_all(drm_dev);
 	drm_dev_unregister(drm_dev);
 	kirin_drm_kms_cleanup(drm_dev);
 	drm_dev_unref(drm_dev);
@@ -269,14 +259,13 @@ static struct device_node *kirin_get_remote_node(struct device_node *np)
 		DRM_ERROR("no valid endpoint node\n");
 		return ERR_PTR(-ENODEV);
 	}
-	of_node_put(endpoint);
 
 	remote = of_graph_get_remote_port_parent(endpoint);
+	of_node_put(endpoint);
 	if (!remote) {
 		DRM_ERROR("no valid remote node\n");
 		return ERR_PTR(-ENODEV);
 	}
-	of_node_put(remote);
 
 	if (!of_device_is_available(remote)) {
 		DRM_ERROR("not available for remote node\n");
@@ -303,7 +292,8 @@ static int kirin_drm_platform_probe(struct platform_device *pdev)
 	if (IS_ERR(remote))
 		return PTR_ERR(remote);
 
-	component_match_add(dev, &match, compare_of, remote);
+	drm_of_component_match_add(dev, &match, compare_of, remote);
+	of_node_put(remote);
 
 	return component_master_add_with_match(dev, &kirin_drm_ops, match);
 

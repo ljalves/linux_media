@@ -12,6 +12,8 @@
  *  GNU General Public License for more details.
  */
 
+#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
+
 #include <media/rc-core.h>
 #include <linux/atomic.h>
 #include <linux/spinlock.h>
@@ -66,7 +68,7 @@ struct rc_map *rc_map_get(const char *name)
 	if (!map) {
 		int rc = request_module("%s", name);
 		if (rc < 0) {
-			printk(KERN_ERR "Couldn't load IR keymap %s\n", name);
+			pr_err("Couldn't load IR keymap %s\n", name);
 			return NULL;
 		}
 		msleep(20);	/* Give some time for IR to register */
@@ -75,7 +77,7 @@ struct rc_map *rc_map_get(const char *name)
 	}
 #endif
 	if (!map) {
-		printk(KERN_ERR "IR keymap %s not found\n", name);
+		pr_err("IR keymap %s not found\n", name);
 		return NULL;
 	}
 
@@ -130,13 +132,18 @@ static struct rc_map_list empty_map = {
 static int ir_create_table(struct rc_map *rc_map,
 			   const char *name, u64 rc_type, size_t size)
 {
-	rc_map->name = name;
+	rc_map->name = kstrdup(name, GFP_KERNEL);
+	if (!rc_map->name)
+		return -ENOMEM;
 	rc_map->rc_type = rc_type;
 	rc_map->alloc = roundup_pow_of_two(size * sizeof(struct rc_map_table));
 	rc_map->size = rc_map->alloc / sizeof(struct rc_map_table);
 	rc_map->scan = kmalloc(rc_map->alloc, GFP_KERNEL);
-	if (!rc_map->scan)
+	if (!rc_map->scan) {
+		kfree(rc_map->name);
+		rc_map->name = NULL;
 		return -ENOMEM;
+	}
 
 	IR_dprintk(1, "Allocated space for %u keycode entries (%u bytes)\n",
 		   rc_map->size, rc_map->alloc);
@@ -153,6 +160,8 @@ static int ir_create_table(struct rc_map *rc_map,
 static void ir_free_table(struct rc_map *rc_map)
 {
 	rc_map->size = 0;
+	kfree(rc_map->name);
+	rc_map->name = NULL;
 	kfree(rc_map->scan);
 	rc_map->scan = NULL;
 }
@@ -654,8 +663,7 @@ static void ir_do_keydown(struct rc_dev *dev, enum rc_type protocol,
 		dev->last_toggle = toggle;
 		dev->last_keycode = keycode;
 
-		IR_dprintk(1, "%s: key down event, "
-			   "key 0x%04x, protocol 0x%04x, scancode 0x%08x\n",
+		IR_dprintk(1, "%s: key down event, key 0x%04x, protocol 0x%04x, scancode 0x%08x\n",
 			   dev->input_name, keycode, protocol, scancode);
 		input_report_key(dev->input_dev, keycode, 1);
 
@@ -789,7 +797,9 @@ static const struct {
 	{ RC_BIT_UNKNOWN,	"unknown",	NULL			},
 	{ RC_BIT_RC5 |
 	  RC_BIT_RC5X,		"rc-5",		"ir-rc5-decoder"	},
-	{ RC_BIT_NEC,		"nec",		"ir-nec-decoder"	},
+	{ RC_BIT_NEC |
+	  RC_BIT_NECX |
+	  RC_BIT_NEC32,		"nec",		"ir-nec-decoder"	},
 	{ RC_BIT_RC6_0 |
 	  RC_BIT_RC6_6A_20 |
 	  RC_BIT_RC6_6A_24 |
@@ -804,6 +814,7 @@ static const struct {
 	{ RC_BIT_SHARP,		"sharp",	"ir-sharp-decoder"	},
 	{ RC_BIT_MCE_KBD,	"mce_kbd",	"ir-mce_kbd-decoder"	},
 	{ RC_BIT_XMP,		"xmp",		"ir-xmp-decoder"	},
+	{ RC_BIT_CEC,		"cec",		NULL			},
 };
 
 /**
@@ -1394,6 +1405,34 @@ void rc_free_device(struct rc_dev *dev)
 }
 EXPORT_SYMBOL_GPL(rc_free_device);
 
+static void devm_rc_alloc_release(struct device *dev, void *res)
+{
+	rc_free_device(*(struct rc_dev **)res);
+}
+
+struct rc_dev *devm_rc_allocate_device(struct device *dev)
+{
+	struct rc_dev **dr, *rc;
+
+	dr = devres_alloc(devm_rc_alloc_release, sizeof(*dr), GFP_KERNEL);
+	if (!dr)
+		return NULL;
+
+	rc = rc_allocate_device();
+	if (!rc) {
+		devres_free(dr);
+		return NULL;
+	}
+
+	rc->dev.parent = dev;
+	rc->managed_alloc = true;
+	*dr = rc;
+	devres_add(dev, dr);
+
+	return rc;
+}
+EXPORT_SYMBOL_GPL(devm_rc_allocate_device);
+
 int rc_register_device(struct rc_dev *dev)
 {
 	static bool raw_init = false; /* raw decoders loaded? */
@@ -1453,6 +1492,10 @@ int rc_register_device(struct rc_dev *dev)
 	dev->input_dev->phys = dev->input_phys;
 	dev->input_dev->name = dev->input_name;
 
+	rc = input_register_device(dev->input_dev);
+	if (rc)
+		goto out_table;
+
 	/*
 	 * Default delay of 250ms is too short for some protocols, especially
 	 * since the timeout is currently set to 250ms. Increase it to 500ms,
@@ -1467,11 +1510,6 @@ int rc_register_device(struct rc_dev *dev)
 	 * to do.
 	 */
 	dev->input_dev->rep[REP_PERIOD] = 125;
-
-	/* rc_open will be called here */
-	rc = input_register_device(dev->input_dev);
-	if (rc)
-		goto out_table;
 
 	path = kobject_get_path(&dev->dev.kobj, GFP_KERNEL);
 	dev_info(&dev->dev, "%s as %s\n",
@@ -1523,6 +1561,33 @@ out_unlock:
 }
 EXPORT_SYMBOL_GPL(rc_register_device);
 
+static void devm_rc_release(struct device *dev, void *res)
+{
+	rc_unregister_device(*(struct rc_dev **)res);
+}
+
+int devm_rc_register_device(struct device *parent, struct rc_dev *dev)
+{
+	struct rc_dev **dr;
+	int ret;
+
+	dr = devres_alloc(devm_rc_release, sizeof(*dr), GFP_KERNEL);
+	if (!dr)
+		return -ENOMEM;
+
+	ret = rc_register_device(dev);
+	if (ret) {
+		devres_free(dr);
+		return ret;
+	}
+
+	*dr = dev;
+	devres_add(parent, dr);
+
+	return 0;
+}
+EXPORT_SYMBOL_GPL(devm_rc_register_device);
+
 void rc_unregister_device(struct rc_dev *dev)
 {
 	if (!dev)
@@ -1544,7 +1609,8 @@ void rc_unregister_device(struct rc_dev *dev)
 
 	ida_simple_remove(&rc_ida, dev->minor);
 
-	rc_free_device(dev);
+	if (!dev->managed_alloc)
+		rc_free_device(dev);
 }
 
 EXPORT_SYMBOL_GPL(rc_unregister_device);
@@ -1557,7 +1623,7 @@ static int __init rc_core_init(void)
 {
 	int rc = class_register(&rc_class);
 	if (rc) {
-		printk(KERN_ERR "rc_core: unable to register rc class\n");
+		pr_err("rc_core: unable to register rc class\n");
 		return rc;
 	}
 

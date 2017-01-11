@@ -80,6 +80,9 @@ static const char * const iio_chan_type_name_spec[] = {
 	[IIO_RESISTANCE] = "resistance",
 	[IIO_PH] = "ph",
 	[IIO_UVINDEX] = "uvindex",
+	[IIO_ELECTRICALCONDUCTIVITY] = "electricalconductivity",
+	[IIO_COUNT] = "count",
+	[IIO_INDEX] = "index",
 };
 
 static const char * const iio_modifier_names[] = {
@@ -176,6 +179,86 @@ ssize_t iio_read_const_attr(struct device *dev,
 	return sprintf(buf, "%s\n", to_iio_const_attr(attr)->string);
 }
 EXPORT_SYMBOL(iio_read_const_attr);
+
+static int iio_device_set_clock(struct iio_dev *indio_dev, clockid_t clock_id)
+{
+	int ret;
+	const struct iio_event_interface *ev_int = indio_dev->event_interface;
+
+	ret = mutex_lock_interruptible(&indio_dev->mlock);
+	if (ret)
+		return ret;
+	if ((ev_int && iio_event_enabled(ev_int)) ||
+	    iio_buffer_enabled(indio_dev)) {
+		mutex_unlock(&indio_dev->mlock);
+		return -EBUSY;
+	}
+	indio_dev->clock_id = clock_id;
+	mutex_unlock(&indio_dev->mlock);
+
+	return 0;
+}
+
+/**
+ * iio_get_time_ns() - utility function to get a time stamp for events etc
+ * @indio_dev: device
+ */
+s64 iio_get_time_ns(const struct iio_dev *indio_dev)
+{
+	struct timespec tp;
+
+	switch (iio_device_get_clock(indio_dev)) {
+	case CLOCK_REALTIME:
+		ktime_get_real_ts(&tp);
+		break;
+	case CLOCK_MONOTONIC:
+		ktime_get_ts(&tp);
+		break;
+	case CLOCK_MONOTONIC_RAW:
+		getrawmonotonic(&tp);
+		break;
+	case CLOCK_REALTIME_COARSE:
+		tp = current_kernel_time();
+		break;
+	case CLOCK_MONOTONIC_COARSE:
+		tp = get_monotonic_coarse();
+		break;
+	case CLOCK_BOOTTIME:
+		get_monotonic_boottime(&tp);
+		break;
+	case CLOCK_TAI:
+		timekeeping_clocktai(&tp);
+		break;
+	default:
+		BUG();
+	}
+
+	return timespec_to_ns(&tp);
+}
+EXPORT_SYMBOL(iio_get_time_ns);
+
+/**
+ * iio_get_time_res() - utility function to get time stamp clock resolution in
+ *                      nano seconds.
+ * @indio_dev: device
+ */
+unsigned int iio_get_time_res(const struct iio_dev *indio_dev)
+{
+	switch (iio_device_get_clock(indio_dev)) {
+	case CLOCK_REALTIME:
+	case CLOCK_MONOTONIC:
+	case CLOCK_MONOTONIC_RAW:
+	case CLOCK_BOOTTIME:
+	case CLOCK_TAI:
+		return hrtimer_resolution;
+	case CLOCK_REALTIME_COARSE:
+	case CLOCK_MONOTONIC_COARSE:
+		return LOW_RES_NSEC;
+	default:
+		BUG();
+	}
+}
+EXPORT_SYMBOL(iio_get_time_res);
 
 static int __init iio_init(void)
 {
@@ -494,9 +577,62 @@ int of_iio_read_mount_matrix(const struct device *dev,
 #endif
 EXPORT_SYMBOL(of_iio_read_mount_matrix);
 
+static ssize_t __iio_format_value(char *buf, size_t len, unsigned int type,
+				  int size, const int *vals)
+{
+	unsigned long long tmp;
+	int tmp0, tmp1;
+	bool scale_db = false;
+
+	switch (type) {
+	case IIO_VAL_INT:
+		return snprintf(buf, len, "%d", vals[0]);
+	case IIO_VAL_INT_PLUS_MICRO_DB:
+		scale_db = true;
+	case IIO_VAL_INT_PLUS_MICRO:
+		if (vals[1] < 0)
+			return snprintf(buf, len, "-%d.%06u%s", abs(vals[0]),
+					-vals[1], scale_db ? " dB" : "");
+		else
+			return snprintf(buf, len, "%d.%06u%s", vals[0], vals[1],
+					scale_db ? " dB" : "");
+	case IIO_VAL_INT_PLUS_NANO:
+		if (vals[1] < 0)
+			return snprintf(buf, len, "-%d.%09u", abs(vals[0]),
+					-vals[1]);
+		else
+			return snprintf(buf, len, "%d.%09u", vals[0], vals[1]);
+	case IIO_VAL_FRACTIONAL:
+		tmp = div_s64((s64)vals[0] * 1000000000LL, vals[1]);
+		tmp1 = vals[1];
+		tmp0 = (int)div_s64_rem(tmp, 1000000000, &tmp1);
+		return snprintf(buf, len, "%d.%09u", tmp0, abs(tmp1));
+	case IIO_VAL_FRACTIONAL_LOG2:
+		tmp = (s64)vals[0] * 1000000000LL >> vals[1];
+		tmp1 = do_div(tmp, 1000000000LL);
+		tmp0 = tmp;
+		return snprintf(buf, len, "%d.%09u", tmp0, tmp1);
+	case IIO_VAL_INT_MULTIPLE:
+	{
+		int i;
+		int l = 0;
+
+		for (i = 0; i < size; ++i) {
+			l += snprintf(&buf[l], len - l, "%d ", vals[i]);
+			if (l >= len)
+				break;
+		}
+		return l;
+	}
+	default:
+		return 0;
+	}
+}
+
 /**
  * iio_format_value() - Formats a IIO value into its string representation
  * @buf:	The buffer to which the formatted value gets written
+ *		which is assumed to be big enough (i.e. PAGE_SIZE).
  * @type:	One of the IIO_VAL_... constants. This decides how the val
  *		and val2 parameters are formatted.
  * @size:	Number of IIO value entries contained in vals
@@ -509,51 +645,13 @@ EXPORT_SYMBOL(of_iio_read_mount_matrix);
  */
 ssize_t iio_format_value(char *buf, unsigned int type, int size, int *vals)
 {
-	unsigned long long tmp;
-	bool scale_db = false;
+	ssize_t len;
 
-	switch (type) {
-	case IIO_VAL_INT:
-		return sprintf(buf, "%d\n", vals[0]);
-	case IIO_VAL_INT_PLUS_MICRO_DB:
-		scale_db = true;
-	case IIO_VAL_INT_PLUS_MICRO:
-		if (vals[1] < 0)
-			return sprintf(buf, "-%d.%06u%s\n", abs(vals[0]),
-				       -vals[1], scale_db ? " dB" : "");
-		else
-			return sprintf(buf, "%d.%06u%s\n", vals[0], vals[1],
-				scale_db ? " dB" : "");
-	case IIO_VAL_INT_PLUS_NANO:
-		if (vals[1] < 0)
-			return sprintf(buf, "-%d.%09u\n", abs(vals[0]),
-				       -vals[1]);
-		else
-			return sprintf(buf, "%d.%09u\n", vals[0], vals[1]);
-	case IIO_VAL_FRACTIONAL:
-		tmp = div_s64((s64)vals[0] * 1000000000LL, vals[1]);
-		vals[1] = do_div(tmp, 1000000000LL);
-		vals[0] = tmp;
-		return sprintf(buf, "%d.%09u\n", vals[0], vals[1]);
-	case IIO_VAL_FRACTIONAL_LOG2:
-		tmp = (s64)vals[0] * 1000000000LL >> vals[1];
-		vals[1] = do_div(tmp, 1000000000LL);
-		vals[0] = tmp;
-		return sprintf(buf, "%d.%09u\n", vals[0], vals[1]);
-	case IIO_VAL_INT_MULTIPLE:
-	{
-		int i;
-		int len = 0;
+	len = __iio_format_value(buf, PAGE_SIZE, type, size, vals);
+	if (len >= PAGE_SIZE - 1)
+		return -EFBIG;
 
-		for (i = 0; i < size; ++i)
-			len += snprintf(&buf[len], PAGE_SIZE - len, "%d ",
-								vals[i]);
-		len += snprintf(&buf[len], PAGE_SIZE - len, "\n");
-		return len;
-	}
-	default:
-		return 0;
-	}
+	return len + sprintf(buf + len, "\n");
 }
 EXPORT_SYMBOL_GPL(iio_format_value);
 
@@ -580,6 +678,119 @@ static ssize_t iio_read_channel_info(struct device *dev,
 		return ret;
 
 	return iio_format_value(buf, ret, val_len, vals);
+}
+
+static ssize_t iio_format_avail_list(char *buf, const int *vals,
+				     int type, int length)
+{
+	int i;
+	ssize_t len = 0;
+
+	switch (type) {
+	case IIO_VAL_INT:
+		for (i = 0; i < length; i++) {
+			len += __iio_format_value(buf + len, PAGE_SIZE - len,
+						  type, 1, &vals[i]);
+			if (len >= PAGE_SIZE)
+				return -EFBIG;
+			if (i < length - 1)
+				len += snprintf(buf + len, PAGE_SIZE - len,
+						" ");
+			else
+				len += snprintf(buf + len, PAGE_SIZE - len,
+						"\n");
+			if (len >= PAGE_SIZE)
+				return -EFBIG;
+		}
+		break;
+	default:
+		for (i = 0; i < length / 2; i++) {
+			len += __iio_format_value(buf + len, PAGE_SIZE - len,
+						  type, 2, &vals[i * 2]);
+			if (len >= PAGE_SIZE)
+				return -EFBIG;
+			if (i < length / 2 - 1)
+				len += snprintf(buf + len, PAGE_SIZE - len,
+						" ");
+			else
+				len += snprintf(buf + len, PAGE_SIZE - len,
+						"\n");
+			if (len >= PAGE_SIZE)
+				return -EFBIG;
+		}
+	}
+
+	return len;
+}
+
+static ssize_t iio_format_avail_range(char *buf, const int *vals, int type)
+{
+	int i;
+	ssize_t len;
+
+	len = snprintf(buf, PAGE_SIZE, "[");
+	switch (type) {
+	case IIO_VAL_INT:
+		for (i = 0; i < 3; i++) {
+			len += __iio_format_value(buf + len, PAGE_SIZE - len,
+						  type, 1, &vals[i]);
+			if (len >= PAGE_SIZE)
+				return -EFBIG;
+			if (i < 2)
+				len += snprintf(buf + len, PAGE_SIZE - len,
+						" ");
+			else
+				len += snprintf(buf + len, PAGE_SIZE - len,
+						"]\n");
+			if (len >= PAGE_SIZE)
+				return -EFBIG;
+		}
+		break;
+	default:
+		for (i = 0; i < 3; i++) {
+			len += __iio_format_value(buf + len, PAGE_SIZE - len,
+						  type, 2, &vals[i * 2]);
+			if (len >= PAGE_SIZE)
+				return -EFBIG;
+			if (i < 2)
+				len += snprintf(buf + len, PAGE_SIZE - len,
+						" ");
+			else
+				len += snprintf(buf + len, PAGE_SIZE - len,
+						"]\n");
+			if (len >= PAGE_SIZE)
+				return -EFBIG;
+		}
+	}
+
+	return len;
+}
+
+static ssize_t iio_read_channel_info_avail(struct device *dev,
+					   struct device_attribute *attr,
+					   char *buf)
+{
+	struct iio_dev *indio_dev = dev_to_iio_dev(dev);
+	struct iio_dev_attr *this_attr = to_iio_dev_attr(attr);
+	const int *vals;
+	int ret;
+	int length;
+	int type;
+
+	ret = indio_dev->info->read_avail(indio_dev, this_attr->c,
+					  &vals, &type, &length,
+					  this_attr->address);
+
+	if (ret < 0)
+		return ret;
+	switch (ret) {
+	case IIO_AVAIL_LIST:
+		return iio_format_avail_list(buf, vals, type, length);
+	case IIO_AVAIL_RANGE:
+		return iio_format_avail_range(buf, vals, type);
+	default:
+		return -EINVAL;
+	}
 }
 
 /**
@@ -898,6 +1109,40 @@ static int iio_device_add_info_mask_type(struct iio_dev *indio_dev,
 	return attrcount;
 }
 
+static int iio_device_add_info_mask_type_avail(struct iio_dev *indio_dev,
+					       struct iio_chan_spec const *chan,
+					       enum iio_shared_by shared_by,
+					       const long *infomask)
+{
+	int i, ret, attrcount = 0;
+	char *avail_postfix;
+
+	for_each_set_bit(i, infomask, sizeof(infomask) * 8) {
+		avail_postfix = kasprintf(GFP_KERNEL,
+					  "%s_available",
+					  iio_chan_info_postfix[i]);
+		if (!avail_postfix)
+			return -ENOMEM;
+
+		ret = __iio_add_chan_devattr(avail_postfix,
+					     chan,
+					     &iio_read_channel_info_avail,
+					     NULL,
+					     i,
+					     shared_by,
+					     &indio_dev->dev,
+					     &indio_dev->channel_attr_list);
+		kfree(avail_postfix);
+		if ((ret == -EBUSY) && (shared_by != IIO_SEPARATE))
+			continue;
+		else if (ret < 0)
+			return ret;
+		attrcount++;
+	}
+
+	return attrcount;
+}
+
 static int iio_device_add_channel_sysfs(struct iio_dev *indio_dev,
 					struct iio_chan_spec const *chan)
 {
@@ -913,9 +1158,25 @@ static int iio_device_add_channel_sysfs(struct iio_dev *indio_dev,
 		return ret;
 	attrcount += ret;
 
+	ret = iio_device_add_info_mask_type_avail(indio_dev, chan,
+						  IIO_SEPARATE,
+						  &chan->
+						  info_mask_separate_available);
+	if (ret < 0)
+		return ret;
+	attrcount += ret;
+
 	ret = iio_device_add_info_mask_type(indio_dev, chan,
 					    IIO_SHARED_BY_TYPE,
 					    &chan->info_mask_shared_by_type);
+	if (ret < 0)
+		return ret;
+	attrcount += ret;
+
+	ret = iio_device_add_info_mask_type_avail(indio_dev, chan,
+						  IIO_SHARED_BY_TYPE,
+						  &chan->
+						  info_mask_shared_by_type_available);
 	if (ret < 0)
 		return ret;
 	attrcount += ret;
@@ -927,9 +1188,23 @@ static int iio_device_add_channel_sysfs(struct iio_dev *indio_dev,
 		return ret;
 	attrcount += ret;
 
+	ret = iio_device_add_info_mask_type_avail(indio_dev, chan,
+						  IIO_SHARED_BY_DIR,
+						  &chan->info_mask_shared_by_dir_available);
+	if (ret < 0)
+		return ret;
+	attrcount += ret;
+
 	ret = iio_device_add_info_mask_type(indio_dev, chan,
 					    IIO_SHARED_BY_ALL,
 					    &chan->info_mask_shared_by_all);
+	if (ret < 0)
+		return ret;
+	attrcount += ret;
+
+	ret = iio_device_add_info_mask_type_avail(indio_dev, chan,
+						  IIO_SHARED_BY_ALL,
+						  &chan->info_mask_shared_by_all_available);
 	if (ret < 0)
 		return ret;
 	attrcount += ret;
@@ -989,11 +1264,91 @@ static ssize_t iio_show_dev_name(struct device *dev,
 
 static DEVICE_ATTR(name, S_IRUGO, iio_show_dev_name, NULL);
 
+static ssize_t iio_show_timestamp_clock(struct device *dev,
+					struct device_attribute *attr,
+					char *buf)
+{
+	const struct iio_dev *indio_dev = dev_to_iio_dev(dev);
+	const clockid_t clk = iio_device_get_clock(indio_dev);
+	const char *name;
+	ssize_t sz;
+
+	switch (clk) {
+	case CLOCK_REALTIME:
+		name = "realtime\n";
+		sz = sizeof("realtime\n");
+		break;
+	case CLOCK_MONOTONIC:
+		name = "monotonic\n";
+		sz = sizeof("monotonic\n");
+		break;
+	case CLOCK_MONOTONIC_RAW:
+		name = "monotonic_raw\n";
+		sz = sizeof("monotonic_raw\n");
+		break;
+	case CLOCK_REALTIME_COARSE:
+		name = "realtime_coarse\n";
+		sz = sizeof("realtime_coarse\n");
+		break;
+	case CLOCK_MONOTONIC_COARSE:
+		name = "monotonic_coarse\n";
+		sz = sizeof("monotonic_coarse\n");
+		break;
+	case CLOCK_BOOTTIME:
+		name = "boottime\n";
+		sz = sizeof("boottime\n");
+		break;
+	case CLOCK_TAI:
+		name = "tai\n";
+		sz = sizeof("tai\n");
+		break;
+	default:
+		BUG();
+	}
+
+	memcpy(buf, name, sz);
+	return sz;
+}
+
+static ssize_t iio_store_timestamp_clock(struct device *dev,
+					 struct device_attribute *attr,
+					 const char *buf, size_t len)
+{
+	clockid_t clk;
+	int ret;
+
+	if (sysfs_streq(buf, "realtime"))
+		clk = CLOCK_REALTIME;
+	else if (sysfs_streq(buf, "monotonic"))
+		clk = CLOCK_MONOTONIC;
+	else if (sysfs_streq(buf, "monotonic_raw"))
+		clk = CLOCK_MONOTONIC_RAW;
+	else if (sysfs_streq(buf, "realtime_coarse"))
+		clk = CLOCK_REALTIME_COARSE;
+	else if (sysfs_streq(buf, "monotonic_coarse"))
+		clk = CLOCK_MONOTONIC_COARSE;
+	else if (sysfs_streq(buf, "boottime"))
+		clk = CLOCK_BOOTTIME;
+	else if (sysfs_streq(buf, "tai"))
+		clk = CLOCK_TAI;
+	else
+		return -EINVAL;
+
+	ret = iio_device_set_clock(dev_to_iio_dev(dev), clk);
+	if (ret)
+		return ret;
+
+	return len;
+}
+
+static DEVICE_ATTR(current_timestamp_clock, S_IRUGO | S_IWUSR,
+		   iio_show_timestamp_clock, iio_store_timestamp_clock);
+
 static int iio_device_register_sysfs(struct iio_dev *indio_dev)
 {
 	int i, ret = 0, attrcount, attrn, attrcount_orig = 0;
 	struct iio_dev_attr *p;
-	struct attribute **attr;
+	struct attribute **attr, *clk = NULL;
 
 	/* First count elements in any existing group */
 	if (indio_dev->info->attrs) {
@@ -1008,15 +1363,24 @@ static int iio_device_register_sysfs(struct iio_dev *indio_dev)
 	 */
 	if (indio_dev->channels)
 		for (i = 0; i < indio_dev->num_channels; i++) {
-			ret = iio_device_add_channel_sysfs(indio_dev,
-							   &indio_dev
-							   ->channels[i]);
+			const struct iio_chan_spec *chan =
+				&indio_dev->channels[i];
+
+			if (chan->type == IIO_TIMESTAMP)
+				clk = &dev_attr_current_timestamp_clock.attr;
+
+			ret = iio_device_add_channel_sysfs(indio_dev, chan);
 			if (ret < 0)
 				goto error_clear_attrs;
 			attrcount += ret;
 		}
 
+	if (indio_dev->event_interface)
+		clk = &dev_attr_current_timestamp_clock.attr;
+
 	if (indio_dev->name)
+		attrcount++;
+	if (clk)
 		attrcount++;
 
 	indio_dev->chan_attr_group.attrs = kcalloc(attrcount + 1,
@@ -1038,6 +1402,8 @@ static int iio_device_register_sysfs(struct iio_dev *indio_dev)
 		indio_dev->chan_attr_group.attrs[attrn++] = &p->dev_attr.attr;
 	if (indio_dev->name)
 		indio_dev->chan_attr_group.attrs[attrn++] = &dev_attr_name.attr;
+	if (clk)
+		indio_dev->chan_attr_group.attrs[attrn++] = clk;
 
 	indio_dev->groups[indio_dev->groupcounter++] =
 		&indio_dev->chan_attr_group;
@@ -1137,7 +1503,7 @@ static void devm_iio_device_release(struct device *dev, void *res)
 	iio_device_free(*(struct iio_dev **)res);
 }
 
-static int devm_iio_device_match(struct device *dev, void *res, void *data)
+int devm_iio_device_match(struct device *dev, void *res, void *data)
 {
 	struct iio_dev **r = res;
 	if (!r || !*r) {
@@ -1146,6 +1512,7 @@ static int devm_iio_device_match(struct device *dev, void *res, void *data)
 	}
 	return *r == data;
 }
+EXPORT_SYMBOL_GPL(devm_iio_device_match);
 
 /**
  * devm_iio_device_alloc - Resource-managed iio_device_alloc()

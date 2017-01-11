@@ -62,7 +62,6 @@ static struct dentry *__fh_to_dentry(struct super_block *sb, u64 ino)
 {
 	struct ceph_mds_client *mdsc = ceph_sb_to_client(sb)->mdsc;
 	struct inode *inode;
-	struct dentry *dentry;
 	struct ceph_vino vino;
 	int err;
 
@@ -94,18 +93,7 @@ static struct dentry *__fh_to_dentry(struct super_block *sb, u64 ino)
 			return ERR_PTR(-ESTALE);
 	}
 
-	dentry = d_obtain_alias(inode);
-	if (IS_ERR(dentry)) {
-		iput(inode);
-		return dentry;
-	}
-	err = ceph_init_dentry(dentry);
-	if (err < 0) {
-		dput(dentry);
-		return ERR_PTR(err);
-	}
-	dout("__fh_to_dentry %llx %p dentry %p\n", ino, inode, dentry);
-	return dentry;
+	return d_obtain_alias(inode);
 }
 
 /*
@@ -133,7 +121,6 @@ static struct dentry *__get_parent(struct super_block *sb,
 	struct ceph_mds_client *mdsc = ceph_sb_to_client(sb)->mdsc;
 	struct ceph_mds_request *req;
 	struct inode *inode;
-	struct dentry *dentry;
 	int mask;
 	int err;
 
@@ -166,20 +153,7 @@ static struct dentry *__get_parent(struct super_block *sb,
 	if (!inode)
 		return ERR_PTR(-ENOENT);
 
-	dentry = d_obtain_alias(inode);
-	if (IS_ERR(dentry)) {
-		iput(inode);
-		return dentry;
-	}
-	err = ceph_init_dentry(dentry);
-	if (err < 0) {
-		dput(dentry);
-		return ERR_PTR(err);
-	}
-	dout("__get_parent ino %llx parent %p ino %llx.%llx\n",
-	     child ? ceph_ino(d_inode(child)) : ino,
-	     dentry, ceph_vinop(inode));
-	return dentry;
+	return d_obtain_alias(inode);
 }
 
 static struct dentry *ceph_get_parent(struct dentry *child)
@@ -210,7 +184,7 @@ static struct dentry *ceph_fh_to_parent(struct super_block *sb,
 
 	dout("fh_to_parent %llx\n", cfh->parent_ino);
 	dentry = __get_parent(sb, NULL, cfh->ino);
-	if (IS_ERR(dentry) && PTR_ERR(dentry) == -ENOENT)
+	if (unlikely(dentry == ERR_PTR(-ENOENT)))
 		dentry = __fh_to_dentry(sb, cfh->parent_ino);
 	return dentry;
 }

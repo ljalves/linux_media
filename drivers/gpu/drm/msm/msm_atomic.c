@@ -84,17 +84,12 @@ static void msm_atomic_wait_for_commit_done(struct drm_device *dev,
 		struct drm_atomic_state *old_state)
 {
 	struct drm_crtc *crtc;
+	struct drm_crtc_state *crtc_state;
 	struct msm_drm_private *priv = old_state->dev->dev_private;
 	struct msm_kms *kms = priv->kms;
-	int ncrtcs = old_state->dev->mode_config.num_crtc;
 	int i;
 
-	for (i = 0; i < ncrtcs; i++) {
-		crtc = old_state->crtcs[i];
-
-		if (!crtc)
-			continue;
-
+	for_each_crtc_in_state(old_state, crtc, crtc_state, i) {
 		if (!crtc->state->enable)
 			continue;
 
@@ -117,13 +112,13 @@ static void complete_commit(struct msm_commit *c, bool async)
 	struct msm_drm_private *priv = dev->dev_private;
 	struct msm_kms *kms = priv->kms;
 
-	drm_atomic_helper_wait_for_fences(dev, state);
+	drm_atomic_helper_wait_for_fences(dev, state, false);
 
 	kms->funcs->prepare_commit(kms, state);
 
 	drm_atomic_helper_commit_modeset_disables(dev, state);
 
-	drm_atomic_helper_commit_planes(dev, state, false);
+	drm_atomic_helper_commit_planes(dev, state, 0);
 
 	drm_atomic_helper_commit_modeset_enables(dev, state);
 
@@ -146,7 +141,7 @@ static void complete_commit(struct msm_commit *c, bool async)
 
 	kms->funcs->complete_commit(kms, state);
 
-	drm_atomic_state_free(state);
+	drm_atomic_state_put(state);
 
 	commit_destroy(c);
 }
@@ -192,9 +187,11 @@ int msm_atomic_commit(struct drm_device *dev,
 		struct drm_atomic_state *state, bool nonblock)
 {
 	struct msm_drm_private *priv = dev->dev_private;
-	int nplanes = dev->mode_config.num_total_plane;
-	int ncrtcs = dev->mode_config.num_crtc;
 	struct msm_commit *c;
+	struct drm_crtc *crtc;
+	struct drm_crtc_state *crtc_state;
+	struct drm_plane *plane;
+	struct drm_plane_state *plane_state;
 	int i, ret;
 
 	ret = drm_atomic_helper_prepare_planes(dev, state);
@@ -210,28 +207,19 @@ int msm_atomic_commit(struct drm_device *dev,
 	/*
 	 * Figure out what crtcs we have:
 	 */
-	for (i = 0; i < ncrtcs; i++) {
-		struct drm_crtc *crtc = state->crtcs[i];
-		if (!crtc)
-			continue;
-		c->crtc_mask |= (1 << drm_crtc_index(crtc));
-	}
+	for_each_crtc_in_state(state, crtc, crtc_state, i)
+		c->crtc_mask |= drm_crtc_mask(crtc);
 
 	/*
 	 * Figure out what fence to wait for:
 	 */
-	for (i = 0; i < nplanes; i++) {
-		struct drm_plane *plane = state->planes[i];
-		struct drm_plane_state *new_state = state->plane_states[i];
-
-		if (!plane)
-			continue;
-
-		if ((plane->state->fb != new_state->fb) && new_state->fb) {
-			struct drm_gem_object *obj = msm_framebuffer_bo(new_state->fb, 0);
+	for_each_plane_in_state(state, plane, plane_state, i) {
+		if ((plane->state->fb != plane_state->fb) && plane_state->fb) {
+			struct drm_gem_object *obj = msm_framebuffer_bo(plane_state->fb, 0);
 			struct msm_gem_object *msm_obj = to_msm_bo(obj);
+			struct dma_fence *fence = reservation_object_get_excl_rcu(msm_obj->resv);
 
-			new_state->fence = reservation_object_get_excl_rcu(msm_obj->resv);
+			drm_atomic_set_fence_for_plane(plane_state, fence);
 		}
 	}
 
@@ -251,7 +239,11 @@ int msm_atomic_commit(struct drm_device *dev,
 	 * the software side now.
 	 */
 
-	drm_atomic_helper_swap_state(dev, state);
+	drm_atomic_helper_swap_state(state, true);
+
+	/* swap driver private state while still holding state_lock */
+	if (to_kms_state(state)->state)
+		priv->kms->funcs->swap_state(priv->kms, state);
 
 	/*
 	 * Everything below can be run asynchronously without the need to grab
@@ -269,6 +261,7 @@ int msm_atomic_commit(struct drm_device *dev,
 	 * current layout.
 	 */
 
+	drm_atomic_state_get(state);
 	if (nonblock) {
 		queue_work(priv->atomic_wq, &c->work);
 		return 0;
@@ -281,4 +274,31 @@ int msm_atomic_commit(struct drm_device *dev,
 error:
 	drm_atomic_helper_cleanup_planes(dev, state);
 	return ret;
+}
+
+struct drm_atomic_state *msm_atomic_state_alloc(struct drm_device *dev)
+{
+	struct msm_kms_state *state = kzalloc(sizeof(*state), GFP_KERNEL);
+
+	if (!state || drm_atomic_state_init(dev, &state->base) < 0) {
+		kfree(state);
+		return NULL;
+	}
+
+	return &state->base;
+}
+
+void msm_atomic_state_clear(struct drm_atomic_state *s)
+{
+	struct msm_kms_state *state = to_kms_state(s);
+	drm_atomic_state_default_clear(&state->base);
+	kfree(state->state);
+	state->state = NULL;
+}
+
+void msm_atomic_state_free(struct drm_atomic_state *state)
+{
+	kfree(to_kms_state(state)->state);
+	drm_atomic_state_default_release(state);
+	kfree(state);
 }

@@ -1,6 +1,7 @@
 /*
  * Copyright (c) 2014 Christoph Hellwig.
  */
+#include <linux/iomap.h>
 #include "xfs.h"
 #include "xfs_format.h"
 #include "xfs_log_format.h"
@@ -31,8 +32,7 @@
 int
 xfs_break_layouts(
 	struct inode		*inode,
-	uint			*iolock,
-	bool			with_imutex)
+	uint			*iolock)
 {
 	struct xfs_inode	*ip = XFS_I(inode);
 	int			error;
@@ -41,12 +41,8 @@ xfs_break_layouts(
 
 	while ((error = break_layout(inode, false) == -EWOULDBLOCK)) {
 		xfs_iunlock(ip, *iolock);
-		if (with_imutex && (*iolock & XFS_IOLOCK_EXCL))
-			inode_unlock(inode);
 		error = break_layout(inode, true);
 		*iolock = XFS_IOLOCK_EXCL;
-		if (with_imutex)
-			inode_lock(inode);
 		xfs_ilock(ip, *iolock);
 	}
 
@@ -77,32 +73,6 @@ xfs_fs_get_uuid(
 	*len = sizeof(uuid_t);
 	*offset = offsetof(struct xfs_dsb, sb_uuid);
 	return 0;
-}
-
-static void
-xfs_bmbt_to_iomap(
-	struct xfs_inode	*ip,
-	struct iomap		*iomap,
-	struct xfs_bmbt_irec	*imap)
-{
-	struct xfs_mount	*mp = ip->i_mount;
-
-	if (imap->br_startblock == HOLESTARTBLOCK) {
-		iomap->blkno = IOMAP_NULL_BLOCK;
-		iomap->type = IOMAP_HOLE;
-	} else if (imap->br_startblock == DELAYSTARTBLOCK) {
-		iomap->blkno = IOMAP_NULL_BLOCK;
-		iomap->type = IOMAP_DELALLOC;
-	} else {
-		iomap->blkno =
-			XFS_FSB_TO_DADDR(ip->i_mount, imap->br_startblock);
-		if (imap->br_state == XFS_EXT_UNWRITTEN)
-			iomap->type = IOMAP_UNWRITTEN;
-		else
-			iomap->type = IOMAP_MAPPED;
-	}
-	iomap->offset = XFS_FSB_TO_B(mp, imap->br_startoff);
-	iomap->length = XFS_FSB_TO_B(mp, imap->br_blockcount);
 }
 
 /*
@@ -136,6 +106,13 @@ xfs_fs_map_blocks(
 	 * to find it.
 	 */
 	if (XFS_IS_REALTIME_INODE(ip))
+		return -ENXIO;
+
+	/*
+	 * The pNFS block layout spec actually supports reflink like
+	 * functionality, but the Linux pNFS server doesn't implement it yet.
+	 */
+	if (xfs_is_reflink_inode(ip))
 		return -ENXIO;
 
 	/*

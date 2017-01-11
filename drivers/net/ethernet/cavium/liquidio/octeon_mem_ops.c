@@ -4,7 +4,7 @@
  * Contact: support@cavium.com
  *          Please include "LiquidIO" in the subject.
  *
- * Copyright (c) 2003-2015 Cavium, Inc.
+ * Copyright (c) 2003-2016 Cavium, Inc.
  *
  * This file is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License, Version 2, as
@@ -15,47 +15,29 @@
  * of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE, TITLE, or
  * NONINFRINGEMENT.  See the GNU General Public License for more
  * details.
- *
- * This file may also be available under a different license from Cavium.
- * Contact Cavium, Inc. for more information
  **********************************************************************/
-#include <linux/version.h>
-#include <linux/types.h>
-#include <linux/list.h>
-#include <linux/interrupt.h>
-#include <linux/pci.h>
-#include <linux/kthread.h>
 #include <linux/netdevice.h>
-#include "octeon_config.h"
 #include "liquidio_common.h"
 #include "octeon_droq.h"
 #include "octeon_iq.h"
 #include "response_manager.h"
 #include "octeon_device.h"
-#include "octeon_nic.h"
-#include "octeon_main.h"
-#include "octeon_network.h"
-#include "cn66xx_regs.h"
-#include "cn66xx_device.h"
-#include "cn68xx_regs.h"
-#include "cn68xx_device.h"
-#include "liquidio_image.h"
-#include "octeon_mem_ops.h"
 
 #define MEMOPS_IDX   MAX_BAR1_MAP_INDEX
 
-static inline void
-octeon_toggle_bar1_swapmode(struct octeon_device *oct __attribute__((unused)),
-			    u32 idx __attribute__((unused)))
-{
 #ifdef __BIG_ENDIAN_BITFIELD
+static inline void
+octeon_toggle_bar1_swapmode(struct octeon_device *oct, u32 idx)
+{
 	u32 mask;
 
 	mask = oct->fn_list.bar1_idx_read(oct, idx);
 	mask = (mask & 0x2) ? (mask & ~2) : (mask | 2);
 	oct->fn_list.bar1_idx_write(oct, idx, mask);
-#endif
 }
+#else
+#define octeon_toggle_bar1_swapmode(oct, idx)
+#endif
 
 static void
 octeon_pci_fastwrite(struct octeon_device *oct, u8 __iomem *mapped_addr,

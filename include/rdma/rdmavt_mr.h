@@ -81,6 +81,7 @@ struct rvt_mregion {
 	u32 mapsz;              /* size of the map array */
 	u8  page_shift;         /* 0 - non unform/non powerof2 sizes */
 	u8  lkey_published;     /* in global table */
+	atomic_t lkey_invalid;	/* true if current lkey is invalid */
 	struct completion comp; /* complete when refcount goes to zero */
 	atomic_t refcount;
 	struct rvt_segarray *map[0];    /* the segments */
@@ -89,11 +90,15 @@ struct rvt_mregion {
 #define RVT_MAX_LKEY_TABLE_BITS 23
 
 struct rvt_lkey_table {
-	spinlock_t lock; /* protect changes in this struct */
+	/* read mostly fields */
+	u32 max;                /* size of the table */
+	u32 shift;              /* lkey/rkey shift */
+	struct rvt_mregion __rcu **table;
+	/* writeable fields */
+	/* protect changes in this struct */
+	spinlock_t lock ____cacheline_aligned_in_smp;
 	u32 next;               /* next unused index (speeds search) */
 	u32 gen;                /* generation count */
-	u32 max;                /* size of the table */
-	struct rvt_mregion __rcu **table;
 };
 
 /*

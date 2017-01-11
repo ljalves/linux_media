@@ -39,6 +39,9 @@ enum iio_chan_type {
 	IIO_RESISTANCE,
 	IIO_PH,
 	IIO_UVINDEX,
+	IIO_ELECTRICALCONDUCTIVITY,
+	IIO_COUNT,
+	IIO_INDEX,
 };
 
 enum iio_modifier {

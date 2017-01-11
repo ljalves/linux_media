@@ -107,9 +107,11 @@ static int pstore_ftrace_seq_show(struct seq_file *s, void *v)
 	struct pstore_ftrace_seq_data *data = v;
 	struct pstore_ftrace_record *rec = (void *)(ps->data + data->off);
 
-	seq_printf(s, "%d %08lx  %08lx  %pf <- %pF\n",
-		pstore_ftrace_decode_cpu(rec), rec->ip, rec->parent_ip,
-		(void *)rec->ip, (void *)rec->parent_ip);
+	seq_printf(s, "CPU:%d ts:%llu %08lx  %08lx  %pf <- %pF\n",
+		   pstore_ftrace_decode_cpu(rec),
+		   pstore_ftrace_read_timestamp(rec),
+		   rec->ip, rec->parent_ip, (void *)rec->ip,
+		   (void *)rec->parent_ip);
 
 	return 0;
 }
@@ -178,7 +180,6 @@ static loff_t pstore_file_llseek(struct file *file, loff_t off, int whence)
 }
 
 static const struct file_operations pstore_file_operations = {
-	.owner		= THIS_MODULE,
 	.open		= pstore_file_open,
 	.read		= pstore_file_read,
 	.llseek		= pstore_file_llseek,
@@ -198,11 +199,14 @@ static int pstore_unlink(struct inode *dir, struct dentry *dentry)
 	if (err)
 		return err;
 
-	if (p->psi->erase)
+	if (p->psi->erase) {
+		mutex_lock(&p->psi->read_mutex);
 		p->psi->erase(p->type, p->id, p->count,
 			      d_inode(dentry)->i_ctime, p->psi);
-	else
+		mutex_unlock(&p->psi->read_mutex);
+	} else {
 		return -EPERM;
+	}
 
 	return simple_unlink(dir, dentry);
 }
@@ -231,7 +235,7 @@ static struct inode *pstore_get_inode(struct super_block *sb)
 	struct inode *inode = new_inode(sb);
 	if (inode) {
 		inode->i_ino = get_next_ino();
-		inode->i_atime = inode->i_mtime = inode->i_ctime = CURRENT_TIME;
+		inode->i_atime = inode->i_mtime = inode->i_ctime = current_time(inode);
 	}
 	return inode;
 }

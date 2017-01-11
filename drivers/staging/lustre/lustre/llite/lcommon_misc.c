@@ -15,11 +15,7 @@
  *
  * You should have received a copy of the GNU General Public License
  * version 2 along with this program; If not, see
- * http://www.sun.com/software/products/lustre/docs/GPLv2.pdf
- *
- * Please contact Sun Microsystems, Inc., 4150 Network Circle, Santa Clara,
- * CA 95054 USA or visit www.sun.com if you need additional information or
- * have any questions.
+ * http://www.gnu.org/licenses/gpl-2.0.html
  *
  * GPL HEADER END
  */
@@ -42,7 +38,6 @@
 #include "../include/obd.h"
 #include "../include/cl_object.h"
 
-#include "../include/lustre_lite.h"
 #include "llite_internal.h"
 
 /* Initialize the default and maximum LOV EA and cookie sizes.  This allows
@@ -52,36 +47,29 @@
  */
 int cl_init_ea_size(struct obd_export *md_exp, struct obd_export *dt_exp)
 {
-	struct lov_stripe_md lsm = { .lsm_magic = LOV_MAGIC_V3 };
-	__u32 valsize = sizeof(struct lov_desc);
-	int rc, easize, def_easize, cookiesize;
-	struct lov_desc desc;
-	__u16 stripes, def_stripes;
+	u32 val_size, max_easize, def_easize;
+	int rc;
 
-	rc = obd_get_info(NULL, dt_exp, sizeof(KEY_LOVDESC), KEY_LOVDESC,
-			  &valsize, &desc, NULL);
+	val_size = sizeof(max_easize);
+	rc = obd_get_info(NULL, dt_exp, sizeof(KEY_MAX_EASIZE), KEY_MAX_EASIZE,
+			  &val_size, &max_easize);
 	if (rc)
 		return rc;
 
-	stripes = min_t(__u32, desc.ld_tgt_count, LOV_MAX_STRIPE_COUNT);
-	lsm.lsm_stripe_count = stripes;
-	easize = obd_size_diskmd(dt_exp, &lsm);
+	val_size = sizeof(def_easize);
+	rc = obd_get_info(NULL, dt_exp, sizeof(KEY_DEFAULT_EASIZE),
+			  KEY_DEFAULT_EASIZE, &val_size, &def_easize);
+	if (rc)
+		return rc;
 
-	def_stripes = min_t(__u32, desc.ld_default_stripe_count,
-			    LOV_MAX_STRIPE_COUNT);
-	lsm.lsm_stripe_count = def_stripes;
-	def_easize = obd_size_diskmd(dt_exp, &lsm);
-
-	cookiesize = stripes * sizeof(struct llog_cookie);
-
-	/* default cookiesize is 0 because from 2.4 server doesn't send
+	/*
+	 * default cookiesize is 0 because from 2.4 server doesn't send
 	 * llog cookies to client.
 	 */
-	CDEBUG(D_HA,
-	       "updating def/max_easize: %d/%d def/max_cookiesize: 0/%d\n",
-	       def_easize, easize, cookiesize);
+	CDEBUG(D_HA, "updating def/max_easize: %d/%d\n",
+	       def_easize, max_easize);
 
-	rc = md_init_ea_size(md_exp, easize, def_easize, cookiesize, 0);
+	rc = md_init_ea_size(md_exp, max_easize, def_easize);
 	return rc;
 }
 
@@ -100,7 +88,8 @@ int cl_ocd_update(struct obd_device *host,
 	__u64 flags;
 	int   result;
 
-	if (!strcmp(watched->obd_type->typ_name, LUSTRE_OSC_NAME)) {
+	if (!strcmp(watched->obd_type->typ_name, LUSTRE_OSC_NAME) &&
+	    watched->obd_set_up && !watched->obd_stopping) {
 		cli = &watched->u.cli;
 		lco = owner;
 		flags = cli->cl_import->imp_connect_data.ocd_connect_flags;
@@ -115,9 +104,10 @@ int cl_ocd_update(struct obd_device *host,
 		mutex_unlock(&lco->lco_lock);
 		result = 0;
 	} else {
-		CERROR("unexpected notification from %s %s!\n",
+		CERROR("unexpected notification from %s %s (setup:%d,stopping:%d)!\n",
 		       watched->obd_type->typ_name,
-		       watched->obd_name);
+		       watched->obd_name, watched->obd_set_up,
+		       watched->obd_stopping);
 		result = -EINVAL;
 	}
 	return result;
@@ -172,13 +162,11 @@ int cl_get_grouplock(struct cl_object *obj, unsigned long gid, int nonblock,
 		return rc;
 	}
 
-	cg->lg_env  = cl_env_get(&refcheck);
+	cg->lg_env  = env;
 	cg->lg_io   = io;
 	cg->lg_lock = lock;
 	cg->lg_gid  = gid;
-	LASSERT(cg->lg_env == env);
 
-	cl_env_unplant(env, &refcheck);
 	return 0;
 }
 
@@ -187,13 +175,9 @@ void cl_put_grouplock(struct ll_grouplock *cg)
 	struct lu_env  *env  = cg->lg_env;
 	struct cl_io   *io   = cg->lg_io;
 	struct cl_lock *lock = cg->lg_lock;
-	int	     refcheck;
 
 	LASSERT(cg->lg_env);
 	LASSERT(cg->lg_gid);
-
-	cl_env_implant(env, &refcheck);
-	cl_env_put(env, &refcheck);
 
 	cl_lock_release(env, lock);
 	cl_io_fini(env, io);

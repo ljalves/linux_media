@@ -455,18 +455,17 @@ static int mxl111sf_tuner_get_if_frequency(struct dvb_frontend *fe,
 	return 0;
 }
 
-static int mxl111sf_tuner_release(struct dvb_frontend *fe)
+static void mxl111sf_tuner_release(struct dvb_frontend *fe)
 {
 	struct mxl111sf_tuner_state *state = fe->tuner_priv;
 	mxl_dbg("()");
 	kfree(state);
 	fe->tuner_priv = NULL;
-	return 0;
 }
 
 /* ------------------------------------------------------------------------- */
 
-static struct dvb_tuner_ops mxl111sf_tuner_tuner_ops = {
+static const struct dvb_tuner_ops mxl111sf_tuner_tuner_ops = {
 	.info = {
 		.name = "MaxLinear MxL111SF",
 #if 0

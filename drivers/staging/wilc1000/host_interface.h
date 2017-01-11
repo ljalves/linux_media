@@ -224,10 +224,6 @@ struct op_mode {
 	u32 mode;
 };
 
-struct set_mac_addr {
-	u8 mac_addr[ETH_ALEN];
-};
-
 struct get_mac_addr {
 	u8 *mac_addr;
 };
@@ -371,7 +367,6 @@ extern u8 wilc_connected_ssid[6];
 extern u8 wilc_multicast_mac_addr_list[WILC_MULTICAST_TABLE_SIZE][ETH_ALEN];
 
 extern int wilc_connecting;
-extern u8 wilc_initialized;
 extern struct timer_list wilc_during_ip_timer;
 
 #endif

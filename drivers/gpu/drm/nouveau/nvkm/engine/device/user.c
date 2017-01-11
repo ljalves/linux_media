@@ -102,6 +102,7 @@ nvkm_udevice_info(struct nvkm_udevice *udev, void *data, u32 size)
 	case NV_C0: args->v0.family = NV_DEVICE_INFO_V0_FERMI; break;
 	case NV_E0: args->v0.family = NV_DEVICE_INFO_V0_KEPLER; break;
 	case GM100: args->v0.family = NV_DEVICE_INFO_V0_MAXWELL; break;
+	case GP100: args->v0.family = NV_DEVICE_INFO_V0_PASCAL; break;
 	default:
 		args->v0.family = 0;
 		break;
@@ -325,7 +326,7 @@ nvkm_udevice = {
 	.sclass = nvkm_udevice_child_get,
 };
 
-int
+static int
 nvkm_udevice_new(const struct nvkm_oclass *oclass, void *data, u32 size,
 		 struct nvkm_object **pobject)
 {

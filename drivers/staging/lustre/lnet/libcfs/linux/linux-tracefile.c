@@ -15,11 +15,7 @@
  *
  * You should have received a copy of the GNU General Public License
  * version 2 along with this program; If not, see
- * http://www.sun.com/software/products/lustre/docs/GPLv2.pdf
- *
- * Please contact Sun Microsystems, Inc., 4150 Network Circle, Santa Clara,
- * CA 95054 USA or visit www.sun.com if you need additional information or
- * have any questions.
+ * http://www.gnu.org/licenses/gpl-2.0.html
  *
  * GPL HEADER END
  */
@@ -53,8 +49,8 @@ static DECLARE_RWSEM(cfs_tracefile_sem);
 
 int cfs_tracefile_init_arch(void)
 {
-	int    i;
-	int    j;
+	int i;
+	int j;
 	struct cfs_trace_cpu_data *tcd;
 
 	/* initialize trace_data */
@@ -89,14 +85,14 @@ int cfs_tracefile_init_arch(void)
 
 out:
 	cfs_tracefile_fini_arch();
-	printk(KERN_ERR "lnet: Not enough memory\n");
+	pr_err("lnet: Not enough memory\n");
 	return -ENOMEM;
 }
 
 void cfs_tracefile_fini_arch(void)
 {
-	int    i;
-	int    j;
+	int i;
+	int j;
 
 	for (i = 0; i < num_possible_cpus(); i++)
 		for (j = 0; j < 3; j++) {
@@ -228,26 +224,26 @@ void cfs_print_to_console(struct ptldebug_header *hdr, int mask,
 {
 	char *prefix = "Lustre", *ptype = NULL;
 
-	if ((mask & D_EMERG) != 0) {
+	if (mask & D_EMERG) {
 		prefix = dbghdr_to_err_string(hdr);
 		ptype = KERN_EMERG;
-	} else if ((mask & D_ERROR) != 0) {
+	} else if (mask & D_ERROR) {
 		prefix = dbghdr_to_err_string(hdr);
 		ptype = KERN_ERR;
-	} else if ((mask & D_WARNING) != 0) {
+	} else if (mask & D_WARNING) {
 		prefix = dbghdr_to_info_string(hdr);
 		ptype = KERN_WARNING;
-	} else if ((mask & (D_CONSOLE | libcfs_printk)) != 0) {
+	} else if (mask & (D_CONSOLE | libcfs_printk)) {
 		prefix = dbghdr_to_info_string(hdr);
 		ptype = KERN_INFO;
 	}
 
-	if ((mask & D_CONSOLE) != 0) {
-		printk("%s%s: %.*s", ptype, prefix, len, buf);
+	if (mask & D_CONSOLE) {
+		pr_info("%s%s: %.*s", ptype, prefix, len, buf);
 	} else {
-		printk("%s%s: %d:%d:(%s:%d:%s()) %.*s", ptype, prefix,
-		       hdr->ph_pid, hdr->ph_extern_pid, file, hdr->ph_line_num,
-		       fn, len, buf);
+		pr_info("%s%s: %d:%d:(%s:%d:%s()) %.*s", ptype, prefix,
+			hdr->ph_pid, hdr->ph_extern_pid, file,
+			hdr->ph_line_num, fn, len, buf);
 	}
 }
 

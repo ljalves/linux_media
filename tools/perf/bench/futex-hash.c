@@ -8,18 +8,23 @@
  * many threads and futexes as possible.
  */
 
-#include "../perf.h"
-#include "../util/util.h"
+/* For the CLR_() macros */
+#include <pthread.h>
+
+#include <errno.h>
+#include <signal.h>
+#include <stdlib.h>
+#include <linux/compiler.h>
+#include <linux/kernel.h>
+#include <sys/time.h>
+
 #include "../util/stat.h"
 #include <subcmd/parse-options.h>
-#include "../util/header.h"
 #include "bench.h"
 #include "futex.h"
 
 #include <err.h>
-#include <stdlib.h>
 #include <sys/time.h>
-#include <pthread.h>
 
 static unsigned int nthreads = 0;
 static unsigned int nsecs    = 10;
@@ -58,8 +63,9 @@ static const char * const bench_futex_hash_usage[] = {
 static void *workerfn(void *arg)
 {
 	int ret;
-	unsigned int i;
 	struct worker *w = (struct worker *) arg;
+	unsigned int i;
+	unsigned long ops = w->ops; /* avoid cacheline bouncing */
 
 	pthread_mutex_lock(&thread_lock);
 	threads_starting--;
@@ -69,7 +75,7 @@ static void *workerfn(void *arg)
 	pthread_mutex_unlock(&thread_lock);
 
 	do {
-		for (i = 0; i < nfutexes; i++, w->ops++) {
+		for (i = 0; i < nfutexes; i++, ops++) {
 			/*
 			 * We want the futex calls to fail in order to stress
 			 * the hashing of uaddr and not measure other steps,
@@ -83,6 +89,7 @@ static void *workerfn(void *arg)
 		}
 	}  while (!done);
 
+	w->ops = ops;
 	return NULL;
 }
 
@@ -123,6 +130,8 @@ int bench_futex_hash(int argc, const char **argv,
 	}
 
 	ncpus = sysconf(_SC_NPROCESSORS_ONLN);
+	nsecs = futexbench_sanitize_numeric(nsecs);
+	nfutexes = futexbench_sanitize_numeric(nfutexes);
 
 	sigfillset(&act.sa_mask);
 	act.sa_sigaction = toggle_done;
@@ -130,6 +139,8 @@ int bench_futex_hash(int argc, const char **argv,
 
 	if (!nthreads) /* default to the number of CPUs */
 		nthreads = ncpus;
+	else
+		nthreads = futexbench_sanitize_numeric(nthreads);
 
 	worker = calloc(nthreads, sizeof(*worker));
 	if (!worker)

@@ -67,7 +67,7 @@ void xen_init_irq_ops(void);
 void xen_setup_timer(int cpu);
 void xen_setup_runstate_info(int cpu);
 void xen_teardown_timer(int cpu);
-cycle_t xen_clocksource_read(void);
+u64 xen_clocksource_read(void);
 void xen_setup_cpu_clockevents(void);
 void __init xen_init_time_ops(void);
 void __init xen_hvm_init_time_ops(void);
@@ -76,6 +76,7 @@ irqreturn_t xen_debug_interrupt(int irq, void *dev_id);
 
 bool xen_vcpu_stolen(int vcpu);
 
+void xen_vcpu_setup(int cpu);
 void xen_setup_vcpu_info_placement(void);
 
 #ifdef CONFIG_SMP

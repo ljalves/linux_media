@@ -151,8 +151,6 @@ static DECLARE_WAIT_QUEUE_HEAD(balloon_wq);
 static void balloon_process(struct work_struct *work);
 static DECLARE_DELAYED_WORK(balloon_worker, balloon_process);
 
-static void release_memory_resource(struct resource *resource);
-
 /* When ballooning out (allocating memory to return to Xen) we don't really
    want the kernel to try too hard since that can trigger the oom killer. */
 #define GFP_BALLOON \
@@ -182,7 +180,6 @@ static void __balloon_append(struct page *page)
 static void balloon_append(struct page *page)
 {
 	__balloon_append(page);
-	adjust_managed_page_count(page, -1);
 }
 
 /* balloon_retrieve: rescue a page from the balloon, if it is not empty. */
@@ -202,8 +199,6 @@ static struct page *balloon_retrieve(bool require_lowmem)
 		balloon_stats.balloon_high--;
 	else
 		balloon_stats.balloon_low--;
-
-	adjust_managed_page_count(page, 1);
 
 	return page;
 }
@@ -248,6 +243,19 @@ static enum bp_state update_schedule(enum bp_state state)
 }
 
 #ifdef CONFIG_XEN_BALLOON_MEMORY_HOTPLUG
+static void release_memory_resource(struct resource *resource)
+{
+	if (!resource)
+		return;
+
+	/*
+	 * No need to reset region to identity mapped since we now
+	 * know that no I/O can be in this region
+	 */
+	release_resource(resource);
+	kfree(resource);
+}
+
 static struct resource *additional_memory_resource(phys_addr_t size)
 {
 	struct resource *res;
@@ -284,19 +292,6 @@ static struct resource *additional_memory_resource(phys_addr_t size)
 #endif
 
 	return res;
-}
-
-static void release_memory_resource(struct resource *resource)
-{
-	if (!resource)
-		return;
-
-	/*
-	 * No need to reset region to identity mapped since we now
-	 * know that no I/O can be in this region
-	 */
-	release_resource(resource);
-	kfree(resource);
 }
 
 static enum bp_state reserve_additional_memory(void)
@@ -480,7 +475,7 @@ static enum bp_state increase_reservation(unsigned long nr_pages)
 #endif
 
 		/* Relinquish the page back to the allocator. */
-		__free_reserved_page(page);
+		free_reserved_page(page);
 	}
 
 	balloon_stats.current_pages += rc;
@@ -511,6 +506,7 @@ static enum bp_state decrease_reservation(unsigned long nr_pages, gfp_t gfp)
 			state = BP_EAGAIN;
 			break;
 		}
+		adjust_managed_page_count(page, -1);
 		scrub_page(page);
 		list_add(&page->lru, &pages);
 	}

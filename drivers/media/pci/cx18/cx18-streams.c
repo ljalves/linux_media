@@ -353,8 +353,8 @@ static int cx18_prep_dev(struct cx18 *cx, int type)
 		if (cx->card->hw_all & CX18_HW_DVB) {
 			s->dvb = kzalloc(sizeof(struct cx18_dvb), GFP_KERNEL);
 			if (s->dvb == NULL) {
-				CX18_ERR("Couldn't allocate cx18_dvb structure"
-					 " for %s\n", s->name);
+				CX18_ERR("Couldn't allocate cx18_dvb structure for %s\n",
+					 s->name);
 				return -ENOMEM;
 			}
 		} else {
@@ -462,8 +462,7 @@ static int cx18_reg_dev(struct cx18 *cx, int type)
 
 	case VFL_TYPE_VBI:
 		if (cx->stream_buffers[type])
-			CX18_INFO("Registered device %s for %s "
-				  "(%d x %d bytes)\n",
+			CX18_INFO("Registered device %s for %s (%d x %d bytes)\n",
 				  name, s->name, cx->stream_buffers[type],
 				  cx->stream_buf_size[type]);
 		else
@@ -605,9 +604,9 @@ static void cx18_vbi_setup(struct cx18_stream *s)
 	/* Lines per field */
 	data[1] = (lines / 2) | ((lines / 2) << 16);
 	/* bytes per line */
-	data[2] = (raw ? vbi_active_samples
-		       : (cx->is_60hz ? vbi_hblank_samples_60Hz
-				      : vbi_hblank_samples_50Hz));
+	data[2] = (raw ? VBI_ACTIVE_SAMPLES
+		       : (cx->is_60hz ? VBI_HBLANK_SAMPLES_60HZ
+				      : VBI_HBLANK_SAMPLES_50HZ));
 	/* Every X number of frames a VBI interrupt arrives
 	   (frames as in 25 or 30 fps) */
 	data[3] = 1;
@@ -761,7 +760,7 @@ static void cx18_stream_configure_mdls(struct cx18_stream *s)
 		s->bufs_per_mdl = 1;
 		if  (cx18_raw_vbi(s->cx)) {
 			s->mdl_size = (s->cx->is_60hz ? 12 : 18)
-						       * 2 * vbi_active_samples;
+						       * 2 * VBI_ACTIVE_SAMPLES;
 		} else {
 			/*
 			 * See comment in cx18_vbi_setup() below about the
@@ -769,8 +768,8 @@ static void cx18_stream_configure_mdls(struct cx18_stream *s)
 			 * the lines on which EAV RP codes toggle.
 			*/
 			s->mdl_size = s->cx->is_60hz
-				   ? (21 - 4 + 1) * 2 * vbi_hblank_samples_60Hz
-				   : (23 - 2 + 1) * 2 * vbi_hblank_samples_50Hz;
+				   ? (21 - 4 + 1) * 2 * VBI_HBLANK_SAMPLES_60HZ
+				   : (23 - 2 + 1) * 2 * VBI_HBLANK_SAMPLES_50HZ;
 		}
 		break;
 	default:

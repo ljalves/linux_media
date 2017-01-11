@@ -570,19 +570,21 @@ static void dm9000_set_msglevel(struct net_device *dev, u32 value)
 	dm->msg_enable = value;
 }
 
-static int dm9000_get_settings(struct net_device *dev, struct ethtool_cmd *cmd)
+static int dm9000_get_link_ksettings(struct net_device *dev,
+				     struct ethtool_link_ksettings *cmd)
 {
 	struct board_info *dm = to_dm9000_board(dev);
 
-	mii_ethtool_gset(&dm->mii, cmd);
+	mii_ethtool_get_link_ksettings(&dm->mii, cmd);
 	return 0;
 }
 
-static int dm9000_set_settings(struct net_device *dev, struct ethtool_cmd *cmd)
+static int dm9000_set_link_ksettings(struct net_device *dev,
+				     const struct ethtool_link_ksettings *cmd)
 {
 	struct board_info *dm = to_dm9000_board(dev);
 
-	return mii_ethtool_sset(&dm->mii, cmd);
+	return mii_ethtool_set_link_ksettings(&dm->mii, cmd);
 }
 
 static int dm9000_nway_reset(struct net_device *dev)
@@ -741,8 +743,6 @@ static int dm9000_set_wol(struct net_device *dev, struct ethtool_wolinfo *w)
 
 static const struct ethtool_ops dm9000_ethtool_ops = {
 	.get_drvinfo		= dm9000_get_drvinfo,
-	.get_settings		= dm9000_get_settings,
-	.set_settings		= dm9000_set_settings,
 	.get_msglevel		= dm9000_get_msglevel,
 	.set_msglevel		= dm9000_set_msglevel,
 	.nway_reset		= dm9000_nway_reset,
@@ -752,6 +752,8 @@ static const struct ethtool_ops dm9000_ethtool_ops = {
 	.get_eeprom_len		= dm9000_get_eeprom_len,
 	.get_eeprom		= dm9000_get_eeprom,
 	.set_eeprom		= dm9000_set_eeprom,
+	.get_link_ksettings	= dm9000_get_link_ksettings,
+	.set_link_ksettings	= dm9000_set_link_ksettings,
 };
 
 static void dm9000_show_carrier(struct board_info *db,
@@ -1299,6 +1301,7 @@ static int
 dm9000_open(struct net_device *dev)
 {
 	struct board_info *db = netdev_priv(dev);
+	unsigned int irq_flags = irq_get_trigger_type(dev->irq);
 
 	if (netif_msg_ifup(db))
 		dev_dbg(db->dev, "enabling %s\n", dev->name);
@@ -1306,8 +1309,10 @@ dm9000_open(struct net_device *dev)
 	/* If there is no IRQ type specified, tell the user that this is a
 	 * problem
 	 */
-	if (irq_get_trigger_type(dev->irq) == IRQF_TRIGGER_NONE)
+	if (irq_flags == IRQF_TRIGGER_NONE)
 		dev_warn(db->dev, "WARNING: no IRQ resource flags set.\n");
+
+	irq_flags |= IRQF_SHARED;
 
 	/* GPIO0 on pre-activate PHY, Reg 1F is not set by reset */
 	iow(db, DM9000_GPR, 0);	/* REG_1F bit0 activate phyxcer */
@@ -1316,8 +1321,7 @@ dm9000_open(struct net_device *dev)
 	/* Initialize DM9000 board */
 	dm9000_init_dm9000(dev);
 
-	if (request_irq(dev->irq, dm9000_interrupt, IRQF_SHARED,
-			dev->name, dev))
+	if (request_irq(dev->irq, dm9000_interrupt, irq_flags, dev->name, dev))
 		return -EAGAIN;
 	/* Now that we have an interrupt handler hooked up we can unmask
 	 * our interrupts
@@ -1380,7 +1384,6 @@ static const struct net_device_ops dm9000_netdev_ops = {
 	.ndo_tx_timeout		= dm9000_timeout,
 	.ndo_set_rx_mode	= dm9000_hash_table,
 	.ndo_do_ioctl		= dm9000_ioctl,
-	.ndo_change_mtu		= eth_change_mtu,
 	.ndo_set_features	= dm9000_set_features,
 	.ndo_validate_addr	= eth_validate_addr,
 	.ndo_set_mac_address	= eth_mac_addr,

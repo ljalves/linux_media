@@ -22,6 +22,7 @@
 #include <linux/mm.h>
 #include <linux/slab.h>
 #include <linux/bitmap.h>
+#include <linux/pm_runtime.h>
 
 #include "intel_th.h"
 #include "gth.h"
@@ -190,6 +191,11 @@ static ssize_t master_attr_store(struct device *dev,
 	if (old_port >= 0) {
 		gth->master[ma->master] = -1;
 		clear_bit(ma->master, gth->output[old_port].master);
+
+		/*
+		 * if the port is active, program this setting,
+		 * implies that runtime PM is on
+		 */
 		if (gth->output[old_port].output->active)
 			gth_master_set(gth, ma->master, -1);
 	}
@@ -204,7 +210,7 @@ static ssize_t master_attr_store(struct device *dev,
 
 		set_bit(ma->master, gth->output[port].master);
 
-		/* if the port is active, program this setting */
+		/* if the port is active, program this setting, see above */
 		if (gth->output[port].output->active)
 			gth_master_set(gth, ma->master, port);
 	}
@@ -326,10 +332,14 @@ static ssize_t output_attr_show(struct device *dev,
 	struct gth_device *gth = oa->gth;
 	size_t count;
 
+	pm_runtime_get_sync(dev);
+
 	spin_lock(&gth->gth_lock);
 	count = snprintf(buf, PAGE_SIZE, "%x\n",
 			 gth_output_parm_get(gth, oa->port, oa->parm));
 	spin_unlock(&gth->gth_lock);
+
+	pm_runtime_put(dev);
 
 	return count;
 }
@@ -346,9 +356,13 @@ static ssize_t output_attr_store(struct device *dev,
 	if (kstrtouint(buf, 16, &config) < 0)
 		return -EINVAL;
 
+	pm_runtime_get_sync(dev);
+
 	spin_lock(&gth->gth_lock);
 	gth_output_parm_set(gth, oa->port, oa->parm, config);
 	spin_unlock(&gth->gth_lock);
+
+	pm_runtime_put(dev);
 
 	return count;
 }
@@ -451,7 +465,7 @@ static int intel_th_output_attributes(struct gth_device *gth)
 }
 
 /**
- * intel_th_gth_disable() - enable tracing to an output device
+ * intel_th_gth_disable() - disable tracing to an output device
  * @thdev:	GTH device
  * @output:	output device's descriptor
  *
@@ -550,6 +564,9 @@ static int intel_th_gth_assign(struct intel_th_device *thdev,
 	struct gth_device *gth = dev_get_drvdata(&thdev->dev);
 	int i, id;
 
+	if (thdev->host_mode)
+		return -EBUSY;
+
 	if (othdev->type != INTEL_TH_OUTPUT)
 		return -EINVAL;
 
@@ -585,6 +602,9 @@ static void intel_th_gth_unassign(struct intel_th_device *thdev,
 {
 	struct gth_device *gth = dev_get_drvdata(&thdev->dev);
 	int port = othdev->output.port;
+
+	if (thdev->host_mode)
+		return;
 
 	spin_lock(&gth->gth_lock);
 	othdev->output.port = -1;
@@ -640,9 +660,24 @@ static int intel_th_gth_probe(struct intel_th_device *thdev)
 	gth->base = base;
 	spin_lock_init(&gth->gth_lock);
 
+	/*
+	 * Host mode can be signalled via SW means or via SCRPD_DEBUGGER_IN_USE
+	 * bit. Either way, don't reset HW in this case, and don't export any
+	 * capture configuration attributes. Also, refuse to assign output
+	 * drivers to ports, see intel_th_gth_assign().
+	 */
+	if (thdev->host_mode)
+		goto done;
+
 	ret = intel_th_gth_reset(gth);
-	if (ret)
-		return ret;
+	if (ret) {
+		if (ret != -EBUSY)
+			return ret;
+
+		thdev->host_mode = true;
+
+		goto done;
+	}
 
 	for (i = 0; i < TH_CONFIGURABLE_MASTERS + 1; i++)
 		gth->master[i] = -1;
@@ -663,6 +698,7 @@ static int intel_th_gth_probe(struct intel_th_device *thdev)
 		return -ENOMEM;
 	}
 
+done:
 	dev_set_drvdata(dev, gth);
 
 	return 0;

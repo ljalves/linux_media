@@ -7,13 +7,14 @@
  */
 
 #include <linux/kernel.h>
-#include <linux/module.h>
+#include <linux/init.h>
 #include <linux/ioport.h>
 #include <linux/of_pci.h>
 #include <linux/of.h>
+#include <linux/pci-ecam.h>
 #include <linux/platform_device.h>
 
-#include "../ecam.h"
+#if defined(CONFIG_PCI_HOST_THUNDER_ECAM) || (defined(CONFIG_ACPI) && defined(CONFIG_PCI_QUIRKS))
 
 static void set_val(u32 v, int where, int size, u32 *val)
 {
@@ -347,7 +348,7 @@ static int thunder_ecam_config_write(struct pci_bus *bus, unsigned int devfn,
 	return pci_generic_config_write(bus, devfn, where, size, val);
 }
 
-static struct pci_ecam_ops pci_thunder_ecam_ops = {
+struct pci_ecam_ops pci_thunder_ecam_ops = {
 	.bus_shift	= 20,
 	.pci_ops	= {
 		.map_bus        = pci_ecam_map_bus,
@@ -356,11 +357,12 @@ static struct pci_ecam_ops pci_thunder_ecam_ops = {
 	}
 };
 
+#ifdef CONFIG_PCI_HOST_THUNDER_ECAM
+
 static const struct of_device_id thunder_ecam_of_match[] = {
 	{ .compatible = "cavium,pci-host-thunder-ecam" },
 	{ },
 };
-MODULE_DEVICE_TABLE(of, thunder_ecam_of_match);
 
 static int thunder_ecam_probe(struct platform_device *pdev)
 {
@@ -374,7 +376,7 @@ static struct platform_driver thunder_ecam_driver = {
 	},
 	.probe = thunder_ecam_probe,
 };
-module_platform_driver(thunder_ecam_driver);
+builtin_platform_driver(thunder_ecam_driver);
 
-MODULE_DESCRIPTION("Thunder ECAM PCI host driver");
-MODULE_LICENSE("GPL v2");
+#endif
+#endif

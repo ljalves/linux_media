@@ -42,13 +42,10 @@
 
 
 
-#ifndef __long_aligned
-#define __long_aligned __attribute__((aligned((sizeof(long)))))
-#endif
-static const u8 mac_bcast[ETH_ALEN] __long_aligned = {
+static const u8 mac_bcast[ETH_ALEN + 2] __long_aligned = {
 	0xff, 0xff, 0xff, 0xff, 0xff, 0xff
 };
-static const u8 mac_v6_allmcast[ETH_ALEN] __long_aligned = {
+static const u8 mac_v6_allmcast[ETH_ALEN + 2] __long_aligned = {
 	0x33, 0x33, 0x00, 0x00, 0x00, 0x01
 };
 static const int alb_delta_in_ticks = HZ / ALB_TIMER_TICKS_PER_SEC;
@@ -953,13 +950,61 @@ static void alb_send_lp_vid(struct slave *slave, u8 mac_addr[],
 	dev_queue_xmit(skb);
 }
 
+struct alb_walk_data {
+	struct bonding *bond;
+	struct slave *slave;
+	u8 *mac_addr;
+	bool strict_match;
+};
+
+static int alb_upper_dev_walk(struct net_device *upper, void *_data)
+{
+	struct alb_walk_data *data = _data;
+	bool strict_match = data->strict_match;
+	struct bonding *bond = data->bond;
+	struct slave *slave = data->slave;
+	u8 *mac_addr = data->mac_addr;
+	struct bond_vlan_tag *tags;
+
+	if (is_vlan_dev(upper) && vlan_get_encap_level(upper) == 0) {
+		if (strict_match &&
+		    ether_addr_equal_64bits(mac_addr,
+					    upper->dev_addr)) {
+			alb_send_lp_vid(slave, mac_addr,
+					vlan_dev_vlan_proto(upper),
+					vlan_dev_vlan_id(upper));
+		} else if (!strict_match) {
+			alb_send_lp_vid(slave, upper->dev_addr,
+					vlan_dev_vlan_proto(upper),
+					vlan_dev_vlan_id(upper));
+		}
+	}
+
+	/* If this is a macvlan device, then only send updates
+	 * when strict_match is turned off.
+	 */
+	if (netif_is_macvlan(upper) && !strict_match) {
+		tags = bond_verify_device_path(bond->dev, upper, 0);
+		if (IS_ERR_OR_NULL(tags))
+			BUG();
+		alb_send_lp_vid(slave, upper->dev_addr,
+				tags[0].vlan_proto, tags[0].vlan_id);
+		kfree(tags);
+	}
+
+	return 0;
+}
+
 static void alb_send_learning_packets(struct slave *slave, u8 mac_addr[],
 				      bool strict_match)
 {
 	struct bonding *bond = bond_get_bond_by_slave(slave);
-	struct net_device *upper;
-	struct list_head *iter;
-	struct bond_vlan_tag *tags;
+	struct alb_walk_data data = {
+		.strict_match = strict_match,
+		.mac_addr = mac_addr,
+		.slave = slave,
+		.bond = bond,
+	};
 
 	/* send untagged */
 	alb_send_lp_vid(slave, mac_addr, 0, 0);
@@ -968,33 +1013,7 @@ static void alb_send_learning_packets(struct slave *slave, u8 mac_addr[],
 	 * for that device.
 	 */
 	rcu_read_lock();
-	netdev_for_each_all_upper_dev_rcu(bond->dev, upper, iter) {
-		if (is_vlan_dev(upper) && vlan_get_encap_level(upper) == 0) {
-			if (strict_match &&
-			    ether_addr_equal_64bits(mac_addr,
-						    upper->dev_addr)) {
-				alb_send_lp_vid(slave, mac_addr,
-						vlan_dev_vlan_proto(upper),
-						vlan_dev_vlan_id(upper));
-			} else if (!strict_match) {
-				alb_send_lp_vid(slave, upper->dev_addr,
-						vlan_dev_vlan_proto(upper),
-						vlan_dev_vlan_id(upper));
-			}
-		}
-
-		/* If this is a macvlan device, then only send updates
-		 * when strict_match is turned off.
-		 */
-		if (netif_is_macvlan(upper) && !strict_match) {
-			tags = bond_verify_device_path(bond->dev, upper, 0);
-			if (IS_ERR_OR_NULL(tags))
-				BUG();
-			alb_send_lp_vid(slave, upper->dev_addr,
-					tags[0].vlan_proto, tags[0].vlan_id);
-			kfree(tags);
-		}
-	}
+	netdev_walk_all_upper_dev_rcu(bond->dev, alb_upper_dev_walk, &data);
 	rcu_read_unlock();
 }
 

@@ -24,53 +24,78 @@
 #include "mdp5_cfg.h"	/* must be included before mdp5.xml.h */
 #include "mdp5.xml.h"
 #include "mdp5_ctl.h"
+#include "mdp5_pipe.h"
 #include "mdp5_smp.h"
+
+struct mdp5_state;
 
 struct mdp5_kms {
 	struct mdp_kms base;
 
 	struct drm_device *dev;
 
+	struct platform_device *pdev;
+
+	unsigned num_hwpipes;
+	struct mdp5_hw_pipe *hwpipes[SSPP_MAX];
+
 	struct mdp5_cfg_handler *cfg;
 	uint32_t caps;	/* MDP capabilities (MDP_CAP_XXX bits) */
 
+	/**
+	 * Global atomic state.  Do not access directly, use mdp5_get_state()
+	 */
+	struct mdp5_state *state;
+	struct drm_modeset_lock state_lock;
 
 	/* mapper-id used to request GEM buffer mapped for scanout: */
 	int id;
-	struct msm_mmu *mmu;
+	struct msm_gem_address_space *aspace;
 
 	struct mdp5_smp *smp;
 	struct mdp5_ctl_manager *ctlm;
 
 	/* io/register spaces: */
-	void __iomem *mmio, *vbif;
-
-	struct regulator *vdd;
+	void __iomem *mmio;
 
 	struct clk *axi_clk;
 	struct clk *ahb_clk;
-	struct clk *src_clk;
 	struct clk *core_clk;
 	struct clk *lut_clk;
 	struct clk *vsync_clk;
 
 	/*
 	 * lock to protect access to global resources: ie., following register:
-	 *	- REG_MDP5_MDP_DISP_INTF_SEL
+	 *	- REG_MDP5_DISP_INTF_SEL
 	 */
 	spinlock_t resource_lock;
 
-	struct mdp_irq error_handler;
+	bool rpm_enabled;
 
-	struct {
-		volatile unsigned long enabled_mask;
-		struct irq_domain *domain;
-	} irqcontroller;
+	struct mdp_irq error_handler;
 };
 #define to_mdp5_kms(x) container_of(x, struct mdp5_kms, base)
 
+/* Global atomic state for tracking resources that are shared across
+ * multiple kms objects (planes/crtcs/etc).
+ *
+ * For atomic updates which require modifying global state,
+ */
+struct mdp5_state {
+	struct mdp5_hw_pipe_state hwpipe;
+	struct mdp5_smp_state smp;
+};
+
+struct mdp5_state *__must_check
+mdp5_get_state(struct drm_atomic_state *s);
+
+/* Atomic plane state.  Subclasses the base drm_plane_state in order to
+ * track assigned hwpipe and hw specific state.
+ */
 struct mdp5_plane_state {
 	struct drm_plane_state base;
+
+	struct mdp5_hw_pipe *hwpipe;
 
 	/* aligned with property */
 	uint8_t premultiplied;
@@ -80,11 +105,6 @@ struct mdp5_plane_state {
 	/* assigned by crtc blender */
 	enum mdp_mixer_stage_id stage;
 
-	/* some additional transactional status to help us know in the
-	 * apply path whether we need to update SMP allocation, and
-	 * whether current update is still pending:
-	 */
-	bool mode_changed : 1;
 	bool pending : 1;
 };
 #define to_mdp5_plane_state(x) \
@@ -116,6 +136,18 @@ static inline void mdp5_write(struct mdp5_kms *mdp5_kms, u32 reg, u32 data)
 static inline u32 mdp5_read(struct mdp5_kms *mdp5_kms, u32 reg)
 {
 	return msm_readl(mdp5_kms->mmio + reg);
+}
+
+static inline const char *stage2name(enum mdp_mixer_stage_id stage)
+{
+	static const char *names[] = {
+#define NAME(n) [n] = #n
+		NAME(STAGE_UNUSED), NAME(STAGE_BASE),
+		NAME(STAGE0), NAME(STAGE1), NAME(STAGE2),
+		NAME(STAGE3), NAME(STAGE4), NAME(STAGE6),
+#undef NAME
+	};
+	return names[stage];
 }
 
 static inline const char *pipe2name(enum mdp5_pipe pipe)
@@ -200,13 +232,10 @@ int mdp5_irq_domain_init(struct mdp5_kms *mdp5_kms);
 void mdp5_irq_domain_fini(struct mdp5_kms *mdp5_kms);
 
 uint32_t mdp5_plane_get_flush(struct drm_plane *plane);
-void mdp5_plane_complete_flip(struct drm_plane *plane);
 void mdp5_plane_complete_commit(struct drm_plane *plane,
 	struct drm_plane_state *state);
 enum mdp5_pipe mdp5_plane_pipe(struct drm_plane *plane);
-struct drm_plane *mdp5_plane_init(struct drm_device *dev,
-		enum mdp5_pipe pipe, bool private_plane,
-		uint32_t reg_offset, uint32_t caps);
+struct drm_plane *mdp5_plane_init(struct drm_device *dev, bool primary);
 
 uint32_t mdp5_crtc_vblank(struct drm_crtc *crtc);
 

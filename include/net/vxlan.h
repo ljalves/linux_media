@@ -1,13 +1,10 @@
 #ifndef __NET_VXLAN_H
 #define __NET_VXLAN_H 1
 
-#include <linux/ip.h>
-#include <linux/ipv6.h>
 #include <linux/if_vlan.h>
-#include <linux/skbuff.h>
-#include <linux/netdevice.h>
-#include <linux/udp.h>
+#include <net/udp_tunnel.h>
 #include <net/dst_metadata.h>
+#include <net/udp_tunnel.h>
 
 /* VXLAN protocol (RFC 7348) header:
  * +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
@@ -228,9 +225,9 @@ struct vxlan_config {
 struct vxlan_dev {
 	struct hlist_node hlist;	/* vni hash table */
 	struct list_head  next;		/* vxlan's per namespace list */
-	struct vxlan_sock *vn4_sock;	/* listening socket for IPv4 */
+	struct vxlan_sock __rcu *vn4_sock;	/* listening socket for IPv4 */
 #if IS_ENABLED(CONFIG_IPV6)
-	struct vxlan_sock *vn6_sock;	/* listening socket for IPv6 */
+	struct vxlan_sock __rcu *vn6_sock;	/* listening socket for IPv6 */
 #endif
 	struct net_device *dev;
 	struct net	  *net;		/* netns for packet i/o */
@@ -283,16 +280,6 @@ struct vxlan_dev {
 
 struct net_device *vxlan_dev_create(struct net *net, const char *name,
 				    u8 name_assign_type, struct vxlan_config *conf);
-
-static inline __be16 vxlan_dev_dst_port(struct vxlan_dev *vxlan,
-					unsigned short family)
-{
-#if IS_ENABLED(CONFIG_IPV6)
-	if (family == AF_INET6)
-		return inet_sk(vxlan->vn6_sock->sock->sk)->inet_sport;
-#endif
-	return inet_sk(vxlan->vn4_sock->sock->sk)->inet_sport;
-}
 
 static inline netdev_features_t vxlan_features_check(struct sk_buff *skb,
 						     netdev_features_t features)
@@ -353,24 +340,6 @@ static inline __be32 vxlan_vni_field(__be32 vni)
 #endif
 }
 
-static inline __be32 vxlan_tun_id_to_vni(__be64 tun_id)
-{
-#if defined(__BIG_ENDIAN)
-	return (__force __be32)tun_id;
-#else
-	return (__force __be32)((__force u64)tun_id >> 32);
-#endif
-}
-
-static inline __be64 vxlan_vni_to_tun_id(__be32 vni)
-{
-#if defined(__BIG_ENDIAN)
-	return (__force __be64)vni;
-#else
-	return (__force __be64)((u64)(__force u32)vni << 32);
-#endif
-}
-
 static inline size_t vxlan_rco_start(__be32 vni_field)
 {
 	return be32_to_cpu(vni_field & VXLAN_RCO_MASK) << VXLAN_RCO_SHIFT;
@@ -390,12 +359,6 @@ static inline __be32 vxlan_compute_rco(unsigned int start, unsigned int offset)
 	if (offset == offsetof(struct udphdr, check))
 		vni_field |= VXLAN_RCO_UDP;
 	return vni_field;
-}
-
-static inline void vxlan_get_rx_port(struct net_device *netdev)
-{
-	ASSERT_RTNL();
-	call_netdevice_notifiers(NETDEV_OFFLOAD_PUSH_VXLAN, netdev);
 }
 
 static inline unsigned short vxlan_get_sk_family(struct vxlan_sock *vs)

@@ -181,8 +181,9 @@ static void encode_layoutstats(struct xdr_stream *xdr,
 			NFS4_DEVICEID4_SIZE);
 	/* Encode layoutupdate4 */
 	*p++ = cpu_to_be32(devinfo->layout_type);
-	if (devinfo->layoutstats_encode != NULL)
-		devinfo->layoutstats_encode(xdr, args, devinfo);
+	if (devinfo->ld_private.ops)
+		devinfo->ld_private.ops->encode(xdr, args,
+				&devinfo->ld_private);
 	else
 		encode_uint32(xdr, 0);
 }
@@ -330,13 +331,21 @@ static int decode_write_response(struct xdr_stream *xdr,
 				 struct nfs42_write_res *res)
 {
 	__be32 *p;
-	int stateids;
 
 	p = xdr_inline_decode(xdr, 4 + 8 + 4);
 	if (unlikely(!p))
 		goto out_overflow;
 
-	stateids = be32_to_cpup(p++);
+	/*
+	 * We never use asynchronous mode, so warn if a server returns
+	 * a stateid.
+	 */
+	if (unlikely(*p != 0)) {
+		pr_err_once("%s: server has set unrequested "
+				"asynchronous mode\n", __func__);
+		return -EREMOTEIO;
+	}
+	p++;
 	p = xdr_decode_hyper(p, &res->count);
 	res->verifier.committed = be32_to_cpup(p);
 	return decode_verifier(xdr, &res->verifier.verifier);

@@ -17,7 +17,6 @@
 #include "pciback.h"
 
 #define INVALID_EVTCHN_IRQ  (-1)
-struct workqueue_struct *xen_pcibk_wq;
 
 static bool __read_mostly passthrough;
 module_param(passthrough, bool, S_IRUGO);
@@ -76,8 +75,7 @@ static void xen_pcibk_disconnect(struct xen_pcibk_device *pdev)
 	/* If the driver domain started an op, make sure we complete it
 	 * before releasing the shared memory */
 
-	/* Note, the workqueue does not use spinlocks at all.*/
-	flush_workqueue(xen_pcibk_wq);
+	flush_work(&pdev->op_work);
 
 	if (pdev->sh_info != NULL) {
 		xenbus_unmap_ring_vfree(pdev->xdev, pdev->sh_info);
@@ -364,7 +362,7 @@ static int xen_pcibk_reconfigure(struct xen_pcibk_device *pdev)
 	int err = 0;
 	int num_devs;
 	int domain, bus, slot, func;
-	int substate;
+	unsigned int substate;
 	int i, len;
 	char state_str[64];
 	char dev_str[64];
@@ -397,10 +395,8 @@ static int xen_pcibk_reconfigure(struct xen_pcibk_device *pdev)
 					 "configuration");
 			goto out;
 		}
-		err = xenbus_scanf(XBT_NIL, pdev->xdev->nodename, state_str,
-				   "%d", &substate);
-		if (err != 1)
-			substate = XenbusStateUnknown;
+		substate = xenbus_read_unsigned(pdev->xdev->nodename, state_str,
+						XenbusStateUnknown);
 
 		switch (substate) {
 		case XenbusStateInitialising:
@@ -733,11 +729,6 @@ const struct xen_pcibk_backend *__read_mostly xen_pcibk_backend;
 
 int __init xen_pcibk_xenbus_register(void)
 {
-	xen_pcibk_wq = create_workqueue("xen_pciback_workqueue");
-	if (!xen_pcibk_wq) {
-		pr_err("%s: create xen_pciback_workqueue failed\n", __func__);
-		return -EFAULT;
-	}
 	xen_pcibk_backend = &xen_pcibk_vpci_backend;
 	if (passthrough)
 		xen_pcibk_backend = &xen_pcibk_passthrough_backend;
@@ -747,6 +738,5 @@ int __init xen_pcibk_xenbus_register(void)
 
 void __exit xen_pcibk_xenbus_unregister(void)
 {
-	destroy_workqueue(xen_pcibk_wq);
 	xenbus_unregister_driver(&xen_pcibk_driver);
 }

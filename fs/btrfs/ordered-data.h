@@ -145,10 +145,10 @@ struct btrfs_ordered_extent {
  * calculates the total size you need to allocate for an ordered sum
  * structure spanning 'bytes' in the file
  */
-static inline int btrfs_ordered_sum_size(struct btrfs_root *root,
+static inline int btrfs_ordered_sum_size(struct btrfs_fs_info *fs_info,
 					 unsigned long bytes)
 {
-	int num_sectors = (int)DIV_ROUND_UP(bytes, root->sectorsize);
+	int num_sectors = (int)DIV_ROUND_UP(bytes, fs_info->sectorsize);
 	return sizeof(struct btrfs_ordered_sum) + num_sectors * sizeof(u32);
 }
 
@@ -199,7 +199,7 @@ int btrfs_find_ordered_sum(struct inode *inode, u64 offset, u64 disk_bytenr,
 			   u32 *sum, int len);
 int btrfs_wait_ordered_extents(struct btrfs_root *root, int nr,
 			       const u64 range_start, const u64 range_len);
-void btrfs_wait_ordered_roots(struct btrfs_fs_info *fs_info, int nr,
+int btrfs_wait_ordered_roots(struct btrfs_fs_info *fs_info, int nr,
 			      const u64 range_start, const u64 range_len);
 void btrfs_get_logged_extents(struct inode *inode,
 			      struct list_head *logged_list,

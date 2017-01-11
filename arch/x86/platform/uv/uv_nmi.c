@@ -24,7 +24,7 @@
 #include <linux/kdb.h>
 #include <linux/kexec.h>
 #include <linux/kgdb.h>
-#include <linux/module.h>
+#include <linux/moduleparam.h>
 #include <linux/nmi.h>
 #include <linux/sched.h>
 #include <linux/slab.h>
@@ -387,8 +387,8 @@ static void uv_nmi_dump_cpu_ip_hdr(void)
 /* Dump Instruction Pointer info */
 static void uv_nmi_dump_cpu_ip(int cpu, struct pt_regs *regs)
 {
-	pr_info("UV: %4d %6d %-32.32s ", cpu, current->pid, current->comm);
-	printk_address(regs->ip);
+	pr_info("UV: %4d %6d %-32.32s %pS",
+		cpu, current->pid, current->comm, (void *)regs->ip);
 }
 
 /*

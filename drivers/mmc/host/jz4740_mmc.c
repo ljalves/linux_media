@@ -320,8 +320,7 @@ dma_unmap:
 }
 
 static void jz4740_mmc_pre_request(struct mmc_host *mmc,
-				   struct mmc_request *mrq,
-				   bool is_first_req)
+				   struct mmc_request *mrq)
 {
 	struct jz4740_mmc_host *host = mmc_priv(mmc);
 	struct mmc_data *data = mrq->data;
@@ -1068,8 +1067,6 @@ static int jz4740_mmc_probe(struct platform_device* pdev)
 	jz4740_mmc_clock_disable(host);
 	setup_timer(&host->timeout_timer, jz4740_mmc_timeout,
 			(unsigned long)host);
-	/* It is not important when it times out, it just needs to timeout. */
-	set_timer_slack(&host->timeout_timer, HZ);
 
 	host->use_dma = true;
 	if (host->use_dma && jz4740_mmc_acquire_dma_channels(host) != 0)

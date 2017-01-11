@@ -293,11 +293,18 @@ static int ti_pipe3_init(struct phy *x)
 		ret = ti_pipe3_dpll_wait_lock(phy);
 	}
 
-	/* Program the DPLL only if not locked */
+	/* SATA has issues if re-programmed when locked */
 	val = ti_pipe3_readl(phy->pll_ctrl_base, PLL_STATUS);
-	if (!(val & PLL_LOCK))
-		if (ti_pipe3_dpll_program(phy))
-			return -EINVAL;
+	if ((val & PLL_LOCK) && of_device_is_compatible(phy->dev->of_node,
+							"ti,phy-pipe3-sata"))
+		return ret;
+
+	/* Program the DPLL */
+	ret = ti_pipe3_dpll_program(phy);
+	if (ret) {
+		ti_pipe3_disable_clocks(phy);
+		return -EINVAL;
+	}
 
 	return ret;
 }
@@ -530,10 +537,7 @@ static int ti_pipe3_get_pll_base(struct ti_pipe3 *phy)
 	res = platform_get_resource_byname(pdev, IORESOURCE_MEM,
 					   "pll_ctrl");
 	phy->pll_ctrl_base = devm_ioremap_resource(dev, res);
-	if (IS_ERR(phy->pll_ctrl_base))
-		return PTR_ERR(phy->pll_ctrl_base);
-
-	return 0;
+	return PTR_ERR_OR_ZERO(phy->pll_ctrl_base);
 }
 
 static int ti_pipe3_probe(struct platform_device *pdev)
@@ -585,10 +589,7 @@ static int ti_pipe3_probe(struct platform_device *pdev)
 	ti_pipe3_power_off(generic_phy);
 
 	phy_provider = devm_of_phy_provider_register(dev, of_phy_simple_xlate);
-	if (IS_ERR(phy_provider))
-		return PTR_ERR(phy_provider);
-
-	return 0;
+	return PTR_ERR_OR_ZERO(phy_provider);
 }
 
 static int ti_pipe3_remove(struct platform_device *pdev)

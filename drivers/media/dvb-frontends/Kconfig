@@ -67,6 +67,7 @@ config DVB_TDA18271C2DD
 config DVB_SI2165
 	tristate "Silicon Labs si2165 based"
 	depends on DVB_CORE && I2C
+	select REGMAP_I2C
 	default m if !MEDIA_SUBDRV_AUTOSELECT
 	help
 	  A DVB-C/T demodulator.
@@ -463,6 +464,7 @@ config DVB_STV0367
 config DVB_CXD2820R
 	tristate "Sony CXD2820R"
 	depends on DVB_CORE && I2C
+	select REGMAP_I2C
 	default m if !MEDIA_SUBDRV_AUTOSELECT
 	help
 	  Say Y when you want to support this frontend.
@@ -510,6 +512,11 @@ config DVB_AS102_FE
 	tristate
 	depends on DVB_CORE
 	default DVB_AS102
+
+config DVB_GP8PSK_FE
+	tristate
+	depends on DVB_CORE
+	default DVB_USB_GP8PSK
 
 comment "DVB-C (cable) frontends"
 	depends on DVB_CORE
@@ -635,7 +642,7 @@ config DVB_S5H1409
 	  to support this frontend.
 
 config DVB_AU8522
-	depends on I2C
+	depends on DVB_CORE && I2C
 	tristate
 
 config DVB_AU8522_DTV
@@ -649,7 +656,7 @@ config DVB_AU8522_DTV
 
 config DVB_AU8522_V4L
 	tristate "Auvitek AU8522 based ATV demod"
-	depends on VIDEO_V4L2 && I2C
+	depends on VIDEO_V4L2 && DVB_CORE && I2C
 	select DVB_AU8522
 	default m if !MEDIA_SUBDRV_AUTOSELECT
 	help
@@ -715,7 +722,7 @@ config DVB_PLL
 
 config DVB_TUNER_DIB0070
 	tristate "DiBcom DiB0070 silicon base-band tuner"
-	depends on I2C
+	depends on DVB_CORE && I2C
 	default m if !MEDIA_SUBDRV_AUTOSELECT
 	help
 	  A driver for the silicon baseband tuner DiB0070 from DiBcom.
@@ -724,7 +731,7 @@ config DVB_TUNER_DIB0070
 
 config DVB_TUNER_DIB0090
 	tristate "DiBcom DiB0090 silicon base-band tuner"
-	depends on I2C
+	depends on DVB_CORE && I2C
 	default m if !MEDIA_SUBDRV_AUTOSELECT
 	help
 	  A driver for the silicon baseband tuner DiB0090 from DiBcom.
@@ -915,5 +922,6 @@ config DVB_AVL6882
 
 config DVB_DUMMY_FE
 	tristate "Dummy frontend driver"
+	depends on DVB_CORE
 	default n
 endmenu

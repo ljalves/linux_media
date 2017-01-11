@@ -8,12 +8,13 @@
 
 config ARC
 	def_bool y
+	select ARC_TIMERS
+	select ARCH_HAS_SG_CHAIN
 	select ARCH_SUPPORTS_ATOMIC_RMW if ARC_HAS_LLSC
 	select BUILDTIME_EXTABLE_SORT
-	select CLKSRC_OF
 	select CLONE_BACKWARDS
 	select COMMON_CLK
-	select GENERIC_ATOMIC64
+	select GENERIC_ATOMIC64 if !ISA_ARCV2 || !(ARC_HAS_LL64 && ARC_HAS_LLSC)
 	select GENERIC_CLOCKEVENTS
 	select GENERIC_FIND_FIRST_BIT
 	# for now, we don't need GENERIC_IRQ_PROBE, CONFIG_GENERIC_IRQ_CHIP
@@ -41,6 +42,8 @@ config ARC
 	select PERF_USE_VMALLOC
 	select HAVE_DEBUG_STACKOVERFLOW
 	select HAVE_GENERIC_DMA_COHERENT
+	select HAVE_KERNEL_GZIP
+	select HAVE_KERNEL_LZMA
 
 config MIGHT_HAVE_PCI
 	bool
@@ -61,7 +64,7 @@ config RWSEM_GENERIC_SPINLOCK
 	def_bool y
 
 config ARCH_DISCONTIGMEM_ENABLE
-	def_bool y
+	def_bool n
 
 config ARCH_FLATMEM_ENABLE
 	def_bool y
@@ -113,6 +116,7 @@ config ISA_ARCOMPACT
 
 config ISA_ARCV2
 	bool "ARC ISA v2"
+	select ARC_TIMERS_64BIT
 	help
 	  ISA for the Next Generation ARC-HS cores
 
@@ -186,17 +190,6 @@ if SMP
 config ARC_HAS_COH_CACHES
 	def_bool n
 
-config ARC_HAS_REENTRANT_IRQ_LV2
-	def_bool n
-
-config ARC_MCIP
-	bool "ARConnect Multicore IP (MCIP) Support "
-	depends on ISA_ARCV2
-	help
-	  This IP block enables SMP in ARC-HS38 cores.
-	  It provides for cross-core interrupts, multi-core debug
-	  hardware semaphores, shared memory,....
-
 config NR_CPUS
 	int "Maximum number of CPUs (2-4096)"
 	range 2 4096
@@ -213,6 +206,15 @@ config ARC_SMP_HALT_ON_RESET
 	  entry point and spin wait for Master's signal.
 
 endif	#SMP
+
+config ARC_MCIP
+	bool "ARConnect Multicore IP (MCIP) Support "
+	depends on ISA_ARCV2
+	default y if SMP
+	help
+	  This IP block enables SMP in ARC-HS38 cores.
+	  It provides for cross-core interrupts, multi-core debug
+	  hardware semaphores, shared memory,....
 
 menuconfig ARC_CACHE
 	bool "Enable Cache Support"
@@ -356,8 +358,8 @@ endchoice
 
 config NODES_SHIFT
 	int "Maximum NUMA Nodes (as a power of 2)"
-	default "1" if !DISCONTIGMEM
-	default "2" if DISCONTIGMEM
+	default "0" if !DISCONTIGMEM
+	default "1" if DISCONTIGMEM
 	depends on NEED_MULTIPLE_NODES
 	---help---
 	  Accessing memory beyond 1GB (with or w/o PAE) requires 2 memory
@@ -366,25 +368,10 @@ config NODES_SHIFT
 if ISA_ARCOMPACT
 
 config ARC_COMPACT_IRQ_LEVELS
-	bool "ARCompact IRQ Priorities: High(2)/Low(1)"
+	bool "Setup Timer IRQ as high Priority"
 	default n
-	# Timer HAS to be high priority, for any other high priority config
-	select ARC_IRQ3_LV2
 	# if SMP, LV2 enabled ONLY if ARC implementation has LV2 re-entrancy
-	depends on !SMP || ARC_HAS_REENTRANT_IRQ_LV2
-
-if ARC_COMPACT_IRQ_LEVELS
-
-config ARC_IRQ3_LV2
-	bool
-
-config ARC_IRQ5_LV2
-	bool
-
-config ARC_IRQ6_LV2
-	bool
-
-endif	#ARC_COMPACT_IRQ_LEVELS
+	depends on !SMP
 
 config ARC_FPU_SAVE_RESTORE
 	bool "Enable FPU state persistence across context switch"
@@ -407,11 +394,6 @@ config ARC_HAS_LLSC
 	default y
 	depends on !ARC_CANT_LLSC
 
-config ARC_STAR_9000923308
-	bool "Workaround for llock/scond livelock"
-	default n
-	depends on ISA_ARCV2 && SMP && ARC_HAS_LLSC
-
 config ARC_HAS_SWAPE
 	bool "Insn: SWAPE (endian-swap)"
 	default y
@@ -429,16 +411,6 @@ config ARC_HAS_LL64
 config ARC_HAS_DIV_REM
 	bool "Insn: div, divu, rem, remu"
 	default y
-
-config ARC_HAS_RTC
-	bool "Local 64-bit r/o cycle counter"
-	default n
-	depends on !SMP
-
-config ARC_HAS_GFRC
-	bool "SMP synchronized 64-bit cycle counter"
-	default y
-	depends on SMP
 
 config ARC_NUMBER_OF_INTERRUPTS
 	int "Number of interrupts"
@@ -471,7 +443,7 @@ config LINUX_LINK_BASE
 
 config HIGHMEM
 	bool "High Memory Support"
-	select DISCONTIGMEM
+	select ARCH_DISCONTIGMEM_ENABLE
 	help
 	  With ARC 2G:2G address split, only upper 2G is directly addressable by
 	  kernel. Enable this to potentially allow access to rest of 2G and PAE
@@ -559,14 +531,6 @@ config ARC_DW2_UNWIND
 config ARC_DBG_TLB_PARANOIA
 	bool "Paranoia Checks in Low Level TLB Handlers"
 	default n
-
-config ARC_DBG_TLB_MISS_COUNT
-	bool "Profile TLB Misses"
-	default n
-	select DEBUG_FS
-	help
-	  Counts number of I and D TLB Misses and exports them via Debugfs
-	  The counters can be cleared via Debugfs as well
 
 endif
 

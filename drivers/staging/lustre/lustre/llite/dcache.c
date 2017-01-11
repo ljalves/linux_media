@@ -15,11 +15,7 @@
  *
  * You should have received a copy of the GNU General Public License
  * version 2 along with this program; If not, see
- * http://www.sun.com/software/products/lustre/docs/GPLv2.pdf
- *
- * Please contact Sun Microsystems, Inc., 4150 Network Circle, Santa Clara,
- * CA 95054 USA or visit www.sun.com if you need additional information or
- * have any questions.
+ * http://www.gnu.org/licenses/gpl-2.0.html
  *
  * GPL HEADER END
  */
@@ -41,7 +37,6 @@
 #define DEBUG_SUBSYSTEM S_LLITE
 
 #include "../include/obd_support.h"
-#include "../include/lustre_lite.h"
 #include "../include/lustre/lustre_idl.h"
 #include "../include/lustre_dlm.h"
 
@@ -62,9 +57,6 @@ static void ll_release(struct dentry *de)
 
 	LASSERT(de);
 	lld = ll_d2d(de);
-	if (!lld) /* NFS copies the de->d_op methods (bug 4655) */
-		return;
-
 	if (lld->lld_it) {
 		ll_intent_release(lld->lld_it);
 		kfree(lld->lld_it);
@@ -82,7 +74,7 @@ static void ll_release(struct dentry *de)
  * INVALID) so d_lookup() matches it, but we have no lock on it (so
  * lock_match() fails) and we spin around real_lookup().
  */
-static int ll_dcompare(const struct dentry *parent, const struct dentry *dentry,
+static int ll_dcompare(const struct dentry *dentry,
 		       unsigned int len, const char *str,
 		       const struct qstr *name)
 {
@@ -106,39 +98,6 @@ static int ll_dcompare(const struct dentry *parent, const struct dentry *dentry,
 	return 0;
 }
 
-static inline int return_if_equal(struct ldlm_lock *lock, void *data)
-{
-	return (ldlm_is_canceling(lock) && ldlm_is_discard_data(lock)) ?
-		LDLM_ITER_CONTINUE : LDLM_ITER_STOP;
-}
-
-/* find any ldlm lock of the inode in mdc and lov
- * return 0    not find
- *	1    find one
- *      < 0    error
- */
-static int find_cbdata(struct inode *inode)
-{
-	struct ll_sb_info *sbi = ll_i2sbi(inode);
-	struct lov_stripe_md *lsm;
-	int rc = 0;
-
-	LASSERT(inode);
-	rc = md_find_cbdata(sbi->ll_md_exp, ll_inode2fid(inode),
-			    return_if_equal, NULL);
-	if (rc != 0)
-		return rc;
-
-	lsm = ccc_inode_lsm_get(inode);
-	if (!lsm)
-		return rc;
-
-	rc = obd_find_cbdata(sbi->ll_dt_exp, lsm, return_if_equal, NULL);
-	ccc_inode_lsm_put(inode, lsm);
-
-	return rc;
-}
-
 /**
  * Called when last reference to a dentry is dropped and dcache wants to know
  * whether or not it should cache it:
@@ -159,74 +118,44 @@ static int ll_ddelete(const struct dentry *de)
 	/* kernel >= 2.6.38 last refcount is decreased after this function. */
 	LASSERT(d_count(de) == 1);
 
-	/* Disable this piece of code temporarily because this is called
-	 * inside dcache_lock so it's not appropriate to do lots of work
-	 * here. ATTENTION: Before this piece of code enabling, LU-2487 must be
-	 * resolved.
-	 */
-#if 0
-	/* if not ldlm lock for this inode, set i_nlink to 0 so that
-	 * this inode can be recycled later b=20433
-	 */
-	if (d_really_is_positive(de) && !find_cbdata(d_inode(de)))
-		clear_nlink(d_inode(de));
-#endif
-
 	if (d_lustre_invalid((struct dentry *)de))
 		return 1;
 	return 0;
 }
 
-int ll_d_init(struct dentry *de)
+static int ll_d_init(struct dentry *de)
 {
-	CDEBUG(D_DENTRY, "ldd on dentry %pd (%p) parent %p inode %p refc %d\n",
-	       de, de, de->d_parent, d_inode(de), d_count(de));
-
-	if (!de->d_fsdata) {
-		struct ll_dentry_data *lld;
-
-		lld = kzalloc(sizeof(*lld), GFP_NOFS);
-		if (likely(lld)) {
-			spin_lock(&de->d_lock);
-			if (likely(!de->d_fsdata)) {
-				de->d_fsdata = lld;
-				__d_lustre_invalidate(de);
-			} else {
-				kfree(lld);
-			}
-			spin_unlock(&de->d_lock);
-		} else {
-			return -ENOMEM;
-		}
-	}
-	LASSERT(de->d_op == &ll_d_ops);
-
+	struct ll_dentry_data *lld = kzalloc(sizeof(*lld), GFP_KERNEL);
+	if (unlikely(!lld))
+		return -ENOMEM;
+	lld->lld_invalid = 1;
+	de->d_fsdata = lld;
 	return 0;
 }
 
 void ll_intent_drop_lock(struct lookup_intent *it)
 {
-	if (it->it_op && it->d.lustre.it_lock_mode) {
+	if (it->it_op && it->it_lock_mode) {
 		struct lustre_handle handle;
 
-		handle.cookie = it->d.lustre.it_lock_handle;
+		handle.cookie = it->it_lock_handle;
 
 		CDEBUG(D_DLMTRACE, "releasing lock with cookie %#llx from it %p\n",
 		       handle.cookie, it);
-		ldlm_lock_decref(&handle, it->d.lustre.it_lock_mode);
+		ldlm_lock_decref(&handle, it->it_lock_mode);
 
 		/* bug 494: intent_release may be called multiple times, from
 		 * this thread and we don't want to double-decref this lock
 		 */
-		it->d.lustre.it_lock_mode = 0;
-		if (it->d.lustre.it_remote_lock_mode != 0) {
-			handle.cookie = it->d.lustre.it_remote_lock_handle;
+		it->it_lock_mode = 0;
+		if (it->it_remote_lock_mode != 0) {
+			handle.cookie = it->it_remote_lock_handle;
 
 			CDEBUG(D_DLMTRACE, "releasing remote lock with cookie%#llx from it %p\n",
 			       handle.cookie, it);
 			ldlm_lock_decref(&handle,
-					 it->d.lustre.it_remote_lock_mode);
-			it->d.lustre.it_remote_lock_mode = 0;
+					 it->it_remote_lock_mode);
+			it->it_remote_lock_mode = 0;
 		}
 	}
 }
@@ -237,13 +166,13 @@ void ll_intent_release(struct lookup_intent *it)
 	ll_intent_drop_lock(it);
 	/* We are still holding extra reference on a request, need to free it */
 	if (it_disposition(it, DISP_ENQ_OPEN_REF))
-		ptlrpc_req_finished(it->d.lustre.it_data); /* ll_file_open */
+		ptlrpc_req_finished(it->it_request); /* ll_file_open */
 
 	if (it_disposition(it, DISP_ENQ_CREATE_REF)) /* create rec */
-		ptlrpc_req_finished(it->d.lustre.it_data);
+		ptlrpc_req_finished(it->it_request);
 
-	it->d.lustre.it_disposition = 0;
-	it->d.lustre.it_data = NULL;
+	it->it_disposition = 0;
+	it->it_request = NULL;
 }
 
 void ll_invalidate_aliases(struct inode *inode)
@@ -253,7 +182,7 @@ void ll_invalidate_aliases(struct inode *inode)
 	CDEBUG(D_INODE, "marking dentries for ino "DFID"(%p) invalid\n",
 	       PFID(ll_inode2fid(inode)), inode);
 
-	ll_lock_dcache(inode);
+	spin_lock(&inode->i_lock);
 	hlist_for_each_entry(dentry, &inode->i_dentry, d_u.d_alias) {
 		CDEBUG(D_DENTRY, "dentry in drop %pd (%p) parent %p inode %p flags %d\n",
 		       dentry, dentry, dentry->d_parent,
@@ -261,7 +190,7 @@ void ll_invalidate_aliases(struct inode *inode)
 
 		d_lustre_invalidate(dentry, 0);
 	}
-	ll_unlock_dcache(inode);
+	spin_unlock(&inode->i_lock);
 }
 
 int ll_revalidate_it_finish(struct ptlrpc_request *request,
@@ -283,7 +212,7 @@ int ll_revalidate_it_finish(struct ptlrpc_request *request,
 
 void ll_lookup_finish_locks(struct lookup_intent *it, struct inode *inode)
 {
-	if (it->d.lustre.it_lock_mode && inode) {
+	if (it->it_lock_mode && inode) {
 		struct ll_sb_info *sbi = ll_i2sbi(inode);
 
 		CDEBUG(D_DLMTRACE, "setting l_data to inode "DFID"(%p)\n",
@@ -306,6 +235,17 @@ static int ll_revalidate_dentry(struct dentry *dentry,
 {
 	struct inode *dir = d_inode(dentry->d_parent);
 
+	/* If this is intermediate component path lookup and we were able to get
+	 * to this dentry, then its lock has not been revoked and the
+	 * path component is valid.
+	 */
+	if (lookup_flags & LOOKUP_PARENT)
+		return 1;
+
+	/* Symlink - always valid as long as the dentry was found */
+	if (dentry->d_inode && S_ISLNK(dentry->d_inode->i_mode))
+		return 1;
+
 	/*
 	 * if open&create is set, talk to MDS to make sure file is created if
 	 * necessary, because we can't do this in ->open() later since that's
@@ -318,14 +258,13 @@ static int ll_revalidate_dentry(struct dentry *dentry,
 	if (lookup_flags & (LOOKUP_PARENT | LOOKUP_OPEN | LOOKUP_CREATE))
 		return 1;
 
-	if (d_need_statahead(dir, dentry) <= 0)
+	if (!dentry_may_statahead(dir, dentry))
 		return 1;
 
 	if (lookup_flags & LOOKUP_RCU)
 		return -ECHILD;
 
-	do_statahead_enter(dir, &dentry, !d_inode(dentry));
-	ll_statahead_mark(dir, dentry);
+	ll_statahead(dir, &dentry, !d_inode(dentry));
 	return 1;
 }
 
@@ -340,18 +279,10 @@ static int ll_revalidate_nd(struct dentry *dentry, unsigned int flags)
 	return ll_revalidate_dentry(dentry, flags);
 }
 
-static void ll_d_iput(struct dentry *de, struct inode *inode)
-{
-	LASSERT(inode);
-	if (!find_cbdata(inode))
-		clear_nlink(inode);
-	iput(inode);
-}
-
 const struct dentry_operations ll_d_ops = {
+	.d_init = ll_d_init,
 	.d_revalidate = ll_revalidate_nd,
 	.d_release = ll_release,
 	.d_delete  = ll_ddelete,
-	.d_iput    = ll_d_iput,
 	.d_compare = ll_dcompare,
 };

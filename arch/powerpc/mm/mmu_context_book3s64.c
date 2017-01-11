@@ -65,7 +65,7 @@ static int radix__init_new_context(struct mm_struct *mm, int index)
 	/*
 	 * set the process table entry,
 	 */
-	rts_field = 3ull << PPC_BITLSHIFT(2);
+	rts_field = radix__get_tree_size();
 	process_tb[index].prtb0 = cpu_to_be64(rts_field | __pa(mm->pgd) | RADIX_PGD_INDEX_SIZE);
 	return 0;
 }
@@ -115,7 +115,7 @@ int init_new_context(struct task_struct *tsk, struct mm_struct *mm)
 	mm->context.pte_frag = NULL;
 #endif
 #ifdef CONFIG_SPAPR_TCE_IOMMU
-	mm_iommu_init(&mm->context);
+	mm_iommu_init(mm);
 #endif
 	return 0;
 }
@@ -156,13 +156,11 @@ static inline void destroy_pagetable_page(struct mm_struct *mm)
 }
 #endif
 
-
 void destroy_context(struct mm_struct *mm)
 {
 #ifdef CONFIG_SPAPR_TCE_IOMMU
-	mm_iommu_cleanup(&mm->context);
+	WARN_ON_ONCE(!list_empty(&mm->context.iommu_group_mem_list));
 #endif
-
 #ifdef CONFIG_PPC_ICSWX
 	drop_cop(mm->context.acop, mm);
 	kfree(mm->context.cop_lockp);
@@ -181,7 +179,10 @@ void destroy_context(struct mm_struct *mm)
 #ifdef CONFIG_PPC_RADIX_MMU
 void radix__switch_mmu_context(struct mm_struct *prev, struct mm_struct *next)
 {
-	mtspr(SPRN_PID, next->context.id);
 	asm volatile("isync": : :"memory");
+	mtspr(SPRN_PID, next->context.id);
+	asm volatile("isync \n"
+		     PPC_SLBIA(0x7)
+		     : : :"memory");
 }
 #endif

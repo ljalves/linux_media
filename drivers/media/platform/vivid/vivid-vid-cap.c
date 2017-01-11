@@ -36,8 +36,7 @@
 /* timeperframe: min/max and default */
 static const struct v4l2_fract
 	tpf_min     = {.numerator = 1,		.denominator = FPS_MAX},
-	tpf_max     = {.numerator = FPS_MAX,	.denominator = 1},
-	tpf_default = {.numerator = 1,		.denominator = 30};
+	tpf_max     = {.numerator = FPS_MAX,	.denominator = 1};
 
 static const struct vivid_fmt formats_ovl[] = {
 	{
@@ -98,7 +97,7 @@ static const struct v4l2_discrete_probe webcam_probe = {
 
 static int vid_cap_queue_setup(struct vb2_queue *vq,
 		       unsigned *nbuffers, unsigned *nplanes,
-		       unsigned sizes[], void *alloc_ctxs[])
+		       unsigned sizes[], struct device *alloc_devs[])
 {
 	struct vivid_dev *dev = vb2_get_drv_priv(vq);
 	unsigned buffers = tpg_g_buffers(&dev->tpg);
@@ -144,11 +143,6 @@ static int vid_cap_queue_setup(struct vb2_queue *vq,
 		*nbuffers = 2 - vq->num_buffers;
 
 	*nplanes = buffers;
-
-	/*
-	 * videobuf2-vmalloc allocator is context-less so no need to set
-	 * alloc_ctxs array.
-	 */
 
 	dprintk(dev, 1, "%s: count=%d\n", __func__, *nbuffers);
 	for (p = 0; p < buffers; p++)
@@ -516,6 +510,13 @@ static unsigned vivid_ycbcr_enc_cap(struct vivid_dev *dev)
 	return dev->ycbcr_enc_out;
 }
 
+static unsigned int vivid_hsv_enc_cap(struct vivid_dev *dev)
+{
+	if (!dev->loop_video || vivid_is_webcam(dev) || vivid_is_tv_cap(dev))
+		return tpg_g_hsv_enc(&dev->tpg);
+	return dev->hsv_enc_out;
+}
+
 static unsigned vivid_quantization_cap(struct vivid_dev *dev)
 {
 	if (!dev->loop_video || vivid_is_webcam(dev) || vivid_is_tv_cap(dev))
@@ -536,7 +537,10 @@ int vivid_g_fmt_vid_cap(struct file *file, void *priv,
 	mp->pixelformat  = dev->fmt_cap->fourcc;
 	mp->colorspace   = vivid_colorspace_cap(dev);
 	mp->xfer_func    = vivid_xfer_func_cap(dev);
-	mp->ycbcr_enc    = vivid_ycbcr_enc_cap(dev);
+	if (dev->fmt_cap->color_enc == TGP_COLOR_ENC_HSV)
+		mp->hsv_enc    = vivid_hsv_enc_cap(dev);
+	else
+		mp->ycbcr_enc    = vivid_ycbcr_enc_cap(dev);
 	mp->quantization = vivid_quantization_cap(dev);
 	mp->num_planes = dev->fmt_cap->buffers;
 	for (p = 0; p < mp->num_planes; p++) {
@@ -624,7 +628,10 @@ int vivid_try_fmt_vid_cap(struct file *file, void *priv,
 		memset(pfmt[p].reserved, 0, sizeof(pfmt[p].reserved));
 	}
 	mp->colorspace = vivid_colorspace_cap(dev);
-	mp->ycbcr_enc = vivid_ycbcr_enc_cap(dev);
+	if (fmt->color_enc == TGP_COLOR_ENC_HSV)
+		mp->hsv_enc = vivid_hsv_enc_cap(dev);
+	else
+		mp->ycbcr_enc = vivid_ycbcr_enc_cap(dev);
 	mp->xfer_func = vivid_xfer_func_cap(dev);
 	mp->quantization = vivid_quantization_cap(dev);
 	memset(mp->reserved, 0, sizeof(mp->reserved));
@@ -829,7 +836,7 @@ int vivid_vid_cap_g_selection(struct file *file, void *priv,
 	if (sel->type != V4L2_BUF_TYPE_VIDEO_CAPTURE)
 		return -EINVAL;
 	if (vivid_is_webcam(dev))
-		return -EINVAL;
+		return -ENODATA;
 
 	sel->r.left = sel->r.top = 0;
 	switch (sel->target) {
@@ -878,7 +885,7 @@ int vivid_vid_cap_s_selection(struct file *file, void *fh, struct v4l2_selection
 	if (s->type != V4L2_BUF_TYPE_VIDEO_CAPTURE)
 		return -EINVAL;
 	if (vivid_is_webcam(dev))
-		return -EINVAL;
+		return -ENODATA;
 
 	switch (s->target) {
 	case V4L2_SEL_TGT_CROP:
@@ -1701,6 +1708,9 @@ int vidioc_s_edid(struct file *file, void *_fh,
 			 struct v4l2_edid *edid)
 {
 	struct vivid_dev *dev = video_drvdata(file);
+	u16 phys_addr;
+	unsigned int i;
+	int ret;
 
 	memset(edid->reserved, 0, sizeof(edid->reserved));
 	if (edid->pad >= dev->num_inputs)
@@ -1709,14 +1719,32 @@ int vidioc_s_edid(struct file *file, void *_fh,
 		return -EINVAL;
 	if (edid->blocks == 0) {
 		dev->edid_blocks = 0;
-		return 0;
+		phys_addr = CEC_PHYS_ADDR_INVALID;
+		goto set_phys_addr;
 	}
 	if (edid->blocks > dev->edid_max_blocks) {
 		edid->blocks = dev->edid_max_blocks;
 		return -E2BIG;
 	}
+	phys_addr = cec_get_edid_phys_addr(edid->edid, edid->blocks * 128, NULL);
+	ret = cec_phys_addr_validate(phys_addr, &phys_addr, NULL);
+	if (ret)
+		return ret;
+
+	if (vb2_is_busy(&dev->vb_vid_cap_q))
+		return -EBUSY;
+
 	dev->edid_blocks = edid->blocks;
 	memcpy(dev->edid, edid->edid, edid->blocks * 128);
+
+set_phys_addr:
+	/* TODO: a proper hotplug detect cycle should be emulated here */
+	cec_s_phys_addr(dev->cec_rx_adap, phys_addr, false);
+
+	for (i = 0; i < MAX_OUTPUTS && dev->cec_tx_adap[i]; i++)
+		cec_s_phys_addr(dev->cec_tx_adap[i],
+				cec_phys_addr_for_input(phys_addr, i + 1),
+				false);
 	return 0;
 }
 
@@ -1836,6 +1864,7 @@ int vivid_vid_cap_s_parm(struct file *file, void *priv,
 	/* resync the thread's timings */
 	dev->cap_seq_resync = true;
 	dev->timeperframe_vid_cap = tpf;
+	parm->parm.capture.capability   = V4L2_CAP_TIMEPERFRAME;
 	parm->parm.capture.timeperframe = tpf;
 	parm->parm.capture.readbuffers  = 1;
 	return 0;

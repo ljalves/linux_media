@@ -1,7 +1,13 @@
 #ifndef TARGET_CORE_BACKEND_H
 #define TARGET_CORE_BACKEND_H
 
+#include <linux/types.h>
+#include <target/target_core_base.h>
+
 #define TRANSPORT_FLAG_PASSTHROUGH		1
+
+struct request_queue;
+struct scatterlist;
 
 struct target_backend_ops {
 	char name[16];
@@ -95,6 +101,6 @@ sense_reason_t passthrough_parse_cdb(struct se_cmd *cmd,
 bool target_sense_desc_format(struct se_device *dev);
 sector_t target_to_linux_sector(struct se_device *dev, sector_t lb);
 bool target_configure_unmap_from_queue(struct se_dev_attrib *attrib,
-				       struct request_queue *q, int block_size);
+				       struct request_queue *q);
 
 #endif /* TARGET_CORE_BACKEND_H */

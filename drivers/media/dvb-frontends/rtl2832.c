@@ -837,7 +837,7 @@ static int rtl2832_deselect(struct i2c_mux_core *muxc, u32 chan_id)
 	return 0;
 }
 
-static struct dvb_frontend_ops rtl2832_ops = {
+static const struct dvb_frontend_ops rtl2832_ops = {
 	.delsys = { SYS_DVBT },
 	.info = {
 		.name = "Realtek RTL2832 (DVB-T)",
@@ -1148,6 +1148,7 @@ MODULE_DEVICE_TABLE(i2c, rtl2832_id_table);
 static struct i2c_driver rtl2832_driver = {
 	.driver = {
 		.name	= "rtl2832",
+		.suppress_bind_attrs	= true,
 	},
 	.probe		= rtl2832_probe,
 	.remove		= rtl2832_remove,

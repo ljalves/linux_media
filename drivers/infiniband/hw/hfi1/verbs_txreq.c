@@ -72,32 +72,31 @@ void hfi1_put_txreq(struct verbs_txreq *tx)
 	kmem_cache_free(dev->verbs_txreq_cache, tx);
 
 	do {
-		seq = read_seqbegin(&dev->iowait_lock);
+		seq = read_seqbegin(&dev->txwait_lock);
 		if (!list_empty(&dev->txwait)) {
 			struct iowait *wait;
 
-			write_seqlock_irqsave(&dev->iowait_lock, flags);
+			write_seqlock_irqsave(&dev->txwait_lock, flags);
 			wait = list_first_entry(&dev->txwait, struct iowait,
 						list);
 			qp = iowait_to_qp(wait);
 			priv = qp->priv;
 			list_del_init(&priv->s_iowait.list);
 			/* refcount held until actual wake up */
-			write_sequnlock_irqrestore(&dev->iowait_lock, flags);
+			write_sequnlock_irqrestore(&dev->txwait_lock, flags);
 			hfi1_qp_wakeup(qp, RVT_S_WAIT_TX);
 			break;
 		}
-	} while (read_seqretry(&dev->iowait_lock, seq));
+	} while (read_seqretry(&dev->txwait_lock, seq));
 }
 
 struct verbs_txreq *__get_txreq(struct hfi1_ibdev *dev,
 				struct rvt_qp *qp)
+	__must_hold(&qp->s_lock)
 {
 	struct verbs_txreq *tx = ERR_PTR(-EBUSY);
-	unsigned long flags;
 
-	spin_lock_irqsave(&qp->s_lock, flags);
-	write_seqlock(&dev->iowait_lock);
+	write_seqlock(&dev->txwait_lock);
 	if (ib_rvt_state_ops[qp->state] & RVT_PROCESS_RECV_OK) {
 		struct hfi1_qp_priv *priv;
 
@@ -109,14 +108,14 @@ struct verbs_txreq *__get_txreq(struct hfi1_ibdev *dev,
 			dev->n_txwait++;
 			qp->s_flags |= RVT_S_WAIT_TX;
 			list_add_tail(&priv->s_iowait.list, &dev->txwait);
+			priv->s_iowait.lock = &dev->txwait_lock;
 			trace_hfi1_qpsleep(qp, RVT_S_WAIT_TX);
-			atomic_inc(&qp->refcount);
+			rvt_get_qp(qp);
 		}
 		qp->s_flags &= ~RVT_S_BUSY;
 	}
 out:
-	write_sequnlock(&dev->iowait_lock);
-	spin_unlock_irqrestore(&qp->s_lock, flags);
+	write_sequnlock(&dev->txwait_lock);
 	return tx;
 }
 

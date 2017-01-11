@@ -56,7 +56,7 @@ static void mgag200_kick_out_firmware_fb(struct pci_dev *pdev)
 #ifdef CONFIG_X86
 	primary = pdev->resource[PCI_ROM_RESOURCE].flags & IORESOURCE_ROM_SHADOW;
 #endif
-	remove_conflicting_framebuffers(ap, "mgag200drmfb", primary);
+	drm_fb_helper_remove_conflicting_framebuffers(ap, "mgag200drmfb", primary);
 	kfree(ap);
 }
 
@@ -82,9 +82,7 @@ static const struct file_operations mgag200_driver_fops = {
 	.unlocked_ioctl = drm_ioctl,
 	.mmap = mgag200_mmap,
 	.poll = drm_poll,
-#ifdef CONFIG_COMPAT
 	.compat_ioctl = drm_compat_ioctl,
-#endif
 	.read = drm_read,
 };
 
@@ -101,7 +99,7 @@ static struct drm_driver driver = {
 	.minor = DRIVER_MINOR,
 	.patchlevel = DRIVER_PATCHLEVEL,
 
-	.gem_free_object = mgag200_gem_free_object,
+	.gem_free_object_unlocked = mgag200_gem_free_object,
 	.dumb_create = mgag200_dumb_create,
 	.dumb_map_offset = mgag200_dumb_mmap_offset,
 	.dumb_destroy = drm_gem_dumb_destroy,

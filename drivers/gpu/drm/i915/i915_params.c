@@ -39,13 +39,15 @@ struct i915_params i915 __read_mostly = {
 	.enable_hangcheck = true,
 	.enable_ppgtt = -1,
 	.enable_psr = -1,
-	.preliminary_hw_support = IS_ENABLED(CONFIG_DRM_I915_PRELIMINARY_HW_SUPPORT),
+	.alpha_support = IS_ENABLED(CONFIG_DRM_I915_ALPHA_SUPPORT),
 	.disable_power_well = -1,
 	.enable_ips = 1,
 	.fastboot = 0,
 	.prefault_disable = 0,
 	.load_detect_test = 0,
+	.force_reset_modeset_test = 0,
 	.reset = true,
+	.error_capture = true,
 	.invert_brightness = 0,
 	.disable_display = 0,
 	.enable_cmd_parser = 1,
@@ -54,10 +56,13 @@ struct i915_params i915 __read_mostly = {
 	.verbose_state_checks = 1,
 	.nuclear_pageflip = 0,
 	.edp_vswing = 0,
-	.enable_guc_submission = false,
+	.enable_guc_loading = 0,
+	.enable_guc_submission = 0,
 	.guc_log_level = -1,
 	.enable_dp_mst = true,
 	.inject_load_failure = 0,
+	.enable_dpcd_backlight = false,
+	.enable_gvt = false,
 };
 
 module_param_named(modeset, i915.modeset, int, 0400);
@@ -111,6 +116,14 @@ MODULE_PARM_DESC(vbt_sdvo_panel_type,
 module_param_named_unsafe(reset, i915.reset, bool, 0600);
 MODULE_PARM_DESC(reset, "Attempt GPU resets (default: true)");
 
+#if IS_ENABLED(CONFIG_DRM_I915_CAPTURE_ERROR)
+module_param_named(error_capture, i915.error_capture, bool, 0600);
+MODULE_PARM_DESC(error_capture,
+	"Record the GPU state following a hang. "
+	"This information in /sys/class/drm/card<N>/error is vital for "
+	"triaging and debugging hangs.");
+#endif
+
 module_param_named_unsafe(enable_hangcheck, i915.enable_hangcheck, bool, 0644);
 MODULE_PARM_DESC(enable_hangcheck,
 	"Periodically check GPU activity for detecting hangs. "
@@ -132,9 +145,10 @@ MODULE_PARM_DESC(enable_psr, "Enable PSR "
 		 "(0=disabled, 1=enabled - link mode chosen per-platform, 2=force link-standby mode, 3=force link-off mode) "
 		 "Default: -1 (use per-chip default)");
 
-module_param_named_unsafe(preliminary_hw_support, i915.preliminary_hw_support, int, 0400);
-MODULE_PARM_DESC(preliminary_hw_support,
-	"Enable preliminary hardware support.");
+module_param_named_unsafe(alpha_support, i915.alpha_support, int, 0400);
+MODULE_PARM_DESC(alpha_support,
+	"Enable alpha quality driver support for latest hardware. "
+	"See also CONFIG_DRM_I915_ALPHA_SUPPORT.");
 
 module_param_named_unsafe(disable_power_well, i915.disable_power_well, int, 0400);
 MODULE_PARM_DESC(disable_power_well,
@@ -156,6 +170,11 @@ MODULE_PARM_DESC(prefault_disable,
 module_param_named_unsafe(load_detect_test, i915.load_detect_test, bool, 0600);
 MODULE_PARM_DESC(load_detect_test,
 	"Force-enable the VGA load detect code for testing (default:false). "
+	"For developers only.");
+
+module_param_named_unsafe(force_reset_modeset_test, i915.force_reset_modeset_test, bool, 0600);
+MODULE_PARM_DESC(force_reset_modeset_test,
+	"Force a modeset during gpu reset for testing (default:false). "
 	"For developers only.");
 
 module_param_named_unsafe(invert_brightness, i915.invert_brightness, int, 0600);
@@ -197,8 +216,15 @@ MODULE_PARM_DESC(edp_vswing,
 		 "(0=use value from vbt [default], 1=low power swing(200mV),"
 		 "2=default swing(400mV))");
 
-module_param_named_unsafe(enable_guc_submission, i915.enable_guc_submission, bool, 0400);
-MODULE_PARM_DESC(enable_guc_submission, "Enable GuC submission (default:false)");
+module_param_named_unsafe(enable_guc_loading, i915.enable_guc_loading, int, 0400);
+MODULE_PARM_DESC(enable_guc_loading,
+		"Enable GuC firmware loading "
+		"(-1=auto, 0=never [default], 1=if available, 2=required)");
+
+module_param_named_unsafe(enable_guc_submission, i915.enable_guc_submission, int, 0400);
+MODULE_PARM_DESC(enable_guc_submission,
+		"Enable GuC submission "
+		"(-1=auto, 0=never [default], 1=if available, 2=required)");
 
 module_param_named(guc_log_level, i915.guc_log_level, int, 0400);
 MODULE_PARM_DESC(guc_log_level,
@@ -210,3 +236,10 @@ MODULE_PARM_DESC(enable_dp_mst,
 module_param_named_unsafe(inject_load_failure, i915.inject_load_failure, uint, 0400);
 MODULE_PARM_DESC(inject_load_failure,
 	"Force an error after a number of failure check points (0:disabled (default), N:force failure at the Nth failure check point)");
+module_param_named(enable_dpcd_backlight, i915.enable_dpcd_backlight, bool, 0600);
+MODULE_PARM_DESC(enable_dpcd_backlight,
+	"Enable support for DPCD backlight control (default:false)");
+
+module_param_named(enable_gvt, i915.enable_gvt, bool, 0400);
+MODULE_PARM_DESC(enable_gvt,
+	"Enable support for Intel GVT-g graphics virtualization host support(default:false)");

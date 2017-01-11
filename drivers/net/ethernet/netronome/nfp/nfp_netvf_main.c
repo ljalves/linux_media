@@ -38,7 +38,6 @@
  *         Rolf Neugebauer <rolf.neugebauer@netronome.com>
  */
 
-#include <linux/version.h>
 #include <linux/module.h>
 #include <linux/kernel.h>
 #include <linux/init.h>
@@ -64,9 +63,7 @@ static void nfp_netvf_get_mac_addr(struct nfp_net *nn)
 	u8 mac_addr[ETH_ALEN];
 
 	put_unaligned_be32(nn_readl(nn, NFP_NET_CFG_MACADDR + 0), &mac_addr[0]);
-	/* We can't do readw for NFP-3200 compatibility */
-	put_unaligned_be16(nn_readl(nn, NFP_NET_CFG_MACADDR + 4) >> 16,
-			   &mac_addr[4]);
+	put_unaligned_be16(nn_readw(nn, NFP_NET_CFG_MACADDR + 6), &mac_addr[4]);
 
 	if (!is_valid_ether_addr(mac_addr)) {
 		eth_hw_addr_random(nn->netdev);
@@ -87,7 +84,6 @@ static int nfp_netvf_pci_probe(struct pci_dev *pdev,
 	int tx_bar_no, rx_bar_no;
 	u8 __iomem *ctrl_bar;
 	struct nfp_net *nn;
-	int is_nfp3200;
 	u32 startq;
 	int stride;
 	int err;
@@ -100,15 +96,6 @@ static int nfp_netvf_pci_probe(struct pci_dev *pdev,
 	if (err) {
 		dev_err(&pdev->dev, "Unable to allocate device memory.\n");
 		goto err_pci_disable;
-	}
-
-	switch (pdev->device) {
-	case PCI_DEVICE_NFP6000VF:
-		is_nfp3200 = 0;
-		break;
-	default:
-		err = -ENODEV;
-		goto err_pci_regions;
 	}
 
 	pci_set_master(pdev);
@@ -124,17 +111,17 @@ static int nfp_netvf_pci_probe(struct pci_dev *pdev,
 	 * first NFP_NET_CFG_BAR_SZ of the BAR.  This keeps the code
 	 * the identical for PF and VF drivers.
 	 */
-	ctrl_bar = ioremap_nocache(pci_resource_start(pdev, NFP_NET_CRTL_BAR),
+	ctrl_bar = ioremap_nocache(pci_resource_start(pdev, NFP_NET_CTRL_BAR),
 				   NFP_NET_CFG_BAR_SZ);
 	if (!ctrl_bar) {
 		dev_err(&pdev->dev,
-			"Failed to map resource %d\n", NFP_NET_CRTL_BAR);
+			"Failed to map resource %d\n", NFP_NET_CTRL_BAR);
 		err = -EIO;
 		goto err_pci_regions;
 	}
 
 	nfp_net_get_fw_version(&fw_ver, ctrl_bar);
-	if (fw_ver.class != NFP_NET_CFG_VERSION_CLASS_GENERIC) {
+	if (fw_ver.resv || fw_ver.class != NFP_NET_CFG_VERSION_CLASS_GENERIC) {
 		dev_err(&pdev->dev, "Unknown Firmware ABI %d.%d.%d.%d\n",
 			fw_ver.resv, fw_ver.class, fw_ver.major, fw_ver.minor);
 		err = -EINVAL;
@@ -142,25 +129,17 @@ static int nfp_netvf_pci_probe(struct pci_dev *pdev,
 	}
 
 	/* Determine stride */
-	if (nfp_net_fw_ver_eq(&fw_ver, 0, 0, 0, 0) ||
-	    nfp_net_fw_ver_eq(&fw_ver, 0, 0, 0, 1) ||
-	    nfp_net_fw_ver_eq(&fw_ver, 0, 0, 0x12, 0x48)) {
+	if (nfp_net_fw_ver_eq(&fw_ver, 0, 0, 0, 1)) {
 		stride = 2;
 		tx_bar_no = NFP_NET_Q0_BAR;
 		rx_bar_no = NFP_NET_Q1_BAR;
 		dev_warn(&pdev->dev, "OBSOLETE Firmware detected - VF isolation not available\n");
 	} else {
 		switch (fw_ver.major) {
-		case 1 ... 3:
-			if (is_nfp3200) {
-				stride = 2;
-				tx_bar_no = NFP_NET_Q0_BAR;
-				rx_bar_no = NFP_NET_Q1_BAR;
-			} else {
-				stride = 4;
-				tx_bar_no = NFP_NET_Q0_BAR;
-				rx_bar_no = tx_bar_no;
-			}
+		case 1 ... 4:
+			stride = 4;
+			tx_bar_no = NFP_NET_Q0_BAR;
+			rx_bar_no = tx_bar_no;
 			break;
 		default:
 			dev_err(&pdev->dev, "Unsupported Firmware ABI %d.%d.%d.%d\n",
@@ -192,20 +171,10 @@ static int nfp_netvf_pci_probe(struct pci_dev *pdev,
 		max_rx_rings = (rx_bar_sz / NFP_QCP_QUEUE_ADDR_SZ) / 2;
 	}
 
-	/* XXX Implement a workaround for THB-350 here.  Ideally, we
-	 * have a different PCI ID for A rev VFs.
-	 */
-	switch (pdev->device) {
-	case PCI_DEVICE_NFP6000VF:
-		startq = readl(ctrl_bar + NFP_NET_CFG_START_TXQ);
-		tx_bar_off = NFP_PCIE_QUEUE(startq);
-		startq = readl(ctrl_bar + NFP_NET_CFG_START_RXQ);
-		rx_bar_off = NFP_PCIE_QUEUE(startq);
-		break;
-	default:
-		err = -ENODEV;
-		goto err_ctrl_unmap;
-	}
+	startq = readl(ctrl_bar + NFP_NET_CFG_START_TXQ);
+	tx_bar_off = NFP_PCIE_QUEUE(startq);
+	startq = readl(ctrl_bar + NFP_NET_CFG_START_RXQ);
+	rx_bar_off = NFP_PCIE_QUEUE(startq);
 
 	/* Allocate and initialise the netdev */
 	nn = nfp_net_netdev_alloc(pdev, max_tx_rings, max_rx_rings);
@@ -217,7 +186,6 @@ static int nfp_netvf_pci_probe(struct pci_dev *pdev,
 	nn->fw_ver = fw_ver;
 	nn->ctrl_bar = ctrl_bar;
 	nn->is_vf = 1;
-	nn->is_nfp3200 = is_nfp3200;
 	nn->stride_tx = stride;
 	nn->stride_rx = stride;
 

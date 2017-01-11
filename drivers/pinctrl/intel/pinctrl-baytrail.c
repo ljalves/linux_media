@@ -15,7 +15,6 @@
  */
 
 #include <linux/kernel.h>
-#include <linux/module.h>
 #include <linux/init.h>
 #include <linux/types.h>
 #include <linux/bitops.h>
@@ -401,9 +400,9 @@ static const struct byt_simple_func_mux byt_score_sata_mux[] = {
 static const unsigned int byt_score_plt_clk0_pins[] = { 96 };
 static const unsigned int byt_score_plt_clk1_pins[] = { 97 };
 static const unsigned int byt_score_plt_clk2_pins[] = { 98 };
-static const unsigned int byt_score_plt_clk4_pins[] = { 99 };
-static const unsigned int byt_score_plt_clk5_pins[] = { 100 };
-static const unsigned int byt_score_plt_clk3_pins[] = { 101 };
+static const unsigned int byt_score_plt_clk3_pins[] = { 99 };
+static const unsigned int byt_score_plt_clk4_pins[] = { 100 };
+static const unsigned int byt_score_plt_clk5_pins[] = { 101 };
 static const struct byt_simple_func_mux byt_score_plt_clk_mux[] = {
 	SIMPLE_FUNC("plt_clk", 1),
 };
@@ -1704,7 +1703,7 @@ static int byt_gpio_probe(struct byt_gpio *vg)
 	if (irq_rc && irq_rc->start) {
 		byt_gpio_irq_init_hw(vg);
 		ret = gpiochip_irqchip_add(gc, &byt_irqchip, 0,
-					   handle_simple_irq, IRQ_TYPE_NONE);
+					   handle_bad_irq, IRQ_TYPE_NONE);
 		if (ret) {
 			dev_err(&vg->pdev->dev, "failed to add irqchip\n");
 			goto fail;
@@ -1809,6 +1808,8 @@ static int byt_pinctrl_probe(struct platform_device *pdev)
 		return PTR_ERR(vg->pctl_dev);
 	}
 
+	raw_spin_lock_init(&vg->lock);
+
 	ret = byt_gpio_probe(vg);
 	if (ret) {
 		pinctrl_unregister(vg->pctl_dev);
@@ -1816,19 +1817,7 @@ static int byt_pinctrl_probe(struct platform_device *pdev)
 	}
 
 	platform_set_drvdata(pdev, vg);
-	raw_spin_lock_init(&vg->lock);
 	pm_runtime_enable(&pdev->dev);
-
-	return 0;
-}
-
-static int byt_pinctrl_remove(struct platform_device *pdev)
-{
-	struct byt_gpio *vg = platform_get_drvdata(pdev);
-
-	pm_runtime_disable(&pdev->dev);
-	gpiochip_remove(&vg->chip);
-	pinctrl_unregister(vg->pctl_dev);
 
 	return 0;
 }
@@ -1930,10 +1919,11 @@ static const struct dev_pm_ops byt_gpio_pm_ops = {
 
 static struct platform_driver byt_gpio_driver = {
 	.probe          = byt_pinctrl_probe,
-	.remove         = byt_pinctrl_remove,
 	.driver         = {
-		.name   = "byt_gpio",
-		.pm	= &byt_gpio_pm_ops,
+		.name			= "byt_gpio",
+		.pm			= &byt_gpio_pm_ops,
+		.suppress_bind_attrs	= true,
+
 		.acpi_match_table = ACPI_PTR(byt_gpio_acpi_match),
 	},
 };
@@ -1943,9 +1933,3 @@ static int __init byt_gpio_init(void)
 	return platform_driver_register(&byt_gpio_driver);
 }
 subsys_initcall(byt_gpio_init);
-
-static void __exit byt_gpio_exit(void)
-{
-	platform_driver_unregister(&byt_gpio_driver);
-}
-module_exit(byt_gpio_exit);

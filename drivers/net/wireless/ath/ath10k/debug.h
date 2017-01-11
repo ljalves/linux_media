@@ -94,7 +94,19 @@ int ath10k_debug_get_et_sset_count(struct ieee80211_hw *hw,
 void ath10k_debug_get_et_stats(struct ieee80211_hw *hw,
 			       struct ieee80211_vif *vif,
 			       struct ethtool_stats *stats, u64 *data);
+
+static inline u64 ath10k_debug_get_fw_dbglog_mask(struct ath10k *ar)
+{
+	return ar->debug.fw_dbglog_mask;
+}
+
+static inline u32 ath10k_debug_get_fw_dbglog_level(struct ath10k *ar)
+{
+	return ar->debug.fw_dbglog_level;
+}
+
 #else
+
 static inline int ath10k_debug_start(struct ath10k *ar)
 {
 	return 0;
@@ -144,6 +156,16 @@ ath10k_debug_get_new_fw_crash_data(struct ath10k *ar)
 	return NULL;
 }
 
+static inline u64 ath10k_debug_get_fw_dbglog_mask(struct ath10k *ar)
+{
+	return 0;
+}
+
+static inline u32 ath10k_debug_get_fw_dbglog_level(struct ath10k *ar)
+{
+	return 0;
+}
+
 #define ATH10K_DFS_STAT_INC(ar, c) do { } while (0)
 
 #define ath10k_debug_get_et_strings NULL
@@ -154,10 +176,15 @@ ath10k_debug_get_new_fw_crash_data(struct ath10k *ar)
 #ifdef CONFIG_MAC80211_DEBUGFS
 void ath10k_sta_add_debugfs(struct ieee80211_hw *hw, struct ieee80211_vif *vif,
 			    struct ieee80211_sta *sta, struct dentry *dir);
-void ath10k_sta_update_rx_duration(struct ath10k *ar, struct list_head *peer);
+void ath10k_sta_update_rx_duration(struct ath10k *ar,
+				   struct ath10k_fw_stats *stats);
+void ath10k_sta_statistics(struct ieee80211_hw *hw, struct ieee80211_vif *vif,
+			   struct ieee80211_sta *sta,
+			   struct station_info *sinfo);
 #else
-static inline void ath10k_sta_update_rx_duration(struct ath10k *ar,
-						 struct list_head *peer)
+static inline
+void ath10k_sta_update_rx_duration(struct ath10k *ar,
+				   struct ath10k_fw_stats *stats)
 {
 }
 #endif /* CONFIG_MAC80211_DEBUGFS */

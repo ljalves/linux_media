@@ -15,6 +15,29 @@
 #include <linux/qed/qed_if.h>
 #include <linux/qed/qed_iov_if.h>
 
+struct qed_queue_start_common_params {
+	/* Should always be relative to entity sending this. */
+	u8 vport_id;
+	u16 queue_id;
+
+	/* Relative, but relevant only for PFs */
+	u8 stats_id;
+
+	/* These are always absolute */
+	u16 sb;
+	u8 sb_idx;
+};
+
+struct qed_rxq_start_ret_params {
+	void __iomem *p_prod;
+	void *p_handle;
+};
+
+struct qed_txq_start_ret_params {
+	void __iomem *p_doorbell;
+	void *p_handle;
+};
+
 struct qed_dev_eth_info {
 	struct qed_dev_info common;
 
@@ -22,7 +45,11 @@ struct qed_dev_eth_info {
 	u8	num_tc;
 
 	u8	port_mac[ETH_ALEN];
-	u8	num_vlan_filters;
+	u16	num_vlan_filters;
+	u16	num_mac_filters;
+
+	/* Legacy VF - this affects the datapath, so qede has to know */
+	bool is_legacy;
 };
 
 struct qed_update_vport_rss_params {
@@ -49,18 +76,7 @@ struct qed_start_vport_params {
 	bool drop_ttl0;
 	u8 vport_id;
 	u16 mtu;
-};
-
-struct qed_stop_rxq_params {
-	u8 rss_id;
-	u8 rx_queue_id;
-	u8 vport_id;
-	bool eq_completion_only;
-};
-
-struct qed_stop_txq_params {
-	u8 rss_id;
-	u8 tx_queue_id;
+	bool clear_stats;
 };
 
 enum qed_filter_rx_mode_type {
@@ -107,14 +123,6 @@ struct qed_filter_params {
 	union qed_filter_type_params filter;
 };
 
-struct qed_queue_start_common_params {
-	u8 rss_id;
-	u8 queue_id;
-	u8 vport_id;
-	u16 sb;
-	u16 sb_idx;
-};
-
 struct qed_tunn_params {
 	u16 vxlan_port;
 	u8 update_vxlan_port;
@@ -124,13 +132,75 @@ struct qed_tunn_params {
 
 struct qed_eth_cb_ops {
 	struct qed_common_cb_ops common;
-	void (*force_mac) (void *dev, u8 *mac);
+	void (*force_mac) (void *dev, u8 *mac, bool forced);
 };
+
+#ifdef CONFIG_DCB
+/* Prototype declaration of qed_eth_dcbnl_ops should match with the declaration
+ * of dcbnl_rtnl_ops structure.
+ */
+struct qed_eth_dcbnl_ops {
+	/* IEEE 802.1Qaz std */
+	int (*ieee_getpfc)(struct qed_dev *cdev, struct ieee_pfc *pfc);
+	int (*ieee_setpfc)(struct qed_dev *cdev, struct ieee_pfc *pfc);
+	int (*ieee_getets)(struct qed_dev *cdev, struct ieee_ets *ets);
+	int (*ieee_setets)(struct qed_dev *cdev, struct ieee_ets *ets);
+	int (*ieee_peer_getets)(struct qed_dev *cdev, struct ieee_ets *ets);
+	int (*ieee_peer_getpfc)(struct qed_dev *cdev, struct ieee_pfc *pfc);
+	int (*ieee_getapp)(struct qed_dev *cdev, struct dcb_app *app);
+	int (*ieee_setapp)(struct qed_dev *cdev, struct dcb_app *app);
+
+	/* CEE std */
+	u8 (*getstate)(struct qed_dev *cdev);
+	u8 (*setstate)(struct qed_dev *cdev, u8 state);
+	void (*getpgtccfgtx)(struct qed_dev *cdev, int prio, u8 *prio_type,
+			     u8 *pgid, u8 *bw_pct, u8 *up_map);
+	void (*getpgbwgcfgtx)(struct qed_dev *cdev, int pgid, u8 *bw_pct);
+	void (*getpgtccfgrx)(struct qed_dev *cdev, int prio, u8 *prio_type,
+			     u8 *pgid, u8 *bw_pct, u8 *up_map);
+	void (*getpgbwgcfgrx)(struct qed_dev *cdev, int pgid, u8 *bw_pct);
+	void (*getpfccfg)(struct qed_dev *cdev, int prio, u8 *setting);
+	void (*setpfccfg)(struct qed_dev *cdev, int prio, u8 setting);
+	u8 (*getcap)(struct qed_dev *cdev, int capid, u8 *cap);
+	int (*getnumtcs)(struct qed_dev *cdev, int tcid, u8 *num);
+	u8 (*getpfcstate)(struct qed_dev *cdev);
+	int (*getapp)(struct qed_dev *cdev, u8 idtype, u16 id);
+	u8 (*getfeatcfg)(struct qed_dev *cdev, int featid, u8 *flags);
+
+	/* DCBX configuration */
+	u8 (*getdcbx)(struct qed_dev *cdev);
+	void (*setpgtccfgtx)(struct qed_dev *cdev, int prio,
+			     u8 pri_type, u8 pgid, u8 bw_pct, u8 up_map);
+	void (*setpgtccfgrx)(struct qed_dev *cdev, int prio,
+			     u8 pri_type, u8 pgid, u8 bw_pct, u8 up_map);
+	void (*setpgbwgcfgtx)(struct qed_dev *cdev, int pgid, u8 bw_pct);
+	void (*setpgbwgcfgrx)(struct qed_dev *cdev, int pgid, u8 bw_pct);
+	u8 (*setall)(struct qed_dev *cdev);
+	int (*setnumtcs)(struct qed_dev *cdev, int tcid, u8 num);
+	void (*setpfcstate)(struct qed_dev *cdev, u8 state);
+	int (*setapp)(struct qed_dev *cdev, u8 idtype, u16 idval, u8 up);
+	u8 (*setdcbx)(struct qed_dev *cdev, u8 state);
+	u8 (*setfeatcfg)(struct qed_dev *cdev, int featid, u8 flags);
+
+	/* Peer apps */
+	int (*peer_getappinfo)(struct qed_dev *cdev,
+			       struct dcb_peer_app_info *info,
+			       u16 *app_count);
+	int (*peer_getapptable)(struct qed_dev *cdev, struct dcb_app *table);
+
+	/* CEE peer */
+	int (*cee_peer_getpfc)(struct qed_dev *cdev, struct cee_pfc *pfc);
+	int (*cee_peer_getpg)(struct qed_dev *cdev, struct cee_pg *pg);
+};
+#endif
 
 struct qed_eth_ops {
 	const struct qed_common_ops *common;
 #ifdef CONFIG_QED_SRIOV
 	const struct qed_iov_hv_ops *iov;
+#endif
+#ifdef CONFIG_DCB
+	const struct qed_eth_dcbnl_ops *dcb;
 #endif
 
 	int (*fill_dev_info)(struct qed_dev *cdev,
@@ -152,24 +222,24 @@ struct qed_eth_ops {
 			    struct qed_update_vport_params *params);
 
 	int (*q_rx_start)(struct qed_dev *cdev,
+			  u8 rss_num,
 			  struct qed_queue_start_common_params *params,
 			  u16 bd_max_bytes,
 			  dma_addr_t bd_chain_phys_addr,
 			  dma_addr_t cqe_pbl_addr,
 			  u16 cqe_pbl_size,
-			  void __iomem **pp_prod);
+			  struct qed_rxq_start_ret_params *ret_params);
 
-	int (*q_rx_stop)(struct qed_dev *cdev,
-			 struct qed_stop_rxq_params *params);
+	int (*q_rx_stop)(struct qed_dev *cdev, u8 rss_id, void *handle);
 
 	int (*q_tx_start)(struct qed_dev *cdev,
+			  u8 rss_num,
 			  struct qed_queue_start_common_params *params,
 			  dma_addr_t pbl_addr,
 			  u16 pbl_size,
-			  void __iomem **pp_doorbell);
+			  struct qed_txq_start_ret_params *ret_params);
 
-	int (*q_tx_stop)(struct qed_dev *cdev,
-			 struct qed_stop_txq_params *params);
+	int (*q_tx_stop)(struct qed_dev *cdev, u8 rss_id, void *handle);
 
 	int (*filter_config)(struct qed_dev *cdev,
 			     struct qed_filter_params *params);

@@ -15,11 +15,7 @@
  *
  * You should have received a copy of the GNU General Public License
  * version 2 along with this program; If not, see
- * http://www.sun.com/software/products/lustre/docs/GPLv2.pdf
- *
- * Please contact Sun Microsystems, Inc., 4150 Network Circle, Santa Clara,
- * CA 95054 USA or visit www.sun.com if you need additional information or
- * have any questions.
+ * http://www.gnu.org/licenses/gpl-2.0.html
  *
  * GPL HEADER END
  */
@@ -50,16 +46,17 @@
  * to cover a time period of 1024 seconds into the future before wrapping.
  */
 #define STTIMER_MINPOLL        3	/* log2 min poll interval (8 s) */
-#define STTIMER_SLOTTIME       (1 << STTIMER_MINPOLL)
+#define STTIMER_SLOTTIME	BIT(STTIMER_MINPOLL)
 #define STTIMER_SLOTTIMEMASK   (~(STTIMER_SLOTTIME - 1))
-#define STTIMER_NSLOTS	       (1 << 7)
+#define STTIMER_NSLOTS		BIT(7)
 #define STTIMER_SLOT(t)	       (&stt_data.stt_hash[(((t) >> STTIMER_MINPOLL) & \
 						    (STTIMER_NSLOTS - 1))])
 
 static struct st_timer_data {
 	spinlock_t	  stt_lock;
 	unsigned long	  stt_prev_slot; /* start time of the slot processed
-					  * previously */
+					  * previously
+					  */
 	struct list_head  stt_hash[STTIMER_NSLOTS];
 	int		  stt_shuttingdown;
 	wait_queue_head_t stt_waitq;

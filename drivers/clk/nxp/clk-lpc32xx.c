@@ -87,7 +87,7 @@ enum {
 
 enum {
 	/* Start from the last defined clock in dt bindings */
-	LPC32XX_CLK_ADC_DIV = LPC32XX_CLK_HCLK_PLL + 1,
+	LPC32XX_CLK_ADC_DIV = LPC32XX_CLK_PERIPH + 1,
 	LPC32XX_CLK_ADC_RTC,
 	LPC32XX_CLK_TEST1,
 	LPC32XX_CLK_TEST2,
@@ -99,7 +99,6 @@ enum {
 	LPC32XX_CLK_HCLK_DIV_PERIPH,
 	LPC32XX_CLK_HCLK_DIV,
 	LPC32XX_CLK_HCLK,
-	LPC32XX_CLK_PERIPH,
 	LPC32XX_CLK_ARM,
 	LPC32XX_CLK_ARM_VFP,
 
@@ -1283,13 +1282,13 @@ static struct clk_hw_proto clk_hw_proto[LPC32XX_CLK_HW_MAX] = {
 
 	LPC32XX_DEFINE_MUX(PWM1_MUX, PWMCLK_CTRL, 1, 0x1, NULL, 0),
 	LPC32XX_DEFINE_DIV(PWM1_DIV, PWMCLK_CTRL, 4, 4, NULL,
-			   CLK_DIVIDER_ONE_BASED | CLK_DIVIDER_ALLOW_ZERO),
+			   CLK_DIVIDER_ONE_BASED),
 	LPC32XX_DEFINE_GATE(PWM1_GATE, PWMCLK_CTRL, 0, 0),
 	LPC32XX_DEFINE_COMPOSITE(PWM1, PWM1_MUX, PWM1_DIV, PWM1_GATE),
 
 	LPC32XX_DEFINE_MUX(PWM2_MUX, PWMCLK_CTRL, 3, 0x1, NULL, 0),
 	LPC32XX_DEFINE_DIV(PWM2_DIV, PWMCLK_CTRL, 8, 4, NULL,
-			   CLK_DIVIDER_ONE_BASED | CLK_DIVIDER_ALLOW_ZERO),
+			   CLK_DIVIDER_ONE_BASED),
 	LPC32XX_DEFINE_GATE(PWM2_GATE, PWMCLK_CTRL, 2, 0),
 	LPC32XX_DEFINE_COMPOSITE(PWM2, PWM2_MUX, PWM2_DIV, PWM2_GATE),
 
@@ -1336,8 +1335,7 @@ static struct clk_hw_proto clk_hw_proto[LPC32XX_CLK_HW_MAX] = {
 	LPC32XX_DEFINE_GATE(USB_DIV_GATE, USB_CTRL, 17, 0),
 	LPC32XX_DEFINE_COMPOSITE(USB_DIV, _NULL, USB_DIV_DIV, USB_DIV_GATE),
 
-	LPC32XX_DEFINE_DIV(SD_DIV, MS_CTRL, 0, 4, NULL,
-			   CLK_DIVIDER_ONE_BASED | CLK_DIVIDER_ALLOW_ZERO),
+	LPC32XX_DEFINE_DIV(SD_DIV, MS_CTRL, 0, 4, NULL, CLK_DIVIDER_ONE_BASED),
 	LPC32XX_DEFINE_CLK(SD_GATE, MS_CTRL, BIT(5) | BIT(9), BIT(5) | BIT(9),
 			   0x0, BIT(5) | BIT(9), 0x0, 0x0, clk_mask_ops),
 	LPC32XX_DEFINE_COMPOSITE(SD, _NULL, SD_DIV, SD_GATE),
@@ -1479,6 +1477,20 @@ static struct clk * __init lpc32xx_clk_register(u32 id)
 	return clk;
 }
 
+static void __init lpc32xx_clk_div_quirk(u32 reg, u32 div_mask, u32 gate)
+{
+	u32 val;
+
+	regmap_read(clk_regmap, reg, &val);
+
+	if (!(val & div_mask)) {
+		val &= ~gate;
+		val |= BIT(__ffs(div_mask));
+	}
+
+	regmap_update_bits(clk_regmap, reg, gate | div_mask, val);
+}
+
 static void __init lpc32xx_clk_init(struct device_node *np)
 {
 	unsigned int i;
@@ -1514,8 +1526,20 @@ static void __init lpc32xx_clk_init(struct device_node *np)
 	if (IS_ERR(clk_regmap)) {
 		pr_err("failed to regmap system control block: %ld\n",
 			PTR_ERR(clk_regmap));
+		iounmap(base);
 		return;
 	}
+
+	/*
+	 * Divider part of PWM and MS clocks requires a quirk to avoid
+	 * a misinterpretation of formally valid zero value in register
+	 * bitfield, which indicates another clock gate. Instead of
+	 * adding complexity to a gate clock ensure that zero value in
+	 * divider clock is never met in runtime.
+	 */
+	lpc32xx_clk_div_quirk(LPC32XX_CLKPWR_PWMCLK_CTRL, 0xf0, BIT(0));
+	lpc32xx_clk_div_quirk(LPC32XX_CLKPWR_PWMCLK_CTRL, 0xf00, BIT(2));
+	lpc32xx_clk_div_quirk(LPC32XX_CLKPWR_MS_CTRL, 0xf, BIT(5) | BIT(9));
 
 	for (i = 1; i < LPC32XX_CLK_MAX; i++) {
 		clk[i] = lpc32xx_clk_register(i);

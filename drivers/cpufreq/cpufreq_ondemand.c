@@ -25,7 +25,7 @@
 #define MAX_SAMPLING_DOWN_FACTOR		(100000)
 #define MICRO_FREQUENCY_UP_THRESHOLD		(95)
 #define MICRO_FREQUENCY_MIN_SAMPLE_RATE		(10000)
-#define MIN_FREQUENCY_UP_THRESHOLD		(11)
+#define MIN_FREQUENCY_UP_THRESHOLD		(1)
 #define MAX_FREQUENCY_UP_THRESHOLD		(100)
 
 static struct od_ops od_ops;
@@ -65,34 +65,30 @@ static unsigned int generic_powersave_bias_target(struct cpufreq_policy *policy,
 {
 	unsigned int freq_req, freq_reduc, freq_avg;
 	unsigned int freq_hi, freq_lo;
-	unsigned int index = 0;
+	unsigned int index;
 	unsigned int delay_hi_us;
 	struct policy_dbs_info *policy_dbs = policy->governor_data;
 	struct od_policy_dbs_info *dbs_info = to_dbs_info(policy_dbs);
 	struct dbs_data *dbs_data = policy_dbs->dbs_data;
 	struct od_dbs_tuners *od_tuners = dbs_data->tuners;
+	struct cpufreq_frequency_table *freq_table = policy->freq_table;
 
-	if (!dbs_info->freq_table) {
+	if (!freq_table) {
 		dbs_info->freq_lo = 0;
 		dbs_info->freq_lo_delay_us = 0;
 		return freq_next;
 	}
 
-	cpufreq_frequency_table_target(policy, dbs_info->freq_table, freq_next,
-			relation, &index);
-	freq_req = dbs_info->freq_table[index].frequency;
+	index = cpufreq_frequency_table_target(policy, freq_next, relation);
+	freq_req = freq_table[index].frequency;
 	freq_reduc = freq_req * od_tuners->powersave_bias / 1000;
 	freq_avg = freq_req - freq_reduc;
 
 	/* Find freq bounds for freq_avg in freq_table */
-	index = 0;
-	cpufreq_frequency_table_target(policy, dbs_info->freq_table, freq_avg,
-			CPUFREQ_RELATION_H, &index);
-	freq_lo = dbs_info->freq_table[index].frequency;
-	index = 0;
-	cpufreq_frequency_table_target(policy, dbs_info->freq_table, freq_avg,
-			CPUFREQ_RELATION_L, &index);
-	freq_hi = dbs_info->freq_table[index].frequency;
+	index = cpufreq_table_find_index_h(policy, freq_avg);
+	freq_lo = freq_table[index].frequency;
+	index = cpufreq_table_find_index_l(policy, freq_avg);
+	freq_hi = freq_table[index].frequency;
 
 	/* Find out how long we have to be in hi and lo freqs */
 	if (freq_hi == freq_lo) {
@@ -113,7 +109,6 @@ static void ondemand_powersave_bias_init(struct cpufreq_policy *policy)
 {
 	struct od_policy_dbs_info *dbs_info = to_dbs_info(policy->governor_data);
 
-	dbs_info->freq_table = cpufreq_frequency_get_table(policy->cpu);
 	dbs_info->freq_lo = 0;
 }
 
@@ -174,7 +169,7 @@ static void od_update(struct cpufreq_policy *policy)
 	}
 }
 
-static unsigned int od_dbs_timer(struct cpufreq_policy *policy)
+static unsigned int od_dbs_update(struct cpufreq_policy *policy)
 {
 	struct policy_dbs_info *policy_dbs = policy->governor_data;
 	struct dbs_data *dbs_data = policy_dbs->dbs_data;
@@ -196,7 +191,7 @@ static unsigned int od_dbs_timer(struct cpufreq_policy *policy)
 	od_update(policy);
 
 	if (dbs_info->freq_lo) {
-		/* Setup timer for SUB_SAMPLE */
+		/* Setup SUB_SAMPLE */
 		dbs_info->sample_type = OD_SUB_SAMPLE;
 		return dbs_info->freq_hi_delay_us;
 	}
@@ -260,11 +255,11 @@ static ssize_t store_sampling_down_factor(struct gov_attr_set *attr_set,
 	list_for_each_entry(policy_dbs, &attr_set->policy_list, list) {
 		/*
 		 * Doing this without locking might lead to using different
-		 * rate_mult values in od_update() and od_dbs_timer().
+		 * rate_mult values in od_update() and od_dbs_update().
 		 */
-		mutex_lock(&policy_dbs->timer_mutex);
+		mutex_lock(&policy_dbs->update_mutex);
 		policy_dbs->rate_mult = 1;
-		mutex_unlock(&policy_dbs->timer_mutex);
+		mutex_unlock(&policy_dbs->update_mutex);
 	}
 
 	return count;
@@ -361,17 +356,15 @@ static void od_free(struct policy_dbs_info *policy_dbs)
 	kfree(to_dbs_info(policy_dbs));
 }
 
-static int od_init(struct dbs_data *dbs_data, bool notify)
+static int od_init(struct dbs_data *dbs_data)
 {
 	struct od_dbs_tuners *tuners;
 	u64 idle_time;
 	int cpu;
 
 	tuners = kzalloc(sizeof(*tuners), GFP_KERNEL);
-	if (!tuners) {
-		pr_err("%s: kzalloc failed\n", __func__);
+	if (!tuners)
 		return -ENOMEM;
-	}
 
 	cpu = get_cpu();
 	idle_time = get_cpu_idle_time_us(cpu, NULL);
@@ -381,8 +374,7 @@ static int od_init(struct dbs_data *dbs_data, bool notify)
 		dbs_data->up_threshold = MICRO_FREQUENCY_UP_THRESHOLD;
 		/*
 		 * In nohz/micro accounting case we set the minimum frequency
-		 * not depending on HZ, but fixed (very low). The deferred
-		 * timer might skip some samples if idle/sleeping as needed.
+		 * not depending on HZ, but fixed (very low).
 		*/
 		dbs_data->min_sampling_rate = MICRO_FREQUENCY_MIN_SAMPLE_RATE;
 	} else {
@@ -402,7 +394,7 @@ static int od_init(struct dbs_data *dbs_data, bool notify)
 	return 0;
 }
 
-static void od_exit(struct dbs_data *dbs_data, bool notify)
+static void od_exit(struct dbs_data *dbs_data)
 {
 	kfree(dbs_data->tuners);
 }
@@ -420,14 +412,9 @@ static struct od_ops od_ops = {
 };
 
 static struct dbs_governor od_dbs_gov = {
-	.gov = {
-		.name = "ondemand",
-		.governor = cpufreq_governor_dbs,
-		.max_transition_latency	= TRANSITION_LATENCY_LIMIT,
-		.owner = THIS_MODULE,
-	},
+	.gov = CPUFREQ_DBS_GOVERNOR_INITIALIZER("ondemand"),
 	.kobj_type = { .default_attrs = od_attributes },
-	.gov_dbs_timer = od_dbs_timer,
+	.gov_dbs_update = od_dbs_update,
 	.alloc = od_alloc,
 	.free = od_free,
 	.init = od_init,

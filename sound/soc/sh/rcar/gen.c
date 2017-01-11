@@ -206,11 +206,19 @@ static int _rsnd_gen_regmap_init(struct rsnd_priv *priv,
  */
 static int rsnd_gen2_probe(struct rsnd_priv *priv)
 {
-	const static struct rsnd_regmap_field_conf conf_ssiu[] = {
+	static const struct rsnd_regmap_field_conf conf_ssiu[] = {
 		RSND_GEN_S_REG(SSI_MODE0,	0x800),
 		RSND_GEN_S_REG(SSI_MODE1,	0x804),
 		RSND_GEN_S_REG(SSI_MODE2,	0x808),
 		RSND_GEN_S_REG(SSI_CONTROL,	0x810),
+		RSND_GEN_S_REG(SSI_SYS_STATUS0,	0x840),
+		RSND_GEN_S_REG(SSI_SYS_STATUS1,	0x844),
+		RSND_GEN_S_REG(SSI_SYS_STATUS2,	0x848),
+		RSND_GEN_S_REG(SSI_SYS_STATUS3,	0x84c),
+		RSND_GEN_S_REG(SSI_SYS_STATUS4,	0x880),
+		RSND_GEN_S_REG(SSI_SYS_STATUS5,	0x884),
+		RSND_GEN_S_REG(SSI_SYS_STATUS6,	0x888),
+		RSND_GEN_S_REG(SSI_SYS_STATUS7,	0x88c),
 
 		/* FIXME: it needs SSI_MODE2/3 in the future */
 		RSND_GEN_M_REG(SSI_BUSIF_MODE,	0x0,	0x80),
@@ -221,7 +229,7 @@ static int rsnd_gen2_probe(struct rsnd_priv *priv)
 		RSND_GEN_M_REG(SSI_INT_ENABLE,	0x18,	0x80),
 	};
 
-	const static struct rsnd_regmap_field_conf conf_scu[] = {
+	static const struct rsnd_regmap_field_conf conf_scu[] = {
 		RSND_GEN_M_REG(SRC_I_BUSIF_MODE,0x0,	0x20),
 		RSND_GEN_M_REG(SRC_O_BUSIF_MODE,0x4,	0x20),
 		RSND_GEN_M_REG(SRC_BUSIF_DALIGN,0x8,	0x20),
@@ -308,10 +316,10 @@ static int rsnd_gen2_probe(struct rsnd_priv *priv)
 		RSND_GEN_M_REG(DVC_VOL7R,	0xe44,	0x100),
 		RSND_GEN_M_REG(DVC_DVUER,	0xe48,	0x100),
 	};
-	const static struct rsnd_regmap_field_conf conf_adg[] = {
+	static const struct rsnd_regmap_field_conf conf_adg[] = {
 		RSND_GEN_S_REG(BRRA,		0x00),
 		RSND_GEN_S_REG(BRRB,		0x04),
-		RSND_GEN_S_REG(SSICKR,		0x08),
+		RSND_GEN_S_REG(BRGCKR,		0x08),
 		RSND_GEN_S_REG(AUDIO_CLK_SEL0,	0x0c),
 		RSND_GEN_S_REG(AUDIO_CLK_SEL1,	0x10),
 		RSND_GEN_S_REG(AUDIO_CLK_SEL2,	0x14),
@@ -328,7 +336,7 @@ static int rsnd_gen2_probe(struct rsnd_priv *priv)
 		RSND_GEN_S_REG(SRCOUT_TIMSEL4,	0x58),
 		RSND_GEN_S_REG(CMDOUT_TIMSEL,	0x5c),
 	};
-	const static struct rsnd_regmap_field_conf conf_ssi[] = {
+	static const struct rsnd_regmap_field_conf conf_ssi[] = {
 		RSND_GEN_M_REG(SSICR,		0x00,	0x40),
 		RSND_GEN_M_REG(SSISR,		0x04,	0x40),
 		RSND_GEN_M_REG(SSITDR,		0x08,	0x40),
@@ -359,14 +367,14 @@ static int rsnd_gen2_probe(struct rsnd_priv *priv)
 
 static int rsnd_gen1_probe(struct rsnd_priv *priv)
 {
-	const static struct rsnd_regmap_field_conf conf_adg[] = {
+	static const struct rsnd_regmap_field_conf conf_adg[] = {
 		RSND_GEN_S_REG(BRRA,		0x00),
 		RSND_GEN_S_REG(BRRB,		0x04),
-		RSND_GEN_S_REG(SSICKR,		0x08),
+		RSND_GEN_S_REG(BRGCKR,		0x08),
 		RSND_GEN_S_REG(AUDIO_CLK_SEL0,	0x0c),
 		RSND_GEN_S_REG(AUDIO_CLK_SEL1,	0x10),
 	};
-	const static struct rsnd_regmap_field_conf conf_ssi[] = {
+	static const struct rsnd_regmap_field_conf conf_ssi[] = {
 		RSND_GEN_M_REG(SSICR,		0x00,	0x40),
 		RSND_GEN_M_REG(SSISR,		0x04,	0x40),
 		RSND_GEN_M_REG(SSITDR,		0x08,	0x40),

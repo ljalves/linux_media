@@ -48,6 +48,7 @@
 #define GOTGCTL_ASESVLD			(1 << 18)
 #define GOTGCTL_DBNC_SHORT		(1 << 17)
 #define GOTGCTL_CONID_B			(1 << 16)
+#define GOTGCTL_DBNCE_FLTR_BYPASS	(1 << 15)
 #define GOTGCTL_DEVHNPEN		(1 << 11)
 #define GOTGCTL_HSTSETHNPEN		(1 << 10)
 #define GOTGCTL_HNPREQ			(1 << 9)
@@ -411,6 +412,7 @@
 /* Device mode registers */
 
 #define DCFG				HSOTG_REG(0x800)
+#define DCFG_DESCDMA_EN			(1 << 23)
 #define DCFG_EPMISCNT_MASK		(0x1f << 18)
 #define DCFG_EPMISCNT_SHIFT		18
 #define DCFG_EPMISCNT_LIMIT		0x1f
@@ -459,6 +461,9 @@
 #define DSTS_SUSPSTS			(1 << 0)
 
 #define DIEPMSK				HSOTG_REG(0x810)
+#define DIEPMSK_NAKMSK			(1 << 13)
+#define DIEPMSK_BNAININTRMSK		(1 << 9)
+#define DIEPMSK_TXFIFOUNDRNMSK		(1 << 8)
 #define DIEPMSK_TXFIFOEMPTY		(1 << 7)
 #define DIEPMSK_INEPNAKEFFMSK		(1 << 6)
 #define DIEPMSK_INTKNEPMISMSK		(1 << 5)
@@ -469,7 +474,9 @@
 #define DIEPMSK_XFERCOMPLMSK		(1 << 0)
 
 #define DOEPMSK				HSOTG_REG(0x814)
+#define DOEPMSK_BNAMSK			(1 << 9)
 #define DOEPMSK_BACK2BACKSETUP		(1 << 6)
+#define DOEPMSK_STSPHSERCVDMSK		(1 << 5)
 #define DOEPMSK_OUTTKNEPDISMSK		(1 << 4)
 #define DOEPMSK_SETUPMSK		(1 << 3)
 #define DOEPMSK_AHBERRMSK		(1 << 2)
@@ -486,6 +493,7 @@
 #define DTKNQR2				HSOTG_REG(0x824)
 #define DTKNQR3				HSOTG_REG(0x830)
 #define DTKNQR4				HSOTG_REG(0x834)
+#define DIEPEMPMSK			HSOTG_REG(0x834)
 
 #define DVBUSDIS			HSOTG_REG(0x828)
 #define DVBUSPULSE			HSOTG_REG(0x82C)
@@ -544,9 +552,18 @@
 #define DIEPINT(_a)			HSOTG_REG(0x908 + ((_a) * 0x20))
 #define DOEPINT(_a)			HSOTG_REG(0xB08 + ((_a) * 0x20))
 #define DXEPINT_SETUP_RCVD		(1 << 15)
+#define DXEPINT_NYETINTRPT		(1 << 14)
+#define DXEPINT_NAKINTRPT		(1 << 13)
+#define DXEPINT_BBLEERRINTRPT		(1 << 12)
+#define DXEPINT_PKTDRPSTS		(1 << 11)
+#define DXEPINT_BNAINTR			(1 << 9)
+#define DXEPINT_TXFIFOUNDRN		(1 << 8)
+#define DXEPINT_OUTPKTERR		(1 << 8)
+#define DXEPINT_TXFEMP			(1 << 7)
 #define DXEPINT_INEPNAKEFF		(1 << 6)
 #define DXEPINT_BACK2BACKSETUP		(1 << 6)
 #define DXEPINT_INTKNEPMIS		(1 << 5)
+#define DXEPINT_STSPHSERCVD		(1 << 5)
 #define DXEPINT_INTKNTXFEMP		(1 << 4)
 #define DXEPINT_OUTTKNEPDIS		(1 << 4)
 #define DXEPINT_TIMEOUT			(1 << 3)
@@ -775,7 +792,8 @@
 #define HCFIFO(_ch)			HSOTG_REG(0x1000 + 0x1000 * (_ch))
 
 /**
- * struct dwc2_hcd_dma_desc - Host-mode DMA descriptor structure
+ * struct dwc2_dma_desc - DMA descriptor structure,
+ * used for both host and gadget modes
  *
  * @status: DMA descriptor status quadlet
  * @buf:    DMA descriptor data buffer pointer
@@ -783,10 +801,12 @@
  * DMA Descriptor structure contains two quadlets:
  * Status quadlet and Data buffer pointer.
  */
-struct dwc2_hcd_dma_desc {
+struct dwc2_dma_desc {
 	u32 status;
 	u32 buf;
-};
+} __packed;
+
+/* Host Mode DMA descriptor status quadlet */
 
 #define HOST_DMA_A			(1 << 31)
 #define HOST_DMA_STS_MASK		(0x3 << 28)
@@ -802,8 +822,43 @@ struct dwc2_hcd_dma_desc {
 #define HOST_DMA_ISOC_NBYTES_SHIFT	0
 #define HOST_DMA_NBYTES_MASK		(0x1ffff << 0)
 #define HOST_DMA_NBYTES_SHIFT		0
+#define HOST_DMA_NBYTES_LIMIT		131071
 
-#define MAX_DMA_DESC_SIZE		131071
+/* Device Mode DMA descriptor status quadlet */
+
+#define DEV_DMA_BUFF_STS_MASK		(0x3 << 30)
+#define DEV_DMA_BUFF_STS_SHIFT		30
+#define DEV_DMA_BUFF_STS_HREADY		0
+#define DEV_DMA_BUFF_STS_DMABUSY	1
+#define DEV_DMA_BUFF_STS_DMADONE	2
+#define DEV_DMA_BUFF_STS_HBUSY		3
+#define DEV_DMA_STS_MASK		(0x3 << 28)
+#define DEV_DMA_STS_SHIFT		28
+#define DEV_DMA_STS_SUCC		0
+#define DEV_DMA_STS_BUFF_FLUSH		1
+#define DEV_DMA_STS_BUFF_ERR		3
+#define DEV_DMA_L			(1 << 27)
+#define DEV_DMA_SHORT			(1 << 26)
+#define DEV_DMA_IOC			(1 << 25)
+#define DEV_DMA_SR			(1 << 24)
+#define DEV_DMA_MTRF			(1 << 23)
+#define DEV_DMA_ISOC_PID_MASK		(0x3 << 23)
+#define DEV_DMA_ISOC_PID_SHIFT		23
+#define DEV_DMA_ISOC_PID_DATA0		0
+#define DEV_DMA_ISOC_PID_DATA2		1
+#define DEV_DMA_ISOC_PID_DATA1		2
+#define DEV_DMA_ISOC_PID_MDATA		3
+#define DEV_DMA_ISOC_FRNUM_MASK		(0x7ff << 12)
+#define DEV_DMA_ISOC_FRNUM_SHIFT	12
+#define DEV_DMA_ISOC_TX_NBYTES_MASK	(0xfff << 0)
+#define DEV_DMA_ISOC_TX_NBYTES_LIMIT	0xfff
+#define DEV_DMA_ISOC_RX_NBYTES_MASK	(0x7ff << 0)
+#define DEV_DMA_ISOC_RX_NBYTES_LIMIT	0x7ff
+#define DEV_DMA_ISOC_NBYTES_SHIFT	0
+#define DEV_DMA_NBYTES_MASK		(0xffff << 0)
+#define DEV_DMA_NBYTES_SHIFT		0
+#define DEV_DMA_NBYTES_LIMIT		0xffff
+
 #define MAX_DMA_DESC_NUM_GENERIC	64
 #define MAX_DMA_DESC_NUM_HS_ISOC	256
 

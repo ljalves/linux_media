@@ -91,27 +91,13 @@ VECTOR   mem_service             ; 0x8, Mem exception   (0x1)
 VECTOR   instr_service           ; 0x10, Instrn Error   (0x2)
 
 ; ******************** Device ISRs **********************
-#ifdef CONFIG_ARC_IRQ3_LV2
+#ifdef CONFIG_ARC_COMPACT_IRQ_LEVELS
 VECTOR   handle_interrupt_level2
 #else
 VECTOR   handle_interrupt_level1
 #endif
 
-VECTOR   handle_interrupt_level1
-
-#ifdef CONFIG_ARC_IRQ5_LV2
-VECTOR   handle_interrupt_level2
-#else
-VECTOR   handle_interrupt_level1
-#endif
-
-#ifdef CONFIG_ARC_IRQ6_LV2
-VECTOR   handle_interrupt_level2
-#else
-VECTOR   handle_interrupt_level1
-#endif
-
-.rept   25
+.rept   28
 VECTOR   handle_interrupt_level1 ; Other devices
 .endr
 
@@ -273,7 +259,7 @@ ENTRY(EV_TLBProtV)
 
 	EXCEPTION_PROLOGUE
 
-	lr  r2, [ecr]
+	mov r2, r9	; ECR set into r9 already
 	lr  r0, [efa]	; Faulting Data address (not part of pt_regs saved above)
 
 	; Exception auto-disables further Intr/exceptions.

@@ -100,6 +100,7 @@ static const struct of_device_id sdhci_at91_dt_match[] = {
 	{ .compatible = "atmel,sama5d2-sdhci", .data = &soc_data_sama5d2 },
 	{}
 };
+MODULE_DEVICE_TABLE(of, sdhci_at91_dt_match);
 
 #ifdef CONFIG_PM
 static int sdhci_at91_runtime_suspend(struct device *dev)
@@ -288,7 +289,7 @@ static int sdhci_at91_probe(struct platform_device *pdev)
 	 * Disable SDHCI_QUIRK_BROKEN_CARD_DETECTION to be sure nobody tries
 	 * to enable polling via device tree with broken-cd property.
 	 */
-	if (!(host->mmc->caps & MMC_CAP_NONREMOVABLE) &&
+	if (mmc_card_is_removable(host->mmc) &&
 	    mmc_gpio_get_cd(host->mmc) < 0) {
 		host->mmc->caps |= MMC_CAP_NEEDS_POLL;
 		host->quirks &= ~SDHCI_QUIRK_BROKEN_CARD_DETECTION;

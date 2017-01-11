@@ -582,7 +582,7 @@ static long privcmd_ioctl(struct file *file,
 static void privcmd_close(struct vm_area_struct *vma)
 {
 	struct page **pages = vma->vm_private_data;
-	int numpgs = (vma->vm_end - vma->vm_start) >> PAGE_SHIFT;
+	int numpgs = vma_pages(vma);
 	int numgfns = (vma->vm_end - vma->vm_start) >> XEN_PAGE_SHIFT;
 	int rc;
 
@@ -602,7 +602,7 @@ static int privcmd_fault(struct vm_area_struct *vma, struct vm_fault *vmf)
 {
 	printk(KERN_DEBUG "privcmd_fault: vma=%p %lx-%lx, pgoff=%lx, uv=%p\n",
 	       vma, vma->vm_start, vma->vm_end,
-	       vmf->pgoff, vmf->virtual_address);
+	       vmf->pgoff, (void *)vmf->address);
 
 	return VM_FAULT_SIGBUS;
 }

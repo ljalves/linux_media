@@ -7,9 +7,9 @@
 #include <linux/perf_event.h>
 #include <linux/slab.h>
 #include <asm/cpu_device_id.h>
+#include <asm/intel_rdt_common.h>
 #include "../perf_event.h"
 
-#define MSR_IA32_PQR_ASSOC	0x0c8f
 #define MSR_IA32_QM_CTR		0x0c8e
 #define MSR_IA32_QM_EVTSEL	0x0c8d
 
@@ -24,32 +24,13 @@ static unsigned int cqm_l3_scale; /* supposedly cacheline size */
 static bool cqm_enabled, mbm_enabled;
 unsigned int mbm_socket_max;
 
-/**
- * struct intel_pqr_state - State cache for the PQR MSR
- * @rmid:		The cached Resource Monitoring ID
- * @closid:		The cached Class Of Service ID
- * @rmid_usecnt:	The usage counter for rmid
- *
- * The upper 32 bits of MSR_IA32_PQR_ASSOC contain closid and the
- * lower 10 bits rmid. The update to MSR_IA32_PQR_ASSOC always
- * contains both parts, so we need to cache them.
- *
- * The cache also helps to avoid pointless updates if the value does
- * not change.
- */
-struct intel_pqr_state {
-	u32			rmid;
-	u32			closid;
-	int			rmid_usecnt;
-};
-
 /*
  * The cached intel_pqr_state is strictly per CPU and can never be
  * updated from a remote CPU. Both functions which modify the state
  * (intel_cqm_event_start and intel_cqm_event_stop) are called with
  * interrupts disabled, which is sufficient for the protection.
  */
-static DEFINE_PER_CPU(struct intel_pqr_state, pqr_state);
+DEFINE_PER_CPU(struct intel_pqr_state, pqr_state);
 static struct hrtimer *mbm_timers;
 /**
  * struct sample - mbm event's (local or total) data
@@ -457,6 +438,11 @@ struct rmid_read {
 static void __intel_cqm_event_count(void *info);
 static void init_mbm_sample(u32 rmid, u32 evt_type);
 static void __intel_mbm_event_count(void *info);
+
+static bool is_cqm_event(int e)
+{
+	return (e == QOS_L3_OCCUP_EVENT_ID);
+}
 
 static bool is_mbm_event(int e)
 {
@@ -1366,6 +1352,10 @@ static int intel_cqm_event_init(struct perf_event *event)
 	     (event->attr.config > QOS_MBM_LOCAL_EVENT_ID))
 		return -EINVAL;
 
+	if ((is_cqm_event(event->attr.config) && !cqm_enabled) ||
+	    (is_mbm_event(event->attr.config) && !mbm_enabled))
+		return -EINVAL;
+
 	/* unsupported modes and filters */
 	if (event->attr.exclude_user   ||
 	    event->attr.exclude_kernel ||
@@ -1577,7 +1567,7 @@ static inline void cqm_pick_event_reader(int cpu)
 		cpumask_set_cpu(cpu, &cqm_cpumask);
 }
 
-static void intel_cqm_cpu_starting(unsigned int cpu)
+static int intel_cqm_cpu_starting(unsigned int cpu)
 {
 	struct intel_pqr_state *state = &per_cpu(pqr_state, cpu);
 	struct cpuinfo_x86 *c = &cpu_data(cpu);
@@ -1588,39 +1578,26 @@ static void intel_cqm_cpu_starting(unsigned int cpu)
 
 	WARN_ON(c->x86_cache_max_rmid != cqm_max_rmid);
 	WARN_ON(c->x86_cache_occ_scale != cqm_l3_scale);
+
+	cqm_pick_event_reader(cpu);
+	return 0;
 }
 
-static void intel_cqm_cpu_exit(unsigned int cpu)
+static int intel_cqm_cpu_exit(unsigned int cpu)
 {
 	int target;
 
 	/* Is @cpu the current cqm reader for this package ? */
 	if (!cpumask_test_and_clear_cpu(cpu, &cqm_cpumask))
-		return;
+		return 0;
 
 	/* Find another online reader in this package */
 	target = cpumask_any_but(topology_core_cpumask(cpu), cpu);
 
 	if (target < nr_cpu_ids)
 		cpumask_set_cpu(target, &cqm_cpumask);
-}
 
-static int intel_cqm_cpu_notifier(struct notifier_block *nb,
-				  unsigned long action, void *hcpu)
-{
-	unsigned int cpu  = (unsigned long)hcpu;
-
-	switch (action & ~CPU_TASKS_FROZEN) {
-	case CPU_DOWN_PREPARE:
-		intel_cqm_cpu_exit(cpu);
-		break;
-	case CPU_STARTING:
-		intel_cqm_cpu_starting(cpu);
-		cqm_pick_event_reader(cpu);
-		break;
-	}
-
-	return NOTIFY_OK;
+	return 0;
 }
 
 static const struct x86_cpu_id intel_cqm_match[] = {
@@ -1682,7 +1659,7 @@ out:
 static int __init intel_cqm_init(void)
 {
 	char *str = NULL, scale[20];
-	int i, cpu, ret;
+	int cpu, ret;
 
 	if (x86_match_cpu(intel_cqm_match))
 		cqm_enabled = true;
@@ -1705,8 +1682,7 @@ static int __init intel_cqm_init(void)
 	 *
 	 * Also, check that the scales match on all cpus.
 	 */
-	cpu_notifier_register_begin();
-
+	get_online_cpus();
 	for_each_online_cpu(cpu) {
 		struct cpuinfo_x86 *c = &cpu_data(cpu);
 
@@ -1743,11 +1719,6 @@ static int __init intel_cqm_init(void)
 	if (ret)
 		goto out;
 
-	for_each_online_cpu(i) {
-		intel_cqm_cpu_starting(i);
-		cqm_pick_event_reader(i);
-	}
-
 	if (mbm_enabled)
 		ret = intel_mbm_init();
 	if (ret && !cqm_enabled)
@@ -1772,12 +1743,18 @@ static int __init intel_cqm_init(void)
 		pr_info("Intel MBM enabled\n");
 
 	/*
-	 * Register the hot cpu notifier once we are sure cqm
+	 * Setup the hot cpu notifier once we are sure cqm
 	 * is enabled to avoid notifier leak.
 	 */
-	__perf_cpu_notifier(intel_cqm_cpu_notifier);
+	cpuhp_setup_state(CPUHP_AP_PERF_X86_CQM_STARTING,
+			  "perf/x86/cqm:starting",
+			  intel_cqm_cpu_starting, NULL);
+	cpuhp_setup_state(CPUHP_AP_PERF_X86_CQM_ONLINE, "perf/x86/cqm:online",
+			  NULL, intel_cqm_cpu_exit);
+
 out:
-	cpu_notifier_register_done();
+	put_online_cpus();
+
 	if (ret) {
 		kfree(str);
 		cqm_cleanup();

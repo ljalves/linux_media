@@ -15,11 +15,7 @@
  *
  * You should have received a copy of the GNU General Public License
  * version 2 along with this program; If not, see
- * http://www.sun.com/software/products/lustre/docs/GPLv2.pdf
- *
- * Please contact Sun Microsystems, Inc., 4150 Network Circle, Santa Clara,
- * CA 95054 USA or visit www.sun.com if you need additional information or
- * have any questions.
+ * http://www.gnu.org/licenses/gpl-2.0.html
  *
  * GPL HEADER END
  */
@@ -117,7 +113,8 @@ struct srpc_join_reply {
 	__u32			join_status;	/* returned status */
 	lst_sid_t		join_sid;	/* session id */
 	__u32			join_timeout;	/* # seconds' inactivity to
-						 * expire */
+						 * expire
+						 */
 	char			join_session[LST_NAME_SIZE]; /* session name */
 } WIRE_ATTR;
 
@@ -179,7 +176,7 @@ struct test_bulk_req_v1 {
 	__u16		   blk_opc;	   /* bulk operation code */
 	__u16		   blk_flags;	   /* data check flags */
 	__u32		   blk_len;	   /* data length */
-	__u32		   blk_offset;	   /* reserved: offset */
+	__u32		   blk_offset;	   /* offset */
 } WIRE_ATTR;
 
 struct test_ping_req {
@@ -194,7 +191,8 @@ struct srpc_test_reqst {
 	lst_bid_t		tsr_bid;	/* batch id */
 	__u32			tsr_service;	/* test type: bulk|ping|... */
 	__u32			tsr_loop;	/* test client loop count or
-						 * # server buffers needed */
+						 * # server buffers needed
+						 */
 	__u32			tsr_concur;	/* concurrency of test */
 	__u8			tsr_is_client;	/* is test client or not */
 	__u8			tsr_stop_onerr; /* stop on error */

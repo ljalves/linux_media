@@ -72,7 +72,6 @@
 #include <sys/ioctl.h>
 #include <inttypes.h>
 #include <linux/kernel.h>
-#include <linux/magic.h>
 #include <linux/types.h>
 #include <sys/ttydefaults.h>
 #include <api/fs/tracing_path.h>
@@ -180,12 +179,6 @@ static inline void *zalloc(size_t size)
 #undef tolower
 #undef toupper
 
-#ifndef NSEC_PER_MSEC
-#define NSEC_PER_MSEC	1000000L
-#endif
-
-int parse_nsec_time(const char *str, u64 *ptime);
-
 extern unsigned char sane_ctype[256];
 #define GIT_SPACE		0x01
 #define GIT_DIGIT		0x02
@@ -227,6 +220,7 @@ s64 perf_atoll(const char *str);
 char **argv_split(const char *str, int *argcp);
 void argv_free(char **argv);
 bool strglobmatch(const char *str, const char *pat);
+bool strglobmatch_nocase(const char *str, const char *pat);
 bool strlazymatch(const char *str, const char *pat);
 static inline bool strisglob(const char *str)
 {
@@ -360,4 +354,13 @@ typedef void (*print_binary_t)(enum binary_printer_ops,
 void print_binary(unsigned char *data, size_t len,
 		  size_t bytes_per_line, print_binary_t printer,
 		  void *extra);
+
+#if !defined(__GLIBC__) && !defined(__ANDROID__)
+extern int sched_getcpu(void);
+#endif
+
+int is_printable_array(char *p, unsigned int len);
+
+int timestamp__scnprintf_usec(u64 timestamp, char *buf, size_t sz);
+
 #endif /* GIT_COMPAT_UTIL_H */

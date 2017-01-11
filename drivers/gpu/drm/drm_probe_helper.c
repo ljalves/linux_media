@@ -82,13 +82,30 @@ drm_mode_validate_flag(const struct drm_display_mode *mode,
 
 static int drm_helper_probe_add_cmdline_mode(struct drm_connector *connector)
 {
+	struct drm_cmdline_mode *cmdline_mode;
 	struct drm_display_mode *mode;
 
-	if (!connector->cmdline_mode.specified)
+	cmdline_mode = &connector->cmdline_mode;
+	if (!cmdline_mode->specified)
 		return 0;
 
+	/* Only add a GTF mode if we find no matching probed modes */
+	list_for_each_entry(mode, &connector->probed_modes, head) {
+		if (mode->hdisplay != cmdline_mode->xres ||
+		    mode->vdisplay != cmdline_mode->yres)
+			continue;
+
+		if (cmdline_mode->refresh_specified) {
+			/* The probed mode's vrefresh is set until later */
+			if (drm_mode_vrefresh(mode) != cmdline_mode->refresh)
+				continue;
+		}
+
+		return 0;
+	}
+
 	mode = drm_mode_create_from_cmdline_mode(connector->dev,
-						 &connector->cmdline_mode);
+						 cmdline_mode);
 	if (mode == NULL)
 		return 0;
 
@@ -112,6 +129,7 @@ void drm_kms_helper_poll_enable_locked(struct drm_device *dev)
 {
 	bool poll = false;
 	struct drm_connector *connector;
+	unsigned long delay = DRM_OUTPUT_POLL_PERIOD;
 
 	WARN_ON(!mutex_is_locked(&dev->mode_config.mutex));
 
@@ -124,10 +142,23 @@ void drm_kms_helper_poll_enable_locked(struct drm_device *dev)
 			poll = true;
 	}
 
+	if (dev->mode_config.delayed_event) {
+		poll = true;
+		delay = 0;
+	}
+
 	if (poll)
-		schedule_delayed_work(&dev->mode_config.output_poll_work, DRM_OUTPUT_POLL_PERIOD);
+		schedule_delayed_work(&dev->mode_config.output_poll_work, delay);
 }
 EXPORT_SYMBOL(drm_kms_helper_poll_enable_locked);
+
+static enum drm_connector_status
+drm_connector_detect(struct drm_connector *connector, bool force)
+{
+	return connector->funcs->detect ?
+		connector->funcs->detect(connector, force) :
+		connector_status_connected;
+}
 
 /**
  * drm_helper_probe_single_connector_modes - get complete set of display modes
@@ -216,7 +247,7 @@ int drm_helper_probe_single_connector_modes(struct drm_connector *connector,
 		if (connector->funcs->force)
 			connector->funcs->force(connector);
 	} else {
-		connector->status = connector->funcs->detect(connector, true);
+		connector->status = drm_connector_detect(connector, true);
 	}
 
 	/*
@@ -361,7 +392,11 @@ static void output_poll_execute(struct work_struct *work)
 	if (!drm_kms_helper_poll)
 		goto out;
 
-	mutex_lock(&dev->mode_config.mutex);
+	if (!mutex_trylock(&dev->mode_config.mutex)) {
+		repoll = true;
+		goto out;
+	}
+
 	drm_for_each_connector(connector, dev) {
 
 		/* Ignore forced connectors. */
@@ -382,7 +417,7 @@ static void output_poll_execute(struct work_struct *work)
 
 		repoll = true;
 
-		connector->status = connector->funcs->detect(connector, false);
+		connector->status = drm_connector_detect(connector, false);
 		if (old_status != connector->status) {
 			const char *old, *new;
 
@@ -542,7 +577,7 @@ bool drm_helper_hpd_irq_event(struct drm_device *dev)
 
 		old_status = connector->status;
 
-		connector->status = connector->funcs->detect(connector, false);
+		connector->status = drm_connector_detect(connector, false);
 		DRM_DEBUG_KMS("[CONNECTOR:%d:%s] status updated from %s to %s\n",
 			      connector->base.id,
 			      connector->name,

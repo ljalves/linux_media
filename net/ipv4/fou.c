@@ -129,6 +129,36 @@ static int gue_udp_recv(struct sock *sk, struct sk_buff *skb)
 
 	guehdr = (struct guehdr *)&udp_hdr(skb)[1];
 
+	switch (guehdr->version) {
+	case 0: /* Full GUE header present */
+		break;
+
+	case 1: {
+		/* Direct encasulation of IPv4 or IPv6 */
+
+		int prot;
+
+		switch (((struct iphdr *)guehdr)->version) {
+		case 4:
+			prot = IPPROTO_IPIP;
+			break;
+		case 6:
+			prot = IPPROTO_IPV6;
+			break;
+		default:
+			goto drop;
+		}
+
+		if (fou_recv_pull(skb, fou, sizeof(struct udphdr)))
+			goto drop;
+
+		return -prot;
+	}
+
+	default: /* Undefined version */
+		goto drop;
+	}
+
 	optlen = guehdr->hlen << 2;
 	len += optlen;
 
@@ -219,7 +249,7 @@ static struct sk_buff **fou_gro_receive(struct sock *sk,
 	if (!ops || !ops->callbacks.gro_receive)
 		goto out_unlock;
 
-	pp = ops->callbacks.gro_receive(head, skb);
+	pp = call_gro_receive(ops->callbacks.gro_receive, head, skb);
 
 out_unlock:
 	rcu_read_unlock();
@@ -289,6 +319,7 @@ static struct sk_buff **gue_gro_receive(struct sock *sk,
 	int flush = 1;
 	struct fou *fou = fou_from_sock(sk);
 	struct gro_remcsum grc;
+	u8 proto;
 
 	skb_gro_remcsum_init(&grc);
 
@@ -300,6 +331,25 @@ static struct sk_buff **gue_gro_receive(struct sock *sk,
 		guehdr = skb_gro_header_slow(skb, len, off);
 		if (unlikely(!guehdr))
 			goto out;
+	}
+
+	switch (guehdr->version) {
+	case 0:
+		break;
+	case 1:
+		switch (((struct iphdr *)guehdr)->version) {
+		case 4:
+			proto = IPPROTO_IPIP;
+			break;
+		case 6:
+			proto = IPPROTO_IPV6;
+			break;
+		default:
+			goto out;
+		}
+		goto next_proto;
+	default:
+		goto out;
 	}
 
 	optlen = guehdr->hlen << 2;
@@ -370,6 +420,10 @@ static struct sk_buff **gue_gro_receive(struct sock *sk,
 		}
 	}
 
+	proto = guehdr->proto_ctype;
+
+next_proto:
+
 	/* We can clear the encap_mark for GUE as we are essentially doing
 	 * one of two possible things.  We are either adding an L4 tunnel
 	 * header to the outer L3 tunnel header, or we are are simply
@@ -383,11 +437,11 @@ static struct sk_buff **gue_gro_receive(struct sock *sk,
 
 	rcu_read_lock();
 	offloads = NAPI_GRO_CB(skb)->is_ipv6 ? inet6_offloads : inet_offloads;
-	ops = rcu_dereference(offloads[guehdr->proto_ctype]);
+	ops = rcu_dereference(offloads[proto]);
 	if (WARN_ON_ONCE(!ops || !ops->callbacks.gro_receive))
 		goto out_unlock;
 
-	pp = ops->callbacks.gro_receive(head, skb);
+	pp = call_gro_receive(ops->callbacks.gro_receive, head, skb);
 	flush = 0;
 
 out_unlock:
@@ -404,13 +458,30 @@ static int gue_gro_complete(struct sock *sk, struct sk_buff *skb, int nhoff)
 	const struct net_offload **offloads;
 	struct guehdr *guehdr = (struct guehdr *)(skb->data + nhoff);
 	const struct net_offload *ops;
-	unsigned int guehlen;
+	unsigned int guehlen = 0;
 	u8 proto;
 	int err = -ENOENT;
 
-	proto = guehdr->proto_ctype;
-
-	guehlen = sizeof(*guehdr) + (guehdr->hlen << 2);
+	switch (guehdr->version) {
+	case 0:
+		proto = guehdr->proto_ctype;
+		guehlen = sizeof(*guehdr) + (guehdr->hlen << 2);
+		break;
+	case 1:
+		switch (((struct iphdr *)guehdr)->version) {
+		case 4:
+			proto = IPPROTO_IPIP;
+			break;
+		case 6:
+			proto = IPPROTO_IPV6;
+			break;
+		default:
+			return err;
+		}
+		break;
+	default:
+		return err;
+	}
 
 	rcu_read_lock();
 	offloads = NAPI_GRO_CB(skb)->is_ipv6 ? inet6_offloads : inet_offloads;
@@ -551,16 +622,9 @@ static int fou_destroy(struct net *net, struct fou_cfg *cfg)
 	return err;
 }
 
-static struct genl_family fou_nl_family = {
-	.id		= GENL_ID_GENERATE,
-	.hdrsize	= 0,
-	.name		= FOU_GENL_NAME,
-	.version	= FOU_GENL_VERSION,
-	.maxattr	= FOU_ATTR_MAX,
-	.netnsok	= true,
-};
+static struct genl_family fou_nl_family;
 
-static struct nla_policy fou_nl_policy[FOU_ATTR_MAX + 1] = {
+static const struct nla_policy fou_nl_policy[FOU_ATTR_MAX + 1] = {
 	[FOU_ATTR_PORT] = { .type = NLA_U16, },
 	[FOU_ATTR_AF] = { .type = NLA_U8, },
 	[FOU_ATTR_IPPROTO] = { .type = NLA_U8, },
@@ -758,6 +822,17 @@ static const struct genl_ops fou_nl_ops[] = {
 		.dumpit = fou_nl_dump,
 		.policy = fou_nl_policy,
 	},
+};
+
+static struct genl_family fou_nl_family __ro_after_init = {
+	.hdrsize	= 0,
+	.name		= FOU_GENL_NAME,
+	.version	= FOU_GENL_VERSION,
+	.maxattr	= FOU_ATTR_MAX,
+	.netnsok	= true,
+	.module		= THIS_MODULE,
+	.ops		= fou_nl_ops,
+	.n_ops		= ARRAY_SIZE(fou_nl_ops),
 };
 
 size_t fou_encap_hlen(struct ip_tunnel_encap *e)
@@ -1015,8 +1090,7 @@ static int __init fou_init(void)
 	if (ret)
 		goto exit;
 
-	ret = genl_register_family_with_ops(&fou_nl_family,
-					    fou_nl_ops);
+	ret = genl_register_family(&fou_nl_family);
 	if (ret < 0)
 		goto unregister;
 

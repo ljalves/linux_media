@@ -23,8 +23,9 @@
 #include <linux/io.h>
 #include <linux/platform_device.h>
 #include <linux/hdmi.h>
-#include <video/omapdss.h>
+#include <sound/omap-hdmi-audio.h>
 
+#include "omapdss.h"
 #include "dss.h"
 
 /* HDMI Wrapper */
@@ -180,7 +181,7 @@ struct hdmi_video_format {
 };
 
 struct hdmi_config {
-	struct omap_video_timings timings;
+	struct videomode vm;
 	struct hdmi_avi_infoframe infoframe;
 	enum hdmi_core_hdmi_dvi hdmi_dvi_mode;
 };
@@ -240,6 +241,7 @@ struct hdmi_pll_data {
 
 	void __iomem *base;
 
+	struct platform_device *pdev;
 	struct hdmi_wp_data *wp;
 };
 
@@ -296,18 +298,16 @@ int hdmi_wp_set_pll_pwr(struct hdmi_wp_data *wp, enum hdmi_pll_pwr val);
 void hdmi_wp_video_config_format(struct hdmi_wp_data *wp,
 		struct hdmi_video_format *video_fmt);
 void hdmi_wp_video_config_interface(struct hdmi_wp_data *wp,
-		struct omap_video_timings *timings);
+		struct videomode *vm);
 void hdmi_wp_video_config_timing(struct hdmi_wp_data *wp,
-		struct omap_video_timings *timings);
+		struct videomode *vm);
 void hdmi_wp_init_vid_fmt_timings(struct hdmi_video_format *video_fmt,
-		struct omap_video_timings *timings, struct hdmi_config *param);
+		struct videomode *vm, struct hdmi_config *param);
 int hdmi_wp_init(struct platform_device *pdev, struct hdmi_wp_data *wp);
 phys_addr_t hdmi_wp_get_audio_dma_addr(struct hdmi_wp_data *wp);
 
 /* HDMI PLL funcs */
 void hdmi_pll_dump(struct hdmi_pll_data *pll, struct seq_file *s);
-void hdmi_pll_compute(struct hdmi_pll_data *pll,
-	unsigned long target_tmds, struct dss_pll_clock_info *pi);
 int hdmi_pll_init(struct platform_device *pdev, struct hdmi_pll_data *pll,
 	struct hdmi_wp_data *wp);
 void hdmi_pll_uninit(struct hdmi_pll_data *hpll);

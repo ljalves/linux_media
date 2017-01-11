@@ -15,11 +15,7 @@
  *
  * You should have received a copy of the GNU General Public License
  * version 2 along with this program; If not, see
- * http://www.sun.com/software/products/lustre/docs/GPLv2.pdf
- *
- * Please contact Sun Microsystems, Inc., 4150 Network Circle, Santa Clara,
- * CA 95054 USA or visit www.sun.com if you need additional information or
- * have any questions.
+ * http://www.gnu.org/licenses/gpl-2.0.html
  *
  * GPL HEADER END
  */
@@ -102,8 +98,8 @@ static int lovsub_object_print(const struct lu_env *env, void *cookie,
 	return (*p)(env, cookie, "[%d]", los->lso_index);
 }
 
-static int lovsub_attr_set(const struct lu_env *env, struct cl_object *obj,
-			   const struct cl_attr *attr, unsigned valid)
+static int lovsub_attr_update(const struct lu_env *env, struct cl_object *obj,
+			      const struct cl_attr *attr, unsigned int valid)
 {
 	struct lov_object *lov = cl2lovsub(obj)->lso_super;
 
@@ -120,11 +116,31 @@ static int lovsub_object_glimpse(const struct lu_env *env,
 	return cl_object_glimpse(env, &los->lso_super->lo_cl, lvb);
 }
 
+/**
+ * Implementation of struct cl_object_operations::coo_req_attr_set() for lovsub
+ * layer. Lov and lovsub are responsible only for struct obdo::o_stripe_idx
+ * field, which is filled there.
+ */
+static void lovsub_req_attr_set(const struct lu_env *env, struct cl_object *obj,
+				struct cl_req_attr *attr)
+{
+	struct lovsub_object *subobj = cl2lovsub(obj);
+
+	cl_req_attr_set(env, &subobj->lso_super->lo_cl, attr);
+
+	/*
+	 * There is no OBD_MD_* flag for obdo::o_stripe_idx, so set it
+	 * unconditionally. It never changes anyway.
+	 */
+	attr->cra_oa->o_stripe_idx = subobj->lso_index;
+}
+
 static const struct cl_object_operations lovsub_ops = {
 	.coo_page_init = lovsub_page_init,
 	.coo_lock_init = lovsub_lock_init,
-	.coo_attr_set  = lovsub_attr_set,
-	.coo_glimpse   = lovsub_object_glimpse
+	.coo_attr_update = lovsub_attr_update,
+	.coo_glimpse		= lovsub_object_glimpse,
+	.coo_req_attr_set	= lovsub_req_attr_set
 };
 
 static const struct lu_object_operations lovsub_lu_obj_ops = {

@@ -325,21 +325,20 @@ static void cirrus_crtc_commit(struct drm_crtc *crtc)
  * use this for 8-bit mode so can't perform smooth fades on deeper modes,
  * but it's a requirement that we provide the function
  */
-static void cirrus_crtc_gamma_set(struct drm_crtc *crtc, u16 *red, u16 *green,
-				  u16 *blue, uint32_t start, uint32_t size)
+static int cirrus_crtc_gamma_set(struct drm_crtc *crtc, u16 *red, u16 *green,
+				 u16 *blue, uint32_t size)
 {
 	struct cirrus_crtc *cirrus_crtc = to_cirrus_crtc(crtc);
 	int i;
 
-	if (size != CIRRUS_LUT_SIZE)
-		return;
-
-	for (i = 0; i < CIRRUS_LUT_SIZE; i++) {
+	for (i = 0; i < size; i++) {
 		cirrus_crtc->lut_r[i] = red[i];
 		cirrus_crtc->lut_g[i] = green[i];
 		cirrus_crtc->lut_b[i] = blue[i];
 	}
 	cirrus_crtc_load_lut(crtc);
+
+	return 0;
 }
 
 /* Simple cleanup function */
@@ -499,12 +498,6 @@ static struct drm_encoder *cirrus_connector_best_encoder(struct drm_connector
 	return NULL;
 }
 
-static enum drm_connector_status cirrus_vga_detect(struct drm_connector
-						   *connector, bool force)
-{
-	return connector_status_connected;
-}
-
 static void cirrus_connector_destroy(struct drm_connector *connector)
 {
 	drm_connector_cleanup(connector);
@@ -518,7 +511,6 @@ static const struct drm_connector_helper_funcs cirrus_vga_connector_helper_funcs
 
 static const struct drm_connector_funcs cirrus_vga_connector_funcs = {
 	.dpms = drm_helper_connector_dpms,
-	.detect = cirrus_vga_detect,
 	.fill_modes = drm_helper_probe_single_connector_modes,
 	.destroy = cirrus_connector_destroy,
 };

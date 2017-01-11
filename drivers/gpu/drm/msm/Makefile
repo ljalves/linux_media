@@ -6,6 +6,8 @@ msm-y := \
 	adreno/adreno_gpu.o \
 	adreno/a3xx_gpu.o \
 	adreno/a4xx_gpu.o \
+	adreno/a5xx_gpu.o \
+	adreno/a5xx_power.o \
 	hdmi/hdmi.o \
 	hdmi/hdmi_audio.o \
 	hdmi/hdmi_bridge.o \
@@ -35,7 +37,9 @@ msm-y := \
 	mdp/mdp5/mdp5_crtc.o \
 	mdp/mdp5/mdp5_encoder.o \
 	mdp/mdp5/mdp5_irq.o \
+	mdp/mdp5/mdp5_mdss.o \
 	mdp/mdp5/mdp5_kms.o \
+	mdp/mdp5/mdp5_pipe.o \
 	mdp/mdp5/mdp5_plane.o \
 	mdp/mdp5/mdp5_smp.o \
 	msm_atomic.o \
@@ -45,7 +49,9 @@ msm-y := \
 	msm_fence.o \
 	msm_gem.o \
 	msm_gem_prime.o \
+	msm_gem_shrinker.o \
 	msm_gem_submit.o \
+	msm_gem_vma.o \
 	msm_gpu.o \
 	msm_iommu.o \
 	msm_perf.o \

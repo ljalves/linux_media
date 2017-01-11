@@ -41,6 +41,7 @@
 #include "link.h"
 #include "node.h"
 #include "net.h"
+#include "udp_media.h"
 #include <net/genetlink.h>
 
 static const struct nla_policy tipc_nl_policy[TIPC_NLA_MAX + 1] = {
@@ -52,13 +53,20 @@ static const struct nla_policy tipc_nl_policy[TIPC_NLA_MAX + 1] = {
 	[TIPC_NLA_MEDIA]	= { .type = NLA_NESTED, },
 	[TIPC_NLA_NODE]		= { .type = NLA_NESTED, },
 	[TIPC_NLA_NET]		= { .type = NLA_NESTED, },
-	[TIPC_NLA_NAME_TABLE]	= { .type = NLA_NESTED, }
+	[TIPC_NLA_NAME_TABLE]	= { .type = NLA_NESTED, },
+	[TIPC_NLA_MON]		= { .type = NLA_NESTED, },
 };
 
 const struct nla_policy
 tipc_nl_name_table_policy[TIPC_NLA_NAME_TABLE_MAX + 1] = {
 	[TIPC_NLA_NAME_TABLE_UNSPEC]	= { .type = NLA_UNSPEC },
 	[TIPC_NLA_NAME_TABLE_PUBL]	= { .type = NLA_NESTED }
+};
+
+const struct nla_policy tipc_nl_monitor_policy[TIPC_NLA_MON_MAX + 1] = {
+	[TIPC_NLA_MON_UNSPEC]			= { .type = NLA_UNSPEC },
+	[TIPC_NLA_MON_REF]			= { .type = NLA_U32 },
+	[TIPC_NLA_MON_ACTIVATION_THRESHOLD]	= { .type = NLA_U32 },
 };
 
 const struct nla_policy tipc_nl_sock_policy[TIPC_NLA_SOCK_MAX + 1] = {
@@ -127,15 +135,6 @@ const struct nla_policy tipc_nl_udp_policy[TIPC_NLA_UDP_MAX + 1] = {
 /* Users of the legacy API (tipc-config) can't handle that we add operations,
  * so we have a separate genl handling for the new API.
  */
-struct genl_family tipc_genl_family = {
-	.id		= GENL_ID_GENERATE,
-	.name		= TIPC_GENL_V2_NAME,
-	.version	= TIPC_GENL_V2_VERSION,
-	.hdrsize	= 0,
-	.maxattr	= TIPC_NLA_MAX,
-	.netnsok	= true,
-};
-
 static const struct genl_ops tipc_genl_v2_ops[] = {
 	{
 		.cmd	= TIPC_NL_BEARER_DISABLE,
@@ -151,6 +150,11 @@ static const struct genl_ops tipc_genl_v2_ops[] = {
 		.cmd	= TIPC_NL_BEARER_GET,
 		.doit	= tipc_nl_bearer_get,
 		.dumpit	= tipc_nl_bearer_dump,
+		.policy = tipc_nl_policy,
+	},
+	{
+		.cmd	= TIPC_NL_BEARER_ADD,
+		.doit	= tipc_nl_bearer_add,
 		.policy = tipc_nl_policy,
 	},
 	{
@@ -214,26 +218,64 @@ static const struct genl_ops tipc_genl_v2_ops[] = {
 		.cmd	= TIPC_NL_NAME_TABLE_GET,
 		.dumpit	= tipc_nl_name_table_dump,
 		.policy = tipc_nl_policy,
-	}
+	},
+	{
+		.cmd	= TIPC_NL_MON_SET,
+		.doit	= tipc_nl_node_set_monitor,
+		.policy = tipc_nl_policy,
+	},
+	{
+		.cmd	= TIPC_NL_MON_GET,
+		.doit	= tipc_nl_node_get_monitor,
+		.dumpit	= tipc_nl_node_dump_monitor,
+		.policy = tipc_nl_policy,
+	},
+	{
+		.cmd	= TIPC_NL_MON_PEER_GET,
+		.dumpit	= tipc_nl_node_dump_monitor_peer,
+		.policy = tipc_nl_policy,
+	},
+	{
+		.cmd	= TIPC_NL_PEER_REMOVE,
+		.doit	= tipc_nl_peer_rm,
+		.policy = tipc_nl_policy,
+	},
+#ifdef CONFIG_TIPC_MEDIA_UDP
+	{
+		.cmd	= TIPC_NL_UDP_GET_REMOTEIP,
+		.dumpit	= tipc_udp_nl_dump_remoteip,
+		.policy = tipc_nl_policy,
+	},
+#endif
+};
+
+struct genl_family tipc_genl_family __ro_after_init = {
+	.name		= TIPC_GENL_V2_NAME,
+	.version	= TIPC_GENL_V2_VERSION,
+	.hdrsize	= 0,
+	.maxattr	= TIPC_NLA_MAX,
+	.netnsok	= true,
+	.module		= THIS_MODULE,
+	.ops		= tipc_genl_v2_ops,
+	.n_ops		= ARRAY_SIZE(tipc_genl_v2_ops),
 };
 
 int tipc_nlmsg_parse(const struct nlmsghdr *nlh, struct nlattr ***attr)
 {
 	u32 maxattr = tipc_genl_family.maxattr;
 
-	*attr = tipc_genl_family.attrbuf;
+	*attr = genl_family_attrbuf(&tipc_genl_family);
 	if (!*attr)
 		return -EOPNOTSUPP;
 
 	return nlmsg_parse(nlh, GENL_HDRLEN, *attr, maxattr, tipc_nl_policy);
 }
 
-int tipc_netlink_start(void)
+int __init tipc_netlink_start(void)
 {
 	int res;
 
-	res = genl_register_family_with_ops(&tipc_genl_family,
-					    tipc_genl_v2_ops);
+	res = genl_register_family(&tipc_genl_family);
 	if (res) {
 		pr_err("Failed to register netlink interface\n");
 		return res;

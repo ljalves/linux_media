@@ -329,7 +329,7 @@ gk104_fifo_intr_fault(struct gk104_fifo *fifo, int unit)
 	}
 
 	if (eu == NULL) {
-		enum nvkm_devidx engidx = nvkm_top_fault(device->top, unit);
+		enum nvkm_devidx engidx = nvkm_top_fault(device, unit);
 		if (engidx < NVKM_SUBDEV_NR) {
 			const char *src = nvkm_subdev_name[engidx];
 			char *dst = en;
@@ -589,7 +589,6 @@ gk104_fifo_oneinit(struct nvkm_fifo *base)
 	struct gk104_fifo *fifo = gk104_fifo(base);
 	struct nvkm_subdev *subdev = &fifo->base.engine.subdev;
 	struct nvkm_device *device = subdev->device;
-	struct nvkm_top *top = device->top;
 	int engn, runl, pbid, ret, i, j;
 	enum nvkm_devidx engidx;
 	u32 *map;
@@ -608,7 +607,7 @@ gk104_fifo_oneinit(struct nvkm_fifo *base)
 
 	/* Determine runlist configuration from topology device info. */
 	i = 0;
-	while ((int)(engidx = nvkm_top_engine(top, i++, &runl, &engn)) >= 0) {
+	while ((int)(engidx = nvkm_top_engine(device, i++, &runl, &engn)) >= 0) {
 		/* Determine which PBDMA handles requests for this engine. */
 		for (j = 0, pbid = -1; j < fifo->pbdma_nr; j++) {
 			if (map[j] & (1 << runl)) {
@@ -617,8 +616,8 @@ gk104_fifo_oneinit(struct nvkm_fifo *base)
 			}
 		}
 
-		nvkm_debug(subdev, "engine %2d: runlist %2d pbdma %2d\n",
-			   engn, runl, pbid);
+		nvkm_debug(subdev, "engine %2d: runlist %2d pbdma %2d (%s)\n",
+			   engn, runl, pbid, nvkm_subdev_name[engidx]);
 
 		fifo->engine[engn].engine = nvkm_device_engine(device, engidx);
 		fifo->engine[engn].runl = runl;
@@ -744,14 +743,14 @@ gk104_fifo_fault_engine[] = {
 	{ 0x04, "BAR1", NULL, NVKM_SUBDEV_BAR },
 	{ 0x05, "BAR2", NULL, NVKM_SUBDEV_INSTMEM },
 	{ 0x06, "SCHED" },
-	{ 0x07, "HOST0" },
-	{ 0x08, "HOST1" },
-	{ 0x09, "HOST2" },
-	{ 0x0a, "HOST3" },
-	{ 0x0b, "HOST4" },
-	{ 0x0c, "HOST5" },
-	{ 0x0d, "HOST6" },
-	{ 0x0e, "HOST7" },
+	{ 0x07, "HOST0", NULL, NVKM_ENGINE_FIFO },
+	{ 0x08, "HOST1", NULL, NVKM_ENGINE_FIFO },
+	{ 0x09, "HOST2", NULL, NVKM_ENGINE_FIFO },
+	{ 0x0a, "HOST3", NULL, NVKM_ENGINE_FIFO },
+	{ 0x0b, "HOST4", NULL, NVKM_ENGINE_FIFO },
+	{ 0x0c, "HOST5", NULL, NVKM_ENGINE_FIFO },
+	{ 0x0d, "HOST6", NULL, NVKM_ENGINE_FIFO },
+	{ 0x0e, "HOST7", NULL, NVKM_ENGINE_FIFO },
 	{ 0x0f, "HOSTSR" },
 	{ 0x10, "MSVLD", NULL, NVKM_ENGINE_MSVLD },
 	{ 0x11, "MSPPP", NULL, NVKM_ENGINE_MSPPP },

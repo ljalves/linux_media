@@ -178,6 +178,7 @@ static int write_gid(struct ib_device *ib_dev, u8 port,
 {
 	int ret = 0;
 	struct net_device *old_net_dev;
+	enum ib_gid_type old_gid_type;
 
 	/* in rdma_cap_roce_gid_table, this funciton should be protected by a
 	 * sleep-able lock.
@@ -199,6 +200,7 @@ static int write_gid(struct ib_device *ib_dev, u8 port,
 	}
 
 	old_net_dev = table->data_vec[ix].attr.ndev;
+	old_gid_type = table->data_vec[ix].attr.gid_type;
 	if (old_net_dev && old_net_dev != attr->ndev)
 		dev_put(old_net_dev);
 	/* if modify_gid failed, just delete the old gid */
@@ -207,10 +209,14 @@ static int write_gid(struct ib_device *ib_dev, u8 port,
 		attr = &zattr;
 		table->data_vec[ix].context = NULL;
 	}
-	if (default_gid)
-		table->data_vec[ix].props |= GID_TABLE_ENTRY_DEFAULT;
+
 	memcpy(&table->data_vec[ix].gid, gid, sizeof(*gid));
 	memcpy(&table->data_vec[ix].attr, attr, sizeof(*attr));
+	if (default_gid) {
+		table->data_vec[ix].props |= GID_TABLE_ENTRY_DEFAULT;
+		if (action == GID_TABLE_WRITE_ACTION_DEL)
+			table->data_vec[ix].attr.gid_type = old_gid_type;
+	}
 	if (table->data_vec[ix].attr.ndev &&
 	    table->data_vec[ix].attr.ndev != old_net_dev)
 		dev_hold(table->data_vec[ix].attr.ndev);
@@ -405,7 +411,9 @@ int ib_cache_gid_del_all_netdev_gids(struct ib_device *ib_dev, u8 port,
 
 	for (ix = 0; ix < table->sz; ix++)
 		if (table->data_vec[ix].attr.ndev == ndev)
-			if (!del_gid(ib_dev, port, table, ix, false))
+			if (!del_gid(ib_dev, port, table, ix,
+				     !!(table->data_vec[ix].props &
+					GID_TABLE_ENTRY_DEFAULT)))
 				deleted = true;
 
 	write_unlock_irq(&table->rwlock);
@@ -762,12 +770,8 @@ static int _gid_table_setup_one(struct ib_device *ib_dev)
 	int err = 0;
 
 	table = kcalloc(ib_dev->phys_port_cnt, sizeof(*table), GFP_KERNEL);
-
-	if (!table) {
-		pr_warn("failed to allocate ib gid cache for %s\n",
-			ib_dev->name);
+	if (!table)
 		return -ENOMEM;
-	}
 
 	for (port = 0; port < ib_dev->phys_port_cnt; port++) {
 		u8 rdma_port = port + rdma_start_port(ib_dev);
@@ -1162,14 +1166,13 @@ int ib_cache_setup_one(struct ib_device *device)
 					  GFP_KERNEL);
 	if (!device->cache.pkey_cache ||
 	    !device->cache.lmc_cache) {
-		pr_warn("Couldn't allocate cache for %s\n", device->name);
-		return -ENOMEM;
+		err = -ENOMEM;
+		goto free;
 	}
 
 	err = gid_table_setup_one(device);
 	if (err)
-		/* Allocated memory will be cleaned in the release function */
-		return err;
+		goto free;
 
 	for (p = 0; p <= rdma_end_port(device) - rdma_start_port(device); ++p)
 		ib_cache_update(device, p + rdma_start_port(device));
@@ -1184,6 +1187,9 @@ int ib_cache_setup_one(struct ib_device *device)
 
 err:
 	gid_table_cleanup_one(device);
+free:
+	kfree(device->cache.pkey_cache);
+	kfree(device->cache.lmc_cache);
 	return err;
 }
 

@@ -15,11 +15,7 @@
  *
  * You should have received a copy of the GNU General Public License
  * version 2 along with this program; If not, see
- * http://www.sun.com/software/products/lustre/docs/GPLv2.pdf
- *
- * Please contact Sun Microsystems, Inc., 4150 Network Circle, Santa Clara,
- * CA 95054 USA or visit www.sun.com if you need additional information or
- * have any questions.
+ * http://www.gnu.org/licenses/gpl-2.0.html
  *
  * GPL HEADER END
  */
@@ -79,7 +75,7 @@ do {									\
 
 #define KLASSERT(e) LASSERT(e)
 
-void __noreturn lbug_with_loc(struct libcfs_debug_msg_data *);
+void __noreturn lbug_with_loc(struct libcfs_debug_msg_data *msg);
 
 #define LBUG()							  \
 do {								    \
@@ -100,7 +96,7 @@ do {									    \
 
 #define LIBCFS_ALLOC_POST(ptr, size)					    \
 do {									    \
-	if (unlikely((ptr) == NULL)) {					    \
+	if (unlikely(!(ptr))) {						    \
 		CERROR("LNET: out of memory at %s:%d (tried to alloc '"	    \
 		       #ptr "' = %d)\n", __FILE__, __LINE__, (int)(size));  \
 	} else {							    \
@@ -151,7 +147,7 @@ do {									    \
 
 #define LIBCFS_FREE(ptr, size)					  \
 do {								    \
-	if (unlikely((ptr) == NULL)) {				  \
+	if (unlikely(!(ptr))) {						\
 		CERROR("LIBCFS: free NULL '" #ptr "' (%d bytes) at "    \
 		       "%s:%d\n", (int)(size), __FILE__, __LINE__);	\
 		break;						  \
@@ -173,8 +169,6 @@ do {								    \
 #define ntohs(x) ___ntohs(x)
 #endif
 
-void libcfs_run_upcall(char **argv);
-void libcfs_run_lbug_upcall(struct libcfs_debug_msg_data *);
 void libcfs_debug_dumplog(void);
 int libcfs_debug_init(unsigned long bufsize);
 int libcfs_debug_cleanup(void);
@@ -284,7 +278,7 @@ do {							    \
 #define CFS_FREE_PTR(ptr)       LIBCFS_FREE(ptr, sizeof(*(ptr)))
 
 /** Compile-time assertion.
-
+ *
  * Check an invariant described by a constant expression at compile time by
  * forcing a compiler error if it does not hold.  \a cond must be a constant
  * expression as defined by the ISO C Standard:
@@ -310,17 +304,18 @@ do {							    \
 /* --------------------------------------------------------------------
  * Light-weight trace
  * Support for temporary event tracing with minimal Heisenberg effect.
- * -------------------------------------------------------------------- */
+ * --------------------------------------------------------------------
+ */
 
 #define MKSTR(ptr) ((ptr)) ? (ptr) : ""
 
-static inline int cfs_size_round4(int val)
+static inline size_t cfs_size_round4(int val)
 {
 	return (val + 3) & (~0x3);
 }
 
 #ifndef HAVE_CFS_SIZE_ROUND
-static inline int cfs_size_round(int val)
+static inline size_t cfs_size_round(int val)
 {
 	return (val + 7) & (~0x7);
 }
@@ -328,17 +323,17 @@ static inline int cfs_size_round(int val)
 #define HAVE_CFS_SIZE_ROUND
 #endif
 
-static inline int cfs_size_round16(int val)
+static inline size_t cfs_size_round16(int val)
 {
 	return (val + 0xf) & (~0xf);
 }
 
-static inline int cfs_size_round32(int val)
+static inline size_t cfs_size_round32(int val)
 {
 	return (val + 0x1f) & (~0x1f);
 }
 
-static inline int cfs_size_round0(int val)
+static inline size_t cfs_size_round0(int val)
 {
 	if (!val)
 		return 0;
@@ -347,7 +342,7 @@ static inline int cfs_size_round0(int val)
 
 static inline size_t cfs_round_strlen(char *fset)
 {
-	return (size_t)cfs_size_round((int)strlen(fset) + 1);
+	return cfs_size_round((int)strlen(fset) + 1);
 }
 
 #define LOGL(var, len, ptr)				       \
@@ -362,15 +357,6 @@ do {							    \
 	if (var)						\
 		memcpy((char *)var, (const char *)ptr, len);    \
 	ptr += cfs_size_round(len);			     \
-} while (0)
-
-#define LOGL0(var, len, ptr)			      \
-do {						    \
-	if (!len)				       \
-		break;				  \
-	memcpy((char *)ptr, (const char *)var, len);    \
-	*((char *)(ptr) + len) = 0;		     \
-	ptr += cfs_size_round(len + 1);		 \
 } while (0)
 
 #endif

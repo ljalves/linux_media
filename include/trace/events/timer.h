@@ -177,16 +177,14 @@ TRACE_EVENT(hrtimer_start,
 	TP_fast_assign(
 		__entry->hrtimer	= hrtimer;
 		__entry->function	= hrtimer->function;
-		__entry->expires	= hrtimer_get_expires(hrtimer).tv64;
-		__entry->softexpires	= hrtimer_get_softexpires(hrtimer).tv64;
+		__entry->expires	= hrtimer_get_expires(hrtimer);
+		__entry->softexpires	= hrtimer_get_softexpires(hrtimer);
 	),
 
 	TP_printk("hrtimer=%p function=%pf expires=%llu softexpires=%llu",
 		  __entry->hrtimer, __entry->function,
-		  (unsigned long long)ktime_to_ns((ktime_t) {
-				  .tv64 = __entry->expires }),
-		  (unsigned long long)ktime_to_ns((ktime_t) {
-				  .tv64 = __entry->softexpires }))
+		  (unsigned long long) __entry->expires,
+		  (unsigned long long) __entry->softexpires)
 );
 
 /**
@@ -211,13 +209,13 @@ TRACE_EVENT(hrtimer_expire_entry,
 
 	TP_fast_assign(
 		__entry->hrtimer	= hrtimer;
-		__entry->now		= now->tv64;
+		__entry->now		= *now;
 		__entry->function	= hrtimer->function;
 	),
 
 	TP_printk("hrtimer=%p function=%pf now=%llu", __entry->hrtimer, __entry->function,
-		  (unsigned long long)ktime_to_ns((ktime_t) { .tv64 = __entry->now }))
- );
+		  (unsigned long long) __entry->now)
+);
 
 DECLARE_EVENT_CLASS(hrtimer_class,
 
@@ -330,24 +328,32 @@ TRACE_EVENT(itimer_expire,
 #ifdef CONFIG_NO_HZ_COMMON
 
 #define TICK_DEP_NAMES					\
-		tick_dep_name(NONE)			\
+		tick_dep_mask_name(NONE)		\
 		tick_dep_name(POSIX_TIMER)		\
 		tick_dep_name(PERF_EVENTS)		\
 		tick_dep_name(SCHED)			\
 		tick_dep_name_end(CLOCK_UNSTABLE)
 
 #undef tick_dep_name
+#undef tick_dep_mask_name
 #undef tick_dep_name_end
 
-#define tick_dep_name(sdep) TRACE_DEFINE_ENUM(TICK_DEP_MASK_##sdep);
-#define tick_dep_name_end(sdep)  TRACE_DEFINE_ENUM(TICK_DEP_MASK_##sdep);
+/* The MASK will convert to their bits and they need to be processed too */
+#define tick_dep_name(sdep) TRACE_DEFINE_ENUM(TICK_DEP_BIT_##sdep); \
+	TRACE_DEFINE_ENUM(TICK_DEP_MASK_##sdep);
+#define tick_dep_name_end(sdep)  TRACE_DEFINE_ENUM(TICK_DEP_BIT_##sdep); \
+	TRACE_DEFINE_ENUM(TICK_DEP_MASK_##sdep);
+/* NONE only has a mask defined for it */
+#define tick_dep_mask_name(sdep) TRACE_DEFINE_ENUM(TICK_DEP_MASK_##sdep);
 
 TICK_DEP_NAMES
 
 #undef tick_dep_name
+#undef tick_dep_mask_name
 #undef tick_dep_name_end
 
 #define tick_dep_name(sdep) { TICK_DEP_MASK_##sdep, #sdep },
+#define tick_dep_mask_name(sdep) { TICK_DEP_MASK_##sdep, #sdep },
 #define tick_dep_name_end(sdep) { TICK_DEP_MASK_##sdep, #sdep }
 
 #define show_tick_dep_name(val)				\

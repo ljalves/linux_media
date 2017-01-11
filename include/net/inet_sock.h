@@ -97,7 +97,12 @@ struct inet_request_sock {
 	u32                     ir_mark;
 	union {
 		struct ip_options_rcu	*opt;
-		struct sk_buff		*pktopts;
+#if IS_ENABLED(CONFIG_IPV6)
+		struct {
+			struct ipv6_txoptions	*ipv6_opt;
+			struct sk_buff		*pktopts;
+		};
+#endif
 	};
 };
 
@@ -223,6 +228,7 @@ struct inet_sock {
 #define IP_CMSG_PASSSEC		BIT(5)
 #define IP_CMSG_ORIGDSTADDR	BIT(6)
 #define IP_CMSG_CHECKSUM	BIT(7)
+#define IP_CMSG_RECVFRAGSIZE	BIT(8)
 
 /**
  * sk_to_full_sk - Access to a full socket

@@ -8,7 +8,6 @@
  */
 
 #include <linux/kernel.h>
-#include <linux/kconfig.h>
 #include <linux/rmi.h>
 #include <linux/slab.h>
 #include <linux/uaccess.h>
@@ -63,6 +62,8 @@ struct f01_basic_properties {
 #define RMI_F01_STATUS_CODE(status)		((status) & 0x0f)
 /* The device has lost its configuration for some reason. */
 #define RMI_F01_STATUS_UNCONFIGURED(status)	(!!((status) & 0x80))
+/* The device is in bootloader mode */
+#define RMI_F01_STATUS_BOOTLOADER(status)	((status) & 0x40)
 
 /* Control register bits */
 
@@ -81,26 +82,26 @@ struct f01_basic_properties {
  * This bit disables whatever sleep mode may be selected by the sleep_mode
  * field and forces the device to run at full power without sleeping.
  */
-#define RMI_F01_CRTL0_NOSLEEP_BIT	BIT(2)
+#define RMI_F01_CTRL0_NOSLEEP_BIT	BIT(2)
 
 /*
  * When this bit is set, the touch controller employs a noise-filtering
  * algorithm designed for use with a connected battery charger.
  */
-#define RMI_F01_CRTL0_CHARGER_BIT	BIT(5)
+#define RMI_F01_CTRL0_CHARGER_BIT	BIT(5)
 
 /*
  * Sets the report rate for the device. The effect of this setting is
  * highly product dependent. Check the spec sheet for your particular
  * touch sensor.
  */
-#define RMI_F01_CRTL0_REPORTRATE_BIT	BIT(6)
+#define RMI_F01_CTRL0_REPORTRATE_BIT	BIT(6)
 
 /*
  * Written by the host as an indicator that the device has been
  * successfully configured.
  */
-#define RMI_F01_CRTL0_CONFIGURED_BIT	BIT(7)
+#define RMI_F01_CTRL0_CONFIGURED_BIT	BIT(7)
 
 /**
  * @ctrl0 - see the bit definitions above.
@@ -327,13 +328,13 @@ static int rmi_f01_probe(struct rmi_function *fn)
 	}
 
 	switch (pdata->power_management.nosleep) {
-	case RMI_F01_NOSLEEP_DEFAULT:
+	case RMI_REG_STATE_DEFAULT:
 		break;
-	case RMI_F01_NOSLEEP_OFF:
-		f01->device_control.ctrl0 &= ~RMI_F01_CRTL0_NOSLEEP_BIT;
+	case RMI_REG_STATE_OFF:
+		f01->device_control.ctrl0 &= ~RMI_F01_CTRL0_NOSLEEP_BIT;
 		break;
-	case RMI_F01_NOSLEEP_ON:
-		f01->device_control.ctrl0 |= RMI_F01_CRTL0_NOSLEEP_BIT;
+	case RMI_REG_STATE_ON:
+		f01->device_control.ctrl0 |= RMI_F01_CTRL0_NOSLEEP_BIT;
 		break;
 	}
 
@@ -349,7 +350,7 @@ static int rmi_f01_probe(struct rmi_function *fn)
 		f01->device_control.ctrl0 &= ~RMI_F01_CTRL0_SLEEP_MODE_MASK;
 	}
 
-	f01->device_control.ctrl0 |= RMI_F01_CRTL0_CONFIGURED_BIT;
+	f01->device_control.ctrl0 |= RMI_F01_CTRL0_CONFIGURED_BIT;
 
 	error = rmi_write(rmi_dev, fn->fd.control_base_addr,
 			  f01->device_control.ctrl0);
@@ -535,8 +536,8 @@ static int rmi_f01_suspend(struct rmi_function *fn)
 	int error;
 
 	f01->old_nosleep =
-		f01->device_control.ctrl0 & RMI_F01_CRTL0_NOSLEEP_BIT;
-	f01->device_control.ctrl0 &= ~RMI_F01_CRTL0_NOSLEEP_BIT;
+		f01->device_control.ctrl0 & RMI_F01_CTRL0_NOSLEEP_BIT;
+	f01->device_control.ctrl0 &= ~RMI_F01_CTRL0_NOSLEEP_BIT;
 
 	f01->device_control.ctrl0 &= ~RMI_F01_CTRL0_SLEEP_MODE_MASK;
 	if (device_may_wakeup(fn->rmi_dev->xport->dev))
@@ -549,7 +550,7 @@ static int rmi_f01_suspend(struct rmi_function *fn)
 	if (error) {
 		dev_err(&fn->dev, "Failed to write sleep mode: %d.\n", error);
 		if (f01->old_nosleep)
-			f01->device_control.ctrl0 |= RMI_F01_CRTL0_NOSLEEP_BIT;
+			f01->device_control.ctrl0 |= RMI_F01_CTRL0_NOSLEEP_BIT;
 		f01->device_control.ctrl0 &= ~RMI_F01_CTRL0_SLEEP_MODE_MASK;
 		f01->device_control.ctrl0 |= RMI_SLEEP_MODE_NORMAL;
 		return error;
@@ -564,7 +565,7 @@ static int rmi_f01_resume(struct rmi_function *fn)
 	int error;
 
 	if (f01->old_nosleep)
-		f01->device_control.ctrl0 |= RMI_F01_CRTL0_NOSLEEP_BIT;
+		f01->device_control.ctrl0 |= RMI_F01_CTRL0_NOSLEEP_BIT;
 
 	f01->device_control.ctrl0 &= ~RMI_F01_CTRL0_SLEEP_MODE_MASK;
 	f01->device_control.ctrl0 |= RMI_SLEEP_MODE_NORMAL;
@@ -593,6 +594,10 @@ static int rmi_f01_attention(struct rmi_function *fn,
 			"Failed to read device status: %d.\n", error);
 		return error;
 	}
+
+	if (RMI_F01_STATUS_BOOTLOADER(device_status))
+		dev_warn(&fn->dev,
+			 "Device in bootloader mode, please update firmware\n");
 
 	if (RMI_F01_STATUS_UNCONFIGURED(device_status)) {
 		dev_warn(&fn->dev, "Device reset detected.\n");

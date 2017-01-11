@@ -15,11 +15,7 @@
  *
  * You should have received a copy of the GNU General Public License
  * version 2 along with this program; If not, see
- * http://www.sun.com/software/products/lustre/docs/GPLv2.pdf
- *
- * Please contact Sun Microsystems, Inc., 4150 Network Circle, Santa Clara,
- * CA 95054 USA or visit www.sun.com if you need additional information or
- * have any questions.
+ * http://www.gnu.org/licenses/gpl-2.0.html
  *
  * GPL HEADER END
  */
@@ -163,8 +159,8 @@ ping_client_done_rpc(struct sfw_test_unit *tsu, struct srpc_client_rpc *rpc)
 
 	ktime_get_real_ts64(&ts);
 	CDEBUG(D_NET, "%d reply in %u usec\n", reply->pnr_seq,
-	       (unsigned)((ts.tv_sec - reqst->pnr_time_sec) * 1000000 +
-			  (ts.tv_nsec / NSEC_PER_USEC - reqst->pnr_time_usec)));
+	       (unsigned int)((ts.tv_sec - reqst->pnr_time_sec) * 1000000 +
+			      (ts.tv_nsec / NSEC_PER_USEC - reqst->pnr_time_usec)));
 }
 
 static int

@@ -4,7 +4,7 @@
  * Jeremy Fitzhardinge <jeremy@xensource.com>, XenSource Inc, 2007
  */
 
-#include <linux/module.h>
+#include <linux/init.h>
 #include <linux/sched.h>
 #include <linux/mm.h>
 #include <linux/pm.h>
@@ -41,7 +41,7 @@ struct xen_memory_region xen_extra_mem[XEN_EXTRA_MEM_MAX_REGIONS] __initdata;
 unsigned long xen_released_pages;
 
 /* E820 map used during setting up memory. */
-static struct e820entry xen_e820_map[E820MAX] __initdata;
+static struct e820entry xen_e820_map[E820_X_MAX] __initdata;
 static u32 xen_e820_map_entries __initdata;
 
 /*
@@ -750,7 +750,7 @@ char * __init xen_memory_setup(void)
 	max_pfn = min(max_pfn, xen_start_info->nr_pages);
 	mem_end = PFN_PHYS(max_pfn);
 
-	memmap.nr_entries = E820MAX;
+	memmap.nr_entries = ARRAY_SIZE(xen_e820_map);
 	set_xen_guest_handle(memmap.buffer, xen_e820_map);
 
 	op = xen_initial_domain() ?
@@ -861,7 +861,7 @@ char * __init xen_memory_setup(void)
 	e820_add_region(ISA_START_ADDRESS, ISA_END_ADDRESS - ISA_START_ADDRESS,
 			E820_RESERVED);
 
-	sanitize_e820_map(e820.map, ARRAY_SIZE(e820.map), &e820.nr_map);
+	sanitize_e820_map(e820->map, ARRAY_SIZE(e820->map), &e820->nr_map);
 
 	/*
 	 * Check whether the kernel itself conflicts with the target E820 map.
@@ -923,7 +923,7 @@ char * __init xen_auto_xlated_memory_setup(void)
 	int i;
 	int rc;
 
-	memmap.nr_entries = E820MAX;
+	memmap.nr_entries = ARRAY_SIZE(xen_e820_map);
 	set_xen_guest_handle(memmap.buffer, xen_e820_map);
 
 	rc = HYPERVISOR_memory_op(XENMEM_memory_map, &memmap);

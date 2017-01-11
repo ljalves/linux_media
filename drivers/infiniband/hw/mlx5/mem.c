@@ -37,12 +37,15 @@
 
 /* @umem: umem object to scan
  * @addr: ib virtual address requested by the user
+ * @max_page_shift: high limit for page_shift - 0 means no limit
  * @count: number of PAGE_SIZE pages covered by umem
  * @shift: page shift for the compound pages found in the region
  * @ncont: number of compund pages
  * @order: log2 of the number of compound pages
  */
-void mlx5_ib_cont_pages(struct ib_umem *umem, u64 addr, int *count, int *shift,
+void mlx5_ib_cont_pages(struct ib_umem *umem, u64 addr,
+			unsigned long max_page_shift,
+			int *count, int *shift,
 			int *ncont, int *order)
 {
 	unsigned long tmp;
@@ -71,7 +74,9 @@ void mlx5_ib_cont_pages(struct ib_umem *umem, u64 addr, int *count, int *shift,
 
 	addr = addr >> page_shift;
 	tmp = (unsigned long)addr;
-	m = find_first_bit(&tmp, sizeof(tmp));
+	m = find_first_bit(&tmp, BITS_PER_LONG);
+	if (max_page_shift)
+		m = min_t(unsigned long, max_page_shift - page_shift, m);
 	skip = 1 << m;
 	mask = skip - 1;
 	i = 0;
@@ -81,7 +86,7 @@ void mlx5_ib_cont_pages(struct ib_umem *umem, u64 addr, int *count, int *shift,
 		for (k = 0; k < len; k++) {
 			if (!(i & mask)) {
 				tmp = (unsigned long)pfn;
-				m = min_t(unsigned long, m, find_first_bit(&tmp, sizeof(tmp)));
+				m = min_t(unsigned long, m, find_first_bit(&tmp, BITS_PER_LONG));
 				skip = 1 << m;
 				mask = skip - 1;
 				base = pfn;
@@ -89,7 +94,7 @@ void mlx5_ib_cont_pages(struct ib_umem *umem, u64 addr, int *count, int *shift,
 			} else {
 				if (base + p != pfn) {
 					tmp = (unsigned long)p;
-					m = find_first_bit(&tmp, sizeof(tmp));
+					m = find_first_bit(&tmp, BITS_PER_LONG);
 					skip = 1 << m;
 					mask = skip - 1;
 					base = pfn;

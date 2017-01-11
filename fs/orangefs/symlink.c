@@ -8,12 +8,10 @@
 #include "orangefs-kernel.h"
 #include "orangefs-bufmap.h"
 
-struct inode_operations orangefs_symlink_inode_operations = {
-	.readlink = generic_readlink,
+const struct inode_operations orangefs_symlink_inode_operations = {
 	.get_link = simple_get_link,
 	.setattr = orangefs_setattr,
 	.getattr = orangefs_getattr,
 	.listxattr = orangefs_listxattr,
-	.setxattr = generic_setxattr,
 	.permission = orangefs_permission,
 };

@@ -26,23 +26,8 @@
 #include "rdev-ops.h"
 #include "core.h"
 
-static int nl802154_pre_doit(const struct genl_ops *ops, struct sk_buff *skb,
-			     struct genl_info *info);
-
-static void nl802154_post_doit(const struct genl_ops *ops, struct sk_buff *skb,
-			       struct genl_info *info);
-
 /* the netlink family */
-static struct genl_family nl802154_fam = {
-	.id = GENL_ID_GENERATE,		/* don't bother with a hardcoded ID */
-	.name = NL802154_GENL_NAME,	/* have users key off the name instead */
-	.hdrsize = 0,			/* no private header */
-	.version = 1,			/* no particular meaning now */
-	.maxattr = NL802154_ATTR_MAX,
-	.netnsok = true,
-	.pre_doit = nl802154_pre_doit,
-	.post_doit = nl802154_post_doit,
-};
+static struct genl_family nl802154_fam;
 
 /* multicast groups */
 enum nl802154_multicast_groups {
@@ -80,7 +65,8 @@ __cfg802154_wpan_dev_from_attrs(struct net *netns, struct nlattr **attrs)
 	list_for_each_entry(rdev, &cfg802154_rdev_list, list) {
 		struct wpan_dev *wpan_dev;
 
-		/* TODO netns compare */
+		if (wpan_phy_net(&rdev->wpan_phy) != netns)
+			continue;
 
 		if (have_wpan_dev_id && rdev->wpan_phy_idx != wpan_phy_idx)
 			continue;
@@ -175,7 +161,8 @@ __cfg802154_rdev_from_attrs(struct net *netns, struct nlattr **attrs)
 	if (!rdev)
 		return ERR_PTR(-ENODEV);
 
-	/* TODO netns compare */
+	if (netns != wpan_phy_net(&rdev->wpan_phy))
+		return ERR_PTR(-ENODEV);
 
 	return rdev;
 }
@@ -233,6 +220,8 @@ static const struct nla_policy nl802154_policy[NL802154_ATTR_MAX+1] = {
 
 	[NL802154_ATTR_ACKREQ_DEFAULT] = { .type = NLA_U8 },
 
+	[NL802154_ATTR_PID] = { .type = NLA_U32 },
+	[NL802154_ATTR_NETNS_FD] = { .type = NLA_U32 },
 #ifdef CONFIG_IEEE802154_NL802154_EXPERIMENTAL
 	[NL802154_ATTR_SEC_ENABLED] = { .type = NLA_U8, },
 	[NL802154_ATTR_SEC_OUT_LEVEL] = { .type = NLA_U32, },
@@ -259,13 +248,14 @@ nl802154_prepare_wpan_dev_dump(struct sk_buff *skb,
 
 	if (!cb->args[0]) {
 		err = nlmsg_parse(cb->nlh, GENL_HDRLEN + nl802154_fam.hdrsize,
-				  nl802154_fam.attrbuf, nl802154_fam.maxattr,
+				  genl_family_attrbuf(&nl802154_fam),
+				  nl802154_fam.maxattr,
 				  nl802154_policy);
 		if (err)
 			goto out_unlock;
 
 		*wpan_dev = __cfg802154_wpan_dev_from_attrs(sock_net(skb->sk),
-							    nl802154_fam.attrbuf);
+							    genl_family_attrbuf(&nl802154_fam));
 		if (IS_ERR(*wpan_dev)) {
 			err = PTR_ERR(*wpan_dev);
 			goto out_unlock;
@@ -571,7 +561,7 @@ static int nl802154_dump_wpan_phy_parse(struct sk_buff *skb,
 					struct netlink_callback *cb,
 					struct nl802154_dump_wpan_phy_state *state)
 {
-	struct nlattr **tb = nl802154_fam.attrbuf;
+	struct nlattr **tb = genl_family_attrbuf(&nl802154_fam);
 	int ret = nlmsg_parse(cb->nlh, GENL_HDRLEN + nl802154_fam.hdrsize,
 			      tb, nl802154_fam.maxattr, nl802154_policy);
 
@@ -590,7 +580,6 @@ static int nl802154_dump_wpan_phy_parse(struct sk_buff *skb,
 		struct cfg802154_registered_device *rdev;
 		int ifidx = nla_get_u32(tb[NL802154_ATTR_IFINDEX]);
 
-		/* TODO netns */
 		netdev = __dev_get_by_index(&init_net, ifidx);
 		if (!netdev)
 			return -ENODEV;
@@ -629,7 +618,8 @@ nl802154_dump_wpan_phy(struct sk_buff *skb, struct netlink_callback *cb)
 	}
 
 	list_for_each_entry(rdev, &cfg802154_rdev_list, list) {
-		/* TODO net ns compare */
+		if (!net_eq(wpan_phy_net(&rdev->wpan_phy), sock_net(skb->sk)))
+			continue;
 		if (++idx <= state->start)
 			continue;
 		if (state->filter_wpan_phy != -1 &&
@@ -871,7 +861,8 @@ nl802154_dump_interface(struct sk_buff *skb, struct netlink_callback *cb)
 
 	rtnl_lock();
 	list_for_each_entry(rdev, &cfg802154_rdev_list, list) {
-		/* TODO netns compare */
+		if (!net_eq(wpan_phy_net(&rdev->wpan_phy), sock_net(skb->sk)))
+			continue;
 		if (wp_idx < wp_start) {
 			wp_idx++;
 			continue;
@@ -1271,6 +1262,37 @@ nl802154_set_ackreq_default(struct sk_buff *skb, struct genl_info *info)
 	return rdev_set_ackreq_default(rdev, wpan_dev, ackreq);
 }
 
+static int nl802154_wpan_phy_netns(struct sk_buff *skb, struct genl_info *info)
+{
+	struct cfg802154_registered_device *rdev = info->user_ptr[0];
+	struct net *net;
+	int err;
+
+	if (info->attrs[NL802154_ATTR_PID]) {
+		u32 pid = nla_get_u32(info->attrs[NL802154_ATTR_PID]);
+
+		net = get_net_ns_by_pid(pid);
+	} else if (info->attrs[NL802154_ATTR_NETNS_FD]) {
+		u32 fd = nla_get_u32(info->attrs[NL802154_ATTR_NETNS_FD]);
+
+		net = get_net_ns_by_fd(fd);
+	} else {
+		return -EINVAL;
+	}
+
+	if (IS_ERR(net))
+		return PTR_ERR(net);
+
+	err = 0;
+
+	/* check if anything to do */
+	if (!net_eq(wpan_phy_net(&rdev->wpan_phy), net))
+		err = cfg802154_switch_netns(rdev, net);
+
+	put_net(net);
+	return err;
+}
+
 #ifdef CONFIG_IEEE802154_NL802154_EXPERIMENTAL
 static const struct nla_policy nl802154_dev_addr_policy[NL802154_DEV_ADDR_ATTR_MAX + 1] = {
 	[NL802154_DEV_ADDR_ATTR_PAN_ID] = { .type = NLA_U16 },
@@ -1289,8 +1311,8 @@ ieee802154_llsec_parse_dev_addr(struct nlattr *nla,
 				     nl802154_dev_addr_policy))
 		return -EINVAL;
 
-	if (!attrs[NL802154_DEV_ADDR_ATTR_PAN_ID] &&
-	    !attrs[NL802154_DEV_ADDR_ATTR_MODE] &&
+	if (!attrs[NL802154_DEV_ADDR_ATTR_PAN_ID] ||
+	    !attrs[NL802154_DEV_ADDR_ATTR_MODE] ||
 	    !(attrs[NL802154_DEV_ADDR_ATTR_SHORT] ||
 	      attrs[NL802154_DEV_ADDR_ATTR_EXTENDED]))
 		return -EINVAL;
@@ -2262,6 +2284,14 @@ static const struct genl_ops nl802154_ops[] = {
 				  NL802154_FLAG_NEED_RTNL,
 	},
 	{
+		.cmd = NL802154_CMD_SET_WPAN_PHY_NETNS,
+		.doit = nl802154_wpan_phy_netns,
+		.policy = nl802154_policy,
+		.flags = GENL_ADMIN_PERM,
+		.internal_flags = NL802154_FLAG_NEED_WPAN_PHY |
+				  NL802154_FLAG_NEED_RTNL,
+	},
+	{
 		.cmd = NL802154_CMD_SET_PAN_ID,
 		.doit = nl802154_set_pan_id,
 		.policy = nl802154_policy,
@@ -2432,11 +2462,25 @@ static const struct genl_ops nl802154_ops[] = {
 #endif /* CONFIG_IEEE802154_NL802154_EXPERIMENTAL */
 };
 
+static struct genl_family nl802154_fam __ro_after_init = {
+	.name = NL802154_GENL_NAME,	/* have users key off the name instead */
+	.hdrsize = 0,			/* no private header */
+	.version = 1,			/* no particular meaning now */
+	.maxattr = NL802154_ATTR_MAX,
+	.netnsok = true,
+	.pre_doit = nl802154_pre_doit,
+	.post_doit = nl802154_post_doit,
+	.module = THIS_MODULE,
+	.ops = nl802154_ops,
+	.n_ops = ARRAY_SIZE(nl802154_ops),
+	.mcgrps = nl802154_mcgrps,
+	.n_mcgrps = ARRAY_SIZE(nl802154_mcgrps),
+};
+
 /* initialisation/exit functions */
-int nl802154_init(void)
+int __init nl802154_init(void)
 {
-	return genl_register_family_with_ops_groups(&nl802154_fam, nl802154_ops,
-						    nl802154_mcgrps);
+	return genl_register_family(&nl802154_fam);
 }
 
 void nl802154_exit(void)

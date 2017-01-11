@@ -156,21 +156,19 @@ struct lme2510_state {
 static int lme2510_bulk_write(struct usb_device *dev,
 				u8 *snd, int len, u8 pipe)
 {
-	int ret, actual_l;
+	int actual_l;
 
-	ret = usb_bulk_msg(dev, usb_sndbulkpipe(dev, pipe),
-				snd, len , &actual_l, 100);
-	return ret;
+	return usb_bulk_msg(dev, usb_sndbulkpipe(dev, pipe),
+			    snd, len, &actual_l, 100);
 }
 
 static int lme2510_bulk_read(struct usb_device *dev,
 				u8 *rev, int len, u8 pipe)
 {
-	int ret, actual_l;
+	int actual_l;
 
-	ret = usb_bulk_msg(dev, usb_rcvbulkpipe(dev, pipe),
-				 rev, len , &actual_l, 200);
-	return ret;
+	return usb_bulk_msg(dev, usb_rcvbulkpipe(dev, pipe),
+			    rev, len, &actual_l, 200);
 }
 
 static int lme2510_usb_talk(struct dvb_usb_device *d,
@@ -357,7 +355,8 @@ static void lme2510_int_response(struct urb *lme_urb)
 						ibuf[5]);
 
 			deb_info(1, "INT Key = 0x%08x", key);
-			rc_keydown(adap_to_d(adap)->rc_dev, RC_TYPE_NEC, key, 0);
+			rc_keydown(adap_to_d(adap)->rc_dev, RC_TYPE_NEC32, key,
+									0);
 			break;
 		case 0xbb:
 			switch (st->tuner_config) {
@@ -1242,7 +1241,7 @@ static int lme2510_get_stream_config(struct dvb_frontend *fe, u8 *ts_type,
 static int lme2510_get_rc_config(struct dvb_usb_device *d,
 	struct dvb_usb_rc *rc)
 {
-	rc->allowed_protos = RC_BIT_NEC;
+	rc->allowed_protos = RC_BIT_NEC32;
 	return 0;
 }
 

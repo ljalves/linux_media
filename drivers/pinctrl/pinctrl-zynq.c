@@ -20,7 +20,7 @@
  */
 #include <linux/io.h>
 #include <linux/mfd/syscon.h>
-#include <linux/module.h>
+#include <linux/init.h>
 #include <linux/of.h>
 #include <linux/platform_device.h>
 #include <linux/pinctrl/pinctrl.h>
@@ -233,7 +233,7 @@ static const unsigned int sdio0_2_pins[] = {40, 41, 42, 43, 44, 45};
 static const unsigned int sdio1_0_pins[] = {10, 11, 12, 13, 14, 15};
 static const unsigned int sdio1_1_pins[] = {22, 23, 24, 25, 26, 27};
 static const unsigned int sdio1_2_pins[] = {34, 35, 36, 37, 38, 39};
-static const unsigned int sdio1_3_pins[] = {46, 47, 48, 49, 40, 51};
+static const unsigned int sdio1_3_pins[] = {46, 47, 48, 49, 50, 51};
 static const unsigned int sdio0_emio_wp_pins[] = {54};
 static const unsigned int sdio0_emio_cd_pins[] = {55};
 static const unsigned int sdio1_emio_wp_pins[] = {56};
@@ -247,6 +247,8 @@ static const unsigned int smc0_nor_addr25_pins[] = {1};
 static const unsigned int smc0_nand_pins[] = {0, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11,
 					      12, 13, 14, 16, 17, 18, 19, 20,
 					      21, 22, 23};
+static const unsigned int smc0_nand8_pins[] = {0, 2, 3,  4,  5,  6,  7,
+					       8, 9, 10, 11, 12, 13, 14};
 /* Note: CAN MIO clock inputs are modeled in the clock framework */
 static const unsigned int can0_0_pins[] = {10, 11};
 static const unsigned int can0_1_pins[] = {14, 15};
@@ -445,6 +447,7 @@ static const struct zynq_pctrl_group zynq_pctrl_groups[] = {
 	DEFINE_ZYNQ_PINCTRL_GRP(smc0_nor_cs1),
 	DEFINE_ZYNQ_PINCTRL_GRP(smc0_nor_addr25),
 	DEFINE_ZYNQ_PINCTRL_GRP(smc0_nand),
+	DEFINE_ZYNQ_PINCTRL_GRP(smc0_nand8),
 	DEFINE_ZYNQ_PINCTRL_GRP(can0_0),
 	DEFINE_ZYNQ_PINCTRL_GRP(can0_1),
 	DEFINE_ZYNQ_PINCTRL_GRP(can0_2),
@@ -709,7 +712,8 @@ static const char * const sdio1_wp_groups[] = {"gpio0_0_grp",
 static const char * const smc0_nor_groups[] = {"smc0_nor_grp"};
 static const char * const smc0_nor_cs1_groups[] = {"smc0_nor_cs1_grp"};
 static const char * const smc0_nor_addr25_groups[] = {"smc0_nor_addr25_grp"};
-static const char * const smc0_nand_groups[] = {"smc0_nand_grp"};
+static const char * const smc0_nand_groups[] = {"smc0_nand_grp",
+		"smc0_nand8_grp"};
 static const char * const can0_groups[] = {"can0_0_grp", "can0_1_grp",
 		"can0_2_grp", "can0_3_grp", "can0_4_grp", "can0_5_grp",
 		"can0_6_grp", "can0_7_grp", "can0_8_grp", "can0_9_grp",
@@ -1210,7 +1214,6 @@ static const struct of_device_id zynq_pinctrl_of_match[] = {
 	{ .compatible = "xlnx,pinctrl-zynq" },
 	{ }
 };
-MODULE_DEVICE_TABLE(of, zynq_pinctrl_of_match);
 
 static struct platform_driver zynq_pinctrl_driver = {
 	.driver = {
@@ -1225,13 +1228,3 @@ static int __init zynq_pinctrl_init(void)
 	return platform_driver_register(&zynq_pinctrl_driver);
 }
 arch_initcall(zynq_pinctrl_init);
-
-static void __exit zynq_pinctrl_exit(void)
-{
-	platform_driver_unregister(&zynq_pinctrl_driver);
-}
-module_exit(zynq_pinctrl_exit);
-
-MODULE_AUTHOR("Sören Brinkmann <soren.brinkmann@xilinx.com>");
-MODULE_DESCRIPTION("Xilinx Zynq pinctrl driver");
-MODULE_LICENSE("GPL");

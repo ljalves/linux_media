@@ -47,7 +47,7 @@
 #include <linux/slab.h>
 #include <linux/security.h>
 
-#include <asm/uaccess.h>
+#include <linux/uaccess.h>
 #include <asm/io.h>
 #include <asm/tlbflush.h>
 #include <asm/irq.h>
@@ -440,10 +440,7 @@ static inline unsigned long get_vflags(struct kernel_vm86_regs *regs)
 
 static inline int is_revectored(int nr, struct revectored_struct *bitmap)
 {
-	__asm__ __volatile__("btl %2,%1\n\tsbbl %0,%0"
-		:"=r" (nr)
-		:"m" (*bitmap), "r" (nr));
-	return nr;
+	return test_bit(nr, bitmap->__map);
 }
 
 #define val_byte(val, n) (((__u8 *)&val)[n])

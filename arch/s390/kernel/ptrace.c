@@ -26,7 +26,7 @@
 #include <asm/page.h>
 #include <asm/pgtable.h>
 #include <asm/pgalloc.h>
-#include <asm/uaccess.h>
+#include <linux/uaccess.h>
 #include <asm/unistd.h>
 #include <asm/switch_to.h>
 #include "entry.h"
@@ -461,7 +461,7 @@ long arch_ptrace(struct task_struct *child, long request,
 		}
 		return 0;
 	case PTRACE_GET_LAST_BREAK:
-		put_user(task_thread_info(child)->last_break,
+		put_user(child->thread.last_break,
 			 (unsigned long __user *) data);
 		return 0;
 	case PTRACE_ENABLE_TE:
@@ -811,7 +811,7 @@ long compat_arch_ptrace(struct task_struct *child, compat_long_t request,
 		}
 		return 0;
 	case PTRACE_GET_LAST_BREAK:
-		put_user(task_thread_info(child)->last_break,
+		put_user(child->thread.last_break,
 			 (unsigned int __user *) data);
 		return 0;
 	}
@@ -821,14 +821,7 @@ long compat_arch_ptrace(struct task_struct *child, compat_long_t request,
 
 asmlinkage long do_syscall_trace_enter(struct pt_regs *regs)
 {
-	long ret = 0;
-
-	/* Do the secure computing check first. */
-	if (secure_computing()) {
-		/* seccomp failures shouldn't expose any additional code. */
-		ret = -1;
-		goto out;
-	}
+	unsigned long mask = -1UL;
 
 	/*
 	 * The sysc_tracesys code in entry.S stored the system
@@ -843,17 +836,26 @@ asmlinkage long do_syscall_trace_enter(struct pt_regs *regs)
 		 * the system call and the system call restart handling.
 		 */
 		clear_pt_regs_flag(regs, PIF_SYSCALL);
-		ret = -1;
+		return -1;
+	}
+
+	/* Do the secure computing check after ptrace. */
+	if (secure_computing(NULL)) {
+		/* seccomp failures shouldn't expose any additional code. */
+		return -1;
 	}
 
 	if (unlikely(test_thread_flag(TIF_SYSCALL_TRACEPOINT)))
 		trace_sys_enter(regs, regs->gprs[2]);
 
-	audit_syscall_entry(regs->gprs[2], regs->orig_gpr2,
-			    regs->gprs[3], regs->gprs[4],
-			    regs->gprs[5]);
-out:
-	return ret ?: regs->gprs[2];
+	if (is_compat_task())
+		mask = 0xffffffff;
+
+	audit_syscall_entry(regs->gprs[2], regs->orig_gpr2 & mask,
+			    regs->gprs[3] &mask, regs->gprs[4] &mask,
+			    regs->gprs[5] &mask);
+
+	return regs->gprs[2];
 }
 
 asmlinkage void do_syscall_trace_exit(struct pt_regs *regs)
@@ -995,10 +997,10 @@ static int s390_last_break_get(struct task_struct *target,
 	if (count > 0) {
 		if (kbuf) {
 			unsigned long *k = kbuf;
-			*k = task_thread_info(target)->last_break;
+			*k = target->thread.last_break;
 		} else {
 			unsigned long  __user *u = ubuf;
-			if (__put_user(task_thread_info(target)->last_break, u))
+			if (__put_user(target->thread.last_break, u))
 				return -EFAULT;
 		}
 	}
@@ -1111,7 +1113,7 @@ static int s390_system_call_get(struct task_struct *target,
 				unsigned int pos, unsigned int count,
 				void *kbuf, void __user *ubuf)
 {
-	unsigned int *data = &task_thread_info(target)->system_call;
+	unsigned int *data = &target->thread.system_call;
 	return user_regset_copyout(&pos, &count, &kbuf, &ubuf,
 				   data, 0, sizeof(unsigned int));
 }
@@ -1121,7 +1123,7 @@ static int s390_system_call_set(struct task_struct *target,
 				unsigned int pos, unsigned int count,
 				const void *kbuf, const void __user *ubuf)
 {
-	unsigned int *data = &task_thread_info(target)->system_call;
+	unsigned int *data = &target->thread.system_call;
 	return user_regset_copyin(&pos, &count, &kbuf, &ubuf,
 				  data, 0, sizeof(unsigned int));
 }
@@ -1325,7 +1327,7 @@ static int s390_compat_last_break_get(struct task_struct *target,
 	compat_ulong_t last_break;
 
 	if (count > 0) {
-		last_break = task_thread_info(target)->last_break;
+		last_break = target->thread.last_break;
 		if (kbuf) {
 			unsigned long *k = kbuf;
 			*k = last_break;

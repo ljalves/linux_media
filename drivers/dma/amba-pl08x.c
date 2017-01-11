@@ -1443,8 +1443,6 @@ static struct dma_async_tx_descriptor *pl08x_prep_dma_memcpy(
 	dsg = kzalloc(sizeof(struct pl08x_sg), GFP_NOWAIT);
 	if (!dsg) {
 		pl08x_free_txd(pl08x, txd);
-		dev_err(&pl08x->adev->dev, "%s no memory for pl080 sg\n",
-				__func__);
 		return NULL;
 	}
 	list_add_tail(&dsg->node, &txd->dsg_list);
@@ -1795,6 +1793,13 @@ bool pl08x_filter_id(struct dma_chan *chan, void *chan_id)
 }
 EXPORT_SYMBOL_GPL(pl08x_filter_id);
 
+static bool pl08x_filter_fn(struct dma_chan *chan, void *chan_id)
+{
+	struct pl08x_dma_chan *plchan = to_pl08x_chan(chan);
+
+	return plchan->cd == chan_id;
+}
+
 /*
  * Just check that the device is there and active
  * TODO: turn this bit on/off depending on the number of physical channels
@@ -1901,11 +1906,8 @@ static int pl08x_dma_init_virtual_channels(struct pl08x_driver_data *pl08x,
 	 */
 	for (i = 0; i < channels; i++) {
 		chan = kzalloc(sizeof(*chan), GFP_KERNEL);
-		if (!chan) {
-			dev_err(&pl08x->adev->dev,
-				"%s no memory for channel\n", __func__);
+		if (!chan)
 			return -ENOMEM;
-		}
 
 		chan->host = pl08x;
 		chan->state = PL08X_CHAN_IDLE;
@@ -2312,6 +2314,10 @@ static int pl08x_probe(struct amba_device *adev, const struct amba_id *id)
 			ret = -EINVAL;
 			goto out_no_platdata;
 		}
+	} else {
+		pl08x->slave.filter.map = pl08x->pd->slave_map;
+		pl08x->slave.filter.mapcnt = pl08x->pd->slave_map_len;
+		pl08x->slave.filter.fn = pl08x_filter_fn;
 	}
 
 	/* By default, AHB1 only.  If dualmaster, from platform */
@@ -2360,9 +2366,6 @@ static int pl08x_probe(struct amba_device *adev, const struct amba_id *id)
 	pl08x->phy_chans = kzalloc((vd->channels * sizeof(*pl08x->phy_chans)),
 			GFP_KERNEL);
 	if (!pl08x->phy_chans) {
-		dev_err(&adev->dev, "%s failed to allocate "
-			"physical channel holders\n",
-			__func__);
 		ret = -ENOMEM;
 		goto out_no_phychans;
 	}

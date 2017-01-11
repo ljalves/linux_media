@@ -54,6 +54,7 @@ struct intel_th_output {
  * @num_resources:	number of resources in @resource array
  * @type:		INTEL_TH_{SOURCE,OUTPUT,SWITCH}
  * @id:			device instance or -1
+ * @host_mode:		Intel TH is controlled by an external debug host
  * @output:		output descriptor for INTEL_TH_OUTPUT devices
  * @name:		device name to match the driver
  */
@@ -63,6 +64,9 @@ struct intel_th_device {
 	unsigned int	num_resources;
 	unsigned int	type;
 	int		id;
+
+	/* INTEL_TH_SWITCH specific */
+	bool			host_mode;
 
 	/* INTEL_TH_OUTPUT specific */
 	struct intel_th_output	output;
@@ -114,6 +118,9 @@ intel_th_output_assigned(struct intel_th_device *thdev)
  * @unassign:	deassociate an output type device from an output port
  * @enable:	enable tracing for a given output device
  * @disable:	disable tracing for a given output device
+ * @irq:	interrupt callback
+ * @activate:	enable tracing on the output's side
+ * @deactivate:	disable tracing on the output's side
  * @fops:	file operations for device nodes
  * @attr_group:	attributes provided by the driver
  *
@@ -205,6 +212,9 @@ struct intel_th {
 
 	int			id;
 	int			major;
+#ifdef CONFIG_MODULES
+	struct work_struct	request_module_work;
+#endif /* CONFIG_MODULES */
 #ifdef CONFIG_INTEL_TH_DEBUG
 	struct dentry		*dbg;
 #endif

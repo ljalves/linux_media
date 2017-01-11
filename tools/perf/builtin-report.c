@@ -8,7 +8,7 @@
 #include "builtin.h"
 
 #include "util/util.h"
-#include "util/cache.h"
+#include "util/config.h"
 
 #include "util/annotate.h"
 #include "util/color.h"
@@ -36,7 +36,7 @@
 #include "util/hist.h"
 #include "util/data.h"
 #include "arch/common.h"
-
+#include "util/time-utils.h"
 #include "util/auxtrace.h"
 
 #include <dlfcn.h>
@@ -59,6 +59,8 @@ struct report {
 	const char		*pretty_printing_style;
 	const char		*cpu_list;
 	const char		*symbol_filter_str;
+	const char		*time_str;
+	struct perf_time_interval ptime;
 	float			min_percent;
 	u64			nr_entries;
 	u64			queue_size;
@@ -87,6 +89,10 @@ static int report__config(const char *var, const char *value, void *cb)
 	}
 	if (!strcmp(var, "report.queue-size")) {
 		rep->queue_size = perf_config_u64(var, value);
+		return 0;
+	}
+	if (!strcmp(var, "report.sort_order")) {
+		default_sort_order = strdup(value);
 		return 0;
 	}
 
@@ -154,6 +160,9 @@ static int process_sample_event(struct perf_tool *tool,
 	};
 	int ret = 0;
 
+	if (perf_time__skip_sample(&rep->ptime, sample->time))
+		return 0;
+
 	if (machine__resolve(machine, &al, sample) < 0) {
 		pr_debug("problem processing %d event, skipping it.\n",
 			 event->header.type);
@@ -203,11 +212,14 @@ static int process_read_event(struct perf_tool *tool,
 
 	if (rep->show_threads) {
 		const char *name = evsel ? perf_evsel__name(evsel) : "unknown";
-		perf_read_values_add_value(&rep->show_threads_values,
+		int err = perf_read_values_add_value(&rep->show_threads_values,
 					   event->read.pid, event->read.tid,
 					   event->read.id,
 					   name,
 					   event->read.value);
+
+		if (err)
+			return err;
 	}
 
 	dump_printf(": %d %d %s %" PRIu64 "\n", event->read.pid, event->read.tid,
@@ -361,7 +373,7 @@ static int perf_evlist__tty_browse_hists(struct perf_evlist *evlist,
 	struct perf_evsel *pos;
 
 	fprintf(stdout, "#\n# Total Lost Samples: %" PRIu64 "\n#\n", evlist->stats.total_lost_samples);
-	evlist__for_each(evlist, pos) {
+	evlist__for_each_entry(evlist, pos) {
 		struct hists *hists = evsel__hists(pos);
 		const char *evname = perf_evsel__name(pos);
 
@@ -370,7 +382,8 @@ static int perf_evlist__tty_browse_hists(struct perf_evlist *evlist,
 			continue;
 
 		hists__fprintf_nr_sample_events(hists, rep, evname, stdout);
-		hists__fprintf(hists, true, 0, 0, rep->min_percent, stdout);
+		hists__fprintf(hists, true, 0, 0, rep->min_percent, stdout,
+			       symbol_conf.use_callchain);
 		fprintf(stdout, "\n\n");
 	}
 
@@ -477,7 +490,7 @@ static int report__collapse_hists(struct report *rep)
 
 	ui_progress__init(&prog, rep->nr_entries, "Merging related events...");
 
-	evlist__for_each(rep->session->evlist, pos) {
+	evlist__for_each_entry(rep->session->evlist, pos) {
 		struct hists *hists = evsel__hists(pos);
 
 		if (pos->idx == 0)
@@ -510,7 +523,7 @@ static void report__output_resort(struct report *rep)
 
 	ui_progress__init(&prog, rep->nr_entries, "Sorting events for output...");
 
-	evlist__for_each(rep->session->evlist, pos)
+	evlist__for_each_entry(rep->session->evlist, pos)
 		perf_evsel__output_resort(pos, &prog);
 
 	ui_progress__finish();
@@ -534,8 +547,11 @@ static int __cmd_report(struct report *rep)
 		}
 	}
 
-	if (rep->show_threads)
-		perf_read_values_init(&rep->show_threads_values);
+	if (rep->show_threads) {
+		ret = perf_read_values_init(&rep->show_threads_values);
+		if (ret)
+			return ret;
+	}
 
 	ret = report__setup_sample_type(rep);
 	if (ret) {
@@ -551,7 +567,7 @@ static int __cmd_report(struct report *rep)
 
 	report__warn_kptr_restrict(rep);
 
-	evlist__for_each(session->evlist, pos)
+	evlist__for_each_entry(session->evlist, pos)
 		rep->nr_entries += evsel__hists(pos)->nr_entries;
 
 	if (use_browser == 0) {
@@ -582,7 +598,7 @@ static int __cmd_report(struct report *rep)
 	 * might be changed during the collapse phase.
 	 */
 	rep->nr_entries = 0;
-	evlist__for_each(session->evlist, pos)
+	evlist__for_each_entry(session->evlist, pos)
 		rep->nr_entries += evsel__hists(pos)->nr_entries;
 
 	if (rep->nr_entries == 0) {
@@ -632,7 +648,7 @@ report_parse_ignore_callees_opt(const struct option *opt __maybe_unused,
 }
 
 static int
-parse_branch_mode(const struct option *opt __maybe_unused,
+parse_branch_mode(const struct option *opt,
 		  const char *str __maybe_unused, int unset)
 {
 	int *branch_mode = opt->value;
@@ -816,6 +832,11 @@ int cmd_report(int argc, const char **argv, const char *prefix __maybe_unused)
 		    "Show raw trace event output (do not use print fmt or plugins)"),
 	OPT_BOOLEAN(0, "hierarchy", &symbol_conf.report_hierarchy,
 		    "Show entries in a hierarchy"),
+	OPT_CALLBACK_DEFAULT(0, "stdio-color", NULL, "mode",
+			     "'always' (default), 'never' or 'auto' only applicable to --stdio mode",
+			     stdio__config_color, "always"),
+	OPT_STRING(0, "time", &report.time_str, "str",
+		   "Time span of interest (start,stop)"),
 	OPT_END()
 	};
 	struct perf_data_file file = {
@@ -897,6 +918,9 @@ repeat:
 	if (itrace_synth_opts.last_branch)
 		has_br_stack = true;
 
+	if (has_br_stack && branch_call_mode)
+		symbol_conf.show_branchflag_count = true;
+
 	/*
 	 * Branch mode is a tristate:
 	 * -1 means default, so decide based on the file having branch data.
@@ -927,7 +951,6 @@ repeat:
 
 	if (symbol_conf.report_hierarchy) {
 		/* disable incompatible options */
-		symbol_conf.event_group = false;
 		symbol_conf.cumulate_callchain = false;
 
 		if (field_order) {
@@ -976,9 +999,9 @@ repeat:
 	 * implementation.
 	 */
 	if (ui__has_annotation()) {
-		symbol_conf.priv_size = sizeof(struct annotation);
-		machines__set_symbol_filter(&session->machines,
-					    symbol__annotate_init);
+		ret = symbol__annotation_init();
+		if (ret < 0)
+			goto error;
 		/*
  		 * For searching by name on the "Browse map details".
  		 * providing it only in verbose mode not to bloat too
@@ -998,6 +1021,11 @@ repeat:
 
 	if (symbol__init(&session->header.env) < 0)
 		goto error;
+
+	if (perf_time__parse_str(&report.ptime, report.time_str) != 0) {
+		pr_err("Invalid time string\n");
+		return -EINVAL;
+	}
 
 	sort__setup_elide(stdout);
 

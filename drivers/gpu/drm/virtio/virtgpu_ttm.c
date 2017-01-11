@@ -375,6 +375,12 @@ static int virtio_gpu_bo_move(struct ttm_buffer_object *bo,
 			      bool no_wait_gpu,
 			      struct ttm_mem_reg *new_mem)
 {
+	int ret;
+
+	ret = ttm_bo_wait(bo, interruptible, no_wait_gpu);
+	if (ret)
+		return ret;
+
 	virtio_gpu_move_null(bo, new_mem);
 	return 0;
 }
@@ -419,6 +425,7 @@ static struct ttm_bo_driver virtio_gpu_bo_driver = {
 	.ttm_tt_unpopulate = &virtio_gpu_ttm_tt_unpopulate,
 	.invalidate_caches = &virtio_gpu_invalidate_caches,
 	.init_mem_type = &virtio_gpu_init_mem_type,
+	.eviction_valuable = ttm_bo_eviction_valuable,
 	.evict_flags = &virtio_gpu_evict_flags,
 	.move = &virtio_gpu_bo_move,
 	.verify_access = &virtio_gpu_verify_access,

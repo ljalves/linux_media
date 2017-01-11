@@ -94,14 +94,13 @@ static int ix2505v_write(struct ix2505v_state *state, u8 buf[], u8 count)
 	return 0;
 }
 
-static int ix2505v_release(struct dvb_frontend *fe)
+static void ix2505v_release(struct dvb_frontend *fe)
 {
 	struct ix2505v_state *state = fe->tuner_priv;
 
 	fe->tuner_priv = NULL;
 	kfree(state);
 
-	return 0;
 }
 
 /**
@@ -258,7 +257,7 @@ static int ix2505v_get_frequency(struct dvb_frontend *fe, u32 *frequency)
 	return 0;
 }
 
-static struct dvb_tuner_ops ix2505v_tuner_ops = {
+static const struct dvb_tuner_ops ix2505v_tuner_ops = {
 	.info = {
 		.name = "Sharp IX2505V (B0017)",
 		.frequency_min = 950000,

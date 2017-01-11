@@ -761,16 +761,6 @@ static int bdx_change_mtu(struct net_device *ndev, int new_mtu)
 {
 	ENTER;
 
-	if (new_mtu == ndev->mtu)
-		RET(0);
-
-	/* enforce minimum frame size */
-	if (new_mtu < ETH_ZLEN) {
-		netdev_err(ndev, "mtu %d is less then minimal %d\n",
-			   new_mtu, ETH_ZLEN);
-		RET(-EINVAL);
-	}
-
 	ndev->mtu = new_mtu;
 	if (netif_running(ndev)) {
 		bdx_close(ndev);
@@ -1987,7 +1977,7 @@ bdx_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 	if ((readl(nic->regs + FPGA_VER) & 0xFFF) >= 378) {
 		err = pci_enable_msi(pdev);
 		if (err)
-			pr_err("Can't eneble msi. error is %d\n", err);
+			pr_err("Can't enable msi. error is %d\n", err);
 		else
 			nic->irq_type = IRQ_MSI;
 	} else
@@ -2057,6 +2047,10 @@ bdx_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 #ifdef BDX_LLTX
 		ndev->features |= NETIF_F_LLTX;
 #endif
+		/* MTU range: 60 - 16384 */
+		ndev->min_mtu = ETH_ZLEN;
+		ndev->max_mtu = BDX_MAX_MTU;
+
 		spin_lock_init(&priv->tx_lock);
 
 		/*bdx_hw_reset(priv); */

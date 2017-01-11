@@ -26,7 +26,7 @@
 
 #include <asm/pgtable.h>
 #include <asm/traps.h>
-#include <asm/uaccess.h>
+#include <linux/uaccess.h>
 #include <linux/mm.h>
 #include <linux/signal.h>
 #include <linux/module.h>
@@ -101,7 +101,7 @@ good_area:
 		break;
 	}
 
-	fault = handle_mm_fault(mm, vma, address, flags);
+	fault = handle_mm_fault(vma, address, flags);
 
 	if ((fault & VM_FAULT_RETRY) && fatal_signal_pending(current))
 		return;

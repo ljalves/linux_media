@@ -21,6 +21,8 @@
 #define _VIVID_CORE_H_
 
 #include <linux/fb.h>
+#include <linux/workqueue.h>
+#include <media/cec.h>
 #include <media/videobuf2-v4l2.h>
 #include <media/v4l2-device.h>
 #include <media/v4l2-dev.h>
@@ -78,7 +80,7 @@ extern unsigned vivid_debug;
 
 struct vivid_fmt {
 	u32	fourcc;          /* v4l2 format id */
-	bool	is_yuv;
+	enum	tgp_color_enc color_enc;
 	bool	can_do_overlay;
 	u8	vdownsampling[TPG_MAX_PLANES];
 	u32	alpha_mask;
@@ -131,6 +133,17 @@ enum vivid_colorspace {
 
 #define VIVID_INVALID_SIGNAL(mode) \
 	((mode) == NO_SIGNAL || (mode) == NO_LOCK || (mode) == OUT_OF_RANGE)
+
+struct vivid_cec_work {
+	struct list_head	list;
+	struct delayed_work	work;
+	struct cec_adapter	*adap;
+	struct vivid_dev	*dev;
+	unsigned int		usecs;
+	unsigned int		timeout_ms;
+	u8			tx_status;
+	struct cec_msg		msg;
+};
 
 struct vivid_dev {
 	unsigned			inst;
@@ -333,6 +346,7 @@ struct vivid_dev {
 	struct v4l2_dv_timings		dv_timings_out;
 	u32				colorspace_out;
 	u32				ycbcr_enc_out;
+	u32				hsv_enc_out;
 	u32				quantization_out;
 	u32				xfer_func_out;
 	u32				service_set_out;
@@ -497,6 +511,20 @@ struct vivid_dev {
 	/* Shared between radio receiver and transmitter */
 	bool				radio_rds_loop;
 	struct timespec			radio_rds_init_ts;
+
+	/* CEC */
+	struct cec_adapter		*cec_rx_adap;
+	struct cec_adapter		*cec_tx_adap[MAX_OUTPUTS];
+	struct workqueue_struct		*cec_workqueue;
+	spinlock_t			cec_slock;
+	struct list_head		cec_work_list;
+	unsigned int			cec_xfer_time_jiffies;
+	unsigned long			cec_xfer_start_jiffies;
+	u8				cec_output2bus_map[MAX_OUTPUTS];
+
+	/* CEC OSD String */
+	char				osd[14];
+	unsigned long			osd_jiffies;
 };
 
 static inline bool vivid_is_webcam(const struct vivid_dev *dev)

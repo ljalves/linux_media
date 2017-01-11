@@ -17,7 +17,7 @@ static const struct mac_stats_string g_gmac_stats_string[] = {
 	{"gmac_rx_octets_total_ok", MAC_STATS_FIELD_OFF(rx_good_bytes)},
 	{"gmac_rx_octets_bad", MAC_STATS_FIELD_OFF(rx_bad_bytes)},
 	{"gmac_rx_uc_pkts", MAC_STATS_FIELD_OFF(rx_uc_pkts)},
-	{"gamc_rx_mc_pkts", MAC_STATS_FIELD_OFF(rx_mc_pkts)},
+	{"gmac_rx_mc_pkts", MAC_STATS_FIELD_OFF(rx_mc_pkts)},
 	{"gmac_rx_bc_pkts", MAC_STATS_FIELD_OFF(rx_bc_pkts)},
 	{"gmac_rx_pkts_64octets", MAC_STATS_FIELD_OFF(rx_64bytes)},
 	{"gmac_rx_pkts_65to127", MAC_STATS_FIELD_OFF(rx_65to127)},
@@ -37,8 +37,8 @@ static const struct mac_stats_string g_gmac_stats_string[] = {
 	{"gmac_rx_very_long_err", MAC_STATS_FIELD_OFF(rx_long_err)},
 	{"gmac_rx_runt_err", MAC_STATS_FIELD_OFF(rx_minto64)},
 	{"gmac_rx_short_err", MAC_STATS_FIELD_OFF(rx_under_min)},
-	{"gmac_rx_filt_pkt", MAC_STATS_FIELD_OFF(rx_filter_bytes)},
-	{"gmac_rx_octets_total_filt", MAC_STATS_FIELD_OFF(rx_filter_pkts)},
+	{"gmac_rx_filt_pkt", MAC_STATS_FIELD_OFF(rx_filter_pkts)},
+	{"gmac_rx_octets_total_filt", MAC_STATS_FIELD_OFF(rx_filter_bytes)},
 	{"gmac_rx_overrun_cnt", MAC_STATS_FIELD_OFF(rx_fifo_overrun_err)},
 	{"gmac_rx_length_err", MAC_STATS_FIELD_OFF(rx_len_err)},
 	{"gmac_rx_fail_comma", MAC_STATS_FIELD_OFF(rx_comma_err)},
@@ -110,7 +110,7 @@ static void hns_gmac_free(void *mac_drv)
 
 	u32 mac_id = drv->mac_id;
 
-	hns_dsaf_ge_srst_by_port(dsaf_dev, mac_id, 0);
+	dsaf_dev->misc_op->ge_srst(dsaf_dev, mac_id, 0);
 }
 
 static void hns_gmac_set_tx_auto_pause_frames(void *mac_drv, u16 newval)
@@ -317,9 +317,9 @@ static void hns_gmac_init(void *mac_drv)
 
 	port = drv->mac_id;
 
-	hns_dsaf_ge_srst_by_port(dsaf_dev, port, 0);
+	dsaf_dev->misc_op->ge_srst(dsaf_dev, port, 0);
 	mdelay(10);
-	hns_dsaf_ge_srst_by_port(dsaf_dev, port, 1);
+	dsaf_dev->misc_op->ge_srst(dsaf_dev, port, 1);
 	mdelay(10);
 	hns_gmac_disable(mac_drv, MAC_COMM_MODE_RX_AND_TX);
 	hns_gmac_tx_loop_pkt_dis(mac_drv);

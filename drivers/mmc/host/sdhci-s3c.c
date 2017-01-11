@@ -121,7 +121,9 @@ static unsigned int sdhci_s3c_consider_clock(struct sdhci_s3c *ourhost,
 	 * speed possible with selected clock source and skip the division.
 	 */
 	if (ourhost->no_divider) {
+		spin_unlock_irq(&ourhost->host->lock);
 		rate = clk_round_rate(clksrc, wanted);
+		spin_lock_irq(&ourhost->host->lock);
 		return wanted - rate;
 	}
 
@@ -714,18 +716,11 @@ static int sdhci_s3c_runtime_resume(struct device *dev)
 }
 #endif
 
-#ifdef CONFIG_PM
 static const struct dev_pm_ops sdhci_s3c_pmops = {
 	SET_SYSTEM_SLEEP_PM_OPS(sdhci_s3c_suspend, sdhci_s3c_resume)
 	SET_RUNTIME_PM_OPS(sdhci_s3c_runtime_suspend, sdhci_s3c_runtime_resume,
 			   NULL)
 };
-
-#define SDHCI_S3C_PMOPS (&sdhci_s3c_pmops)
-
-#else
-#define SDHCI_S3C_PMOPS NULL
-#endif
 
 #if defined(CONFIG_CPU_EXYNOS4210) || defined(CONFIG_SOC_EXYNOS4212)
 static struct sdhci_s3c_drv_data exynos4_sdhci_drv_data = {
@@ -765,7 +760,7 @@ static struct platform_driver sdhci_s3c_driver = {
 	.driver		= {
 		.name	= "s3c-sdhci",
 		.of_match_table = of_match_ptr(sdhci_s3c_dt_match),
-		.pm	= SDHCI_S3C_PMOPS,
+		.pm	= &sdhci_s3c_pmops,
 	},
 };
 

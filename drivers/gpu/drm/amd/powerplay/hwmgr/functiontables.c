@@ -35,7 +35,7 @@ static int phm_run_table(struct pp_hwmgr *hwmgr,
 	phm_table_function *function;
 
 	if (rt_table->function_list == NULL) {
-		printk(KERN_INFO "[ powerplay ] this function not implement!\n");
+		pr_debug("[ powerplay ] this function not implement!\n");
 		return 0;
 	}
 
@@ -59,8 +59,8 @@ int phm_dispatch_table(struct pp_hwmgr *hwmgr,
 		       struct phm_runtime_table_header *rt_table,
 		       void *input, void *output)
 {
-	int result = 0;
-	void *temp_storage = NULL;
+	int result;
+	void *temp_storage;
 
 	if (hwmgr == NULL || rt_table == NULL) {
 		printk(KERN_ERR "[ powerplay ] Invalid Parameter!\n");
@@ -73,12 +73,13 @@ int phm_dispatch_table(struct pp_hwmgr *hwmgr,
 			printk(KERN_ERR "[ powerplay ] Could not allocate table temporary storage\n");
 			return -ENOMEM;
 		}
+	} else {
+		temp_storage = NULL;
 	}
 
 	result = phm_run_table(hwmgr, rt_table, input, output, temp_storage);
 
-	if (NULL != temp_storage)
-		kfree(temp_storage);
+	kfree(temp_storage);
 
 	return result;
 }

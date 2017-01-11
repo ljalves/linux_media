@@ -27,6 +27,20 @@ static inline struct nf_conn_synproxy *nfct_synproxy_ext_add(struct nf_conn *ct)
 #endif
 }
 
+static inline bool nf_ct_add_synproxy(struct nf_conn *ct,
+				      const struct nf_conn *tmpl)
+{
+	if (tmpl && nfct_synproxy(tmpl)) {
+		if (!nfct_seqadj_ext_add(ct))
+			return false;
+
+		if (!nfct_synproxy_ext_add(ct))
+			return false;
+	}
+
+	return true;
+}
+
 struct synproxy_stats {
 	unsigned int			syn_received;
 	unsigned int			cookie_invalid;
@@ -40,7 +54,7 @@ struct synproxy_net {
 	struct synproxy_stats __percpu	*stats;
 };
 
-extern int synproxy_net_id;
+extern unsigned int synproxy_net_id;
 static inline struct synproxy_net *synproxy_pernet(struct net *net)
 {
 	return net_generic(net, synproxy_net_id);

@@ -247,7 +247,6 @@ struct pxa168_eth_private {
 	 */
 	struct timer_list timeout;
 	struct mii_bus *smi_bus;
-	struct phy_device *phy;
 
 	/* clock */
 	struct clk *clk;
@@ -275,8 +274,8 @@ enum hash_table_entry {
 	HASH_ENTRY_RECEIVE_DISCARD_BIT = 2
 };
 
-static int pxa168_get_settings(struct net_device *dev, struct ethtool_cmd *cmd);
-static int pxa168_set_settings(struct net_device *dev, struct ethtool_cmd *cmd);
+static int pxa168_get_link_ksettings(struct net_device *dev,
+				     struct ethtool_link_ksettings *cmd);
 static int pxa168_init_hw(struct pxa168_eth_private *pep);
 static int pxa168_init_phy(struct net_device *dev);
 static void eth_port_reset(struct net_device *dev);
@@ -644,7 +643,7 @@ static void eth_port_start(struct net_device *dev)
 	struct pxa168_eth_private *pep = netdev_priv(dev);
 	int tx_curr_desc, rx_curr_desc;
 
-	phy_start(pep->phy);
+	phy_start(dev->phydev);
 
 	/* Assignment of Tx CTRP of given queue */
 	tx_curr_desc = pep->tx_curr_desc_q;
@@ -700,7 +699,7 @@ static void eth_port_reset(struct net_device *dev)
 	val &= ~PCR_EN;
 	wrl(pep, PORT_CONFIG, val);
 
-	phy_stop(pep->phy);
+	phy_stop(dev->phydev);
 }
 
 /*
@@ -943,7 +942,7 @@ static int set_port_config_ext(struct pxa168_eth_private *pep)
 static void pxa168_eth_adjust_link(struct net_device *dev)
 {
 	struct pxa168_eth_private *pep = netdev_priv(dev);
-	struct phy_device *phy = pep->phy;
+	struct phy_device *phy = dev->phydev;
 	u32 cfg, cfg_o = rdl(pep, PORT_CONFIG);
 	u32 cfgext, cfgext_o = rdl(pep, PORT_CONFIG_EXT);
 
@@ -972,35 +971,37 @@ static void pxa168_eth_adjust_link(struct net_device *dev)
 static int pxa168_init_phy(struct net_device *dev)
 {
 	struct pxa168_eth_private *pep = netdev_priv(dev);
-	struct ethtool_cmd cmd;
+	struct ethtool_link_ksettings cmd;
+	struct phy_device *phy = NULL;
 	int err;
 
-	if (pep->phy)
+	if (dev->phydev)
 		return 0;
 
-	pep->phy = mdiobus_scan(pep->smi_bus, pep->phy_addr);
-	if (IS_ERR(pep->phy))
-		return PTR_ERR(pep->phy);
+	phy = mdiobus_scan(pep->smi_bus, pep->phy_addr);
+	if (IS_ERR(phy))
+		return PTR_ERR(phy);
 
-	err = phy_connect_direct(dev, pep->phy, pxa168_eth_adjust_link,
+	err = phy_connect_direct(dev, phy, pxa168_eth_adjust_link,
 				 pep->phy_intf);
 	if (err)
 		return err;
 
-	err = pxa168_get_settings(dev, &cmd);
+	err = pxa168_get_link_ksettings(dev, &cmd);
 	if (err)
 		return err;
 
-	cmd.phy_address = pep->phy_addr;
-	cmd.speed = pep->phy_speed;
-	cmd.duplex = pep->phy_duplex;
-	cmd.advertising = PHY_BASIC_FEATURES;
-	cmd.autoneg = AUTONEG_ENABLE;
+	cmd.base.phy_address = pep->phy_addr;
+	cmd.base.speed = pep->phy_speed;
+	cmd.base.duplex = pep->phy_duplex;
+	ethtool_convert_legacy_u32_to_link_mode(cmd.link_modes.advertising,
+						PHY_BASIC_FEATURES);
+	cmd.base.autoneg = AUTONEG_ENABLE;
 
-	if (cmd.speed != 0)
-		cmd.autoneg = AUTONEG_DISABLE;
+	if (cmd.base.speed != 0)
+		cmd.base.autoneg = AUTONEG_DISABLE;
 
-	return pxa168_set_settings(dev, &cmd);
+	return phy_ethtool_set_link_ksettings(dev, &cmd);
 }
 
 static int pxa168_init_hw(struct pxa168_eth_private *pep)
@@ -1208,9 +1209,6 @@ static int pxa168_eth_change_mtu(struct net_device *dev, int mtu)
 	int retval;
 	struct pxa168_eth_private *pep = netdev_priv(dev);
 
-	if ((mtu > 9500) || (mtu < 68))
-		return -EINVAL;
-
 	dev->mtu = mtu;
 	retval = set_port_config_ext(pep);
 
@@ -1366,30 +1364,22 @@ static int pxa168_smi_write(struct mii_bus *bus, int phy_addr, int regnum,
 static int pxa168_eth_do_ioctl(struct net_device *dev, struct ifreq *ifr,
 			       int cmd)
 {
-	struct pxa168_eth_private *pep = netdev_priv(dev);
-	if (pep->phy != NULL)
-		return phy_mii_ioctl(pep->phy, ifr, cmd);
+	if (dev->phydev != NULL)
+		return phy_mii_ioctl(dev->phydev, ifr, cmd);
 
 	return -EOPNOTSUPP;
 }
 
-static int pxa168_get_settings(struct net_device *dev, struct ethtool_cmd *cmd)
+static int pxa168_get_link_ksettings(struct net_device *dev,
+				     struct ethtool_link_ksettings *cmd)
 {
-	struct pxa168_eth_private *pep = netdev_priv(dev);
 	int err;
 
-	err = phy_read_status(pep->phy);
+	err = phy_read_status(dev->phydev);
 	if (err == 0)
-		err = phy_ethtool_gset(pep->phy, cmd);
+		err = phy_ethtool_ksettings_get(dev->phydev, cmd);
 
 	return err;
-}
-
-static int pxa168_set_settings(struct net_device *dev, struct ethtool_cmd *cmd)
-{
-	struct pxa168_eth_private *pep = netdev_priv(dev);
-
-	return phy_ethtool_sset(pep->phy, cmd);
 }
 
 static void pxa168_get_drvinfo(struct net_device *dev,
@@ -1402,11 +1392,12 @@ static void pxa168_get_drvinfo(struct net_device *dev,
 }
 
 static const struct ethtool_ops pxa168_ethtool_ops = {
-	.get_settings	= pxa168_get_settings,
-	.set_settings	= pxa168_set_settings,
 	.get_drvinfo	= pxa168_get_drvinfo,
+	.nway_reset	= phy_ethtool_nway_reset,
 	.get_link	= ethtool_op_get_link,
 	.get_ts_info	= ethtool_op_get_ts_info,
+	.get_link_ksettings = pxa168_get_link_ksettings,
+	.set_link_ksettings = phy_ethtool_set_link_ksettings,
 };
 
 static const struct net_device_ops pxa168_eth_netdev_ops = {
@@ -1466,6 +1457,10 @@ static int pxa168_eth_probe(struct platform_device *pdev)
 	dev->base_addr = 0;
 	dev->ethtool_ops = &pxa168_ethtool_ops;
 
+	/* MTU range: 68 - 9500 */
+	dev->min_mtu = ETH_MIN_MTU;
+	dev->max_mtu = 9500;
+
 	INIT_WORK(&pep->tx_timeout_task, pxa168_eth_tx_timeout_task);
 
 	if (pdev->dev.of_node)
@@ -1513,6 +1508,7 @@ static int pxa168_eth_probe(struct platform_device *pdev)
 		}
 		of_property_read_u32(np, "reg", &pep->phy_addr);
 		pep->phy_intf = of_get_phy_mode(pdev->dev.of_node);
+		of_node_put(np);
 	}
 
 	/* Hardware supports only 3 ports */
@@ -1569,8 +1565,8 @@ static int pxa168_eth_remove(struct platform_device *pdev)
 				  pep->htpr, pep->htpr_dma);
 		pep->htpr = NULL;
 	}
-	if (pep->phy)
-		phy_disconnect(pep->phy);
+	if (dev->phydev)
+		phy_disconnect(dev->phydev);
 	if (pep->clk) {
 		clk_disable_unprepare(pep->clk);
 	}

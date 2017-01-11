@@ -15,11 +15,7 @@
  *
  * You should have received a copy of the GNU General Public License
  * version 2 along with this program; If not, see
- * http://www.sun.com/software/products/lustre/docs/GPLv2.pdf
- *
- * Please contact Sun Microsystems, Inc., 4150 Network Circle, Santa Clara,
- * CA 95054 USA or visit www.sun.com if you need additional information or
- * have any questions.
+ * http://www.gnu.org/licenses/gpl-2.0.html
  *
  * GPL HEADER END
  */
@@ -82,8 +78,8 @@ struct lstcon_rpc_trans {
 	struct list_head  tas_olink;	     /* link chain on owner list */
 	struct list_head  tas_link;	     /* link chain on global list */
 	int		  tas_opc;	     /* operation code of transaction */
-	unsigned	  tas_feats_updated; /* features mask is uptodate */
-	unsigned	  tas_features;      /* test features mask */
+	unsigned int	  tas_feats_updated; /* features mask is uptodate */
+	unsigned int	  tas_features;      /* test features mask */
 	wait_queue_head_t tas_waitq;	     /* wait queue head */
 	atomic_t	  tas_remaining;     /* # of un-scheduled rpcs */
 	struct list_head  tas_rpcs_list;     /* queued requests */
@@ -110,14 +106,16 @@ typedef int (*lstcon_rpc_readent_func_t)(int, struct srpc_msg *,
 					 lstcon_rpc_ent_t __user *);
 
 int  lstcon_sesrpc_prep(struct lstcon_node *nd, int transop,
-			unsigned version, struct lstcon_rpc **crpc);
+			unsigned int version, struct lstcon_rpc **crpc);
 int  lstcon_dbgrpc_prep(struct lstcon_node *nd,
-			unsigned version, struct lstcon_rpc **crpc);
-int  lstcon_batrpc_prep(struct lstcon_node *nd, int transop, unsigned version,
-			struct lstcon_tsb_hdr *tsb, struct lstcon_rpc **crpc);
-int  lstcon_testrpc_prep(struct lstcon_node *nd, int transop, unsigned version,
-			 struct lstcon_test *test, struct lstcon_rpc **crpc);
-int  lstcon_statrpc_prep(struct lstcon_node *nd, unsigned version,
+			unsigned int version, struct lstcon_rpc **crpc);
+int  lstcon_batrpc_prep(struct lstcon_node *nd, int transop,
+			unsigned int version, struct lstcon_tsb_hdr *tsb,
+			struct lstcon_rpc **crpc);
+int  lstcon_testrpc_prep(struct lstcon_node *nd, int transop,
+			 unsigned int version, struct lstcon_test *test,
+			 struct lstcon_rpc **crpc);
+int  lstcon_statrpc_prep(struct lstcon_node *nd, unsigned int version,
 			 struct lstcon_rpc **crpc);
 void lstcon_rpc_put(struct lstcon_rpc *crpc);
 int  lstcon_rpc_trans_prep(struct list_head *translist,
@@ -133,7 +131,8 @@ int  lstcon_rpc_trans_interpreter(struct lstcon_rpc_trans *trans,
 				  lstcon_rpc_readent_func_t readent);
 void lstcon_rpc_trans_abort(struct lstcon_rpc_trans *trans, int error);
 void lstcon_rpc_trans_destroy(struct lstcon_rpc_trans *trans);
-void lstcon_rpc_trans_addreq(struct lstcon_rpc_trans *trans, struct lstcon_rpc *req);
+void lstcon_rpc_trans_addreq(struct lstcon_rpc_trans *trans,
+			     struct lstcon_rpc *req);
 int  lstcon_rpc_trans_postwait(struct lstcon_rpc_trans *trans, int timeout);
 int  lstcon_rpc_pinger_start(void);
 void lstcon_rpc_pinger_stop(void);

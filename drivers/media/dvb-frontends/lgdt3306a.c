@@ -731,7 +731,7 @@ static int lgdt3306a_set_if(struct lgdt3306a_state *state,
 
 	switch (if_freq_khz) {
 	default:
-		pr_warn("IF=%d KHz is not supportted, 3250 assumed\n",
+		pr_warn("IF=%d KHz is not supported, 3250 assumed\n",
 			if_freq_khz);
 		/* fallthrough */
 	case 3250: /* 3.25Mhz */
@@ -1737,24 +1737,16 @@ static int lgdt3306a_get_tune_settings(struct dvb_frontend *fe,
 static int lgdt3306a_search(struct dvb_frontend *fe)
 {
 	enum fe_status status = 0;
-	int i, ret;
+	int ret;
 
 	/* set frontend */
 	ret = lgdt3306a_set_parameters(fe);
 	if (ret)
 		goto error;
 
-	/* wait frontend lock */
-	for (i = 20; i > 0; i--) {
-		dbg_info(": loop=%d\n", i);
-		msleep(50);
-		ret = lgdt3306a_read_status(fe, &status);
-		if (ret)
-			goto error;
-
-		if (status & FE_HAS_LOCK)
-			break;
-	}
+	ret = lgdt3306a_read_status(fe, &status);
+	if (ret)
+		goto error;
 
 	/* check if we have a valid signal */
 	if (status & FE_HAS_LOCK)
@@ -1775,7 +1767,7 @@ static void lgdt3306a_release(struct dvb_frontend *fe)
 	kfree(state);
 }
 
-static struct dvb_frontend_ops lgdt3306a_ops;
+static const struct dvb_frontend_ops lgdt3306a_ops;
 
 struct dvb_frontend *lgdt3306a_attach(const struct lgdt3306a_config *config,
 				      struct i2c_adapter *i2c_adap)
@@ -2111,7 +2103,7 @@ static void lgdt3306a_DumpRegs(struct lgdt3306a_state *state)
 
 
 
-static struct dvb_frontend_ops lgdt3306a_ops = {
+static const struct dvb_frontend_ops lgdt3306a_ops = {
 	.delsys = { SYS_ATSC, SYS_DVBC_ANNEX_B },
 	.info = {
 		.name = "LG Electronics LGDT3306A VSB/QAM Frontend",

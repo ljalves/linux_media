@@ -122,7 +122,7 @@ int udl_handle_damage(struct udl_framebuffer *fb, int x, int y,
 		return 0;
 	cmd = urb->transfer_buffer;
 
-	for (i = y; i < height ; i++) {
+	for (i = y; i < y + height ; i++) {
 		const int line_offset = fb->base.pitches[0] * i;
 		const int byte_offset = line_offset + (x * bpp);
 		const int dev_byte_offset = (fb->base.width * bpp * i) + (x * bpp);
@@ -203,6 +203,7 @@ static int udl_fb_open(struct fb_info *info, int user)
 
 	ufbdev->fb_count++;
 
+#ifdef CONFIG_DRM_FBDEV_EMULATION
 	if (fb_defio && (info->fbdefio == NULL)) {
 		/* enable defio at last moment if not disabled by client */
 
@@ -218,6 +219,7 @@ static int udl_fb_open(struct fb_info *info, int user)
 		info->fbdefio = fbdefio;
 		fb_deferred_io_init(info);
 	}
+#endif
 
 	pr_notice("open /dev/fb%d user=%d fb_info=%p count=%d\n",
 		  info->node, user, info, ufbdev->fb_count);
@@ -235,12 +237,14 @@ static int udl_fb_release(struct fb_info *info, int user)
 
 	ufbdev->fb_count--;
 
+#ifdef CONFIG_DRM_FBDEV_EMULATION
 	if ((ufbdev->fb_count == 0) && (info->fbdefio)) {
 		fb_deferred_io_cleanup(info);
 		kfree(info->fbdefio);
 		info->fbdefio = NULL;
 		info->fbops->fb_mmap = udl_fb_mmap;
 	}
+#endif
 
 	pr_warn("released /dev/fb%d user=%d count=%d\n",
 		info->node, user, ufbdev->fb_count);
@@ -250,16 +254,10 @@ static int udl_fb_release(struct fb_info *info, int user)
 
 static struct fb_ops udlfb_ops = {
 	.owner = THIS_MODULE,
-	.fb_check_var = drm_fb_helper_check_var,
-	.fb_set_par = drm_fb_helper_set_par,
+	DRM_FB_HELPER_DEFAULT_OPS,
 	.fb_fillrect = drm_fb_helper_sys_fillrect,
 	.fb_copyarea = drm_fb_helper_sys_copyarea,
 	.fb_imageblit = drm_fb_helper_sys_imageblit,
-	.fb_pan_display = drm_fb_helper_pan_display,
-	.fb_blank = drm_fb_helper_blank,
-	.fb_setcmap = drm_fb_helper_setcmap,
-	.fb_debug_enter = drm_fb_helper_debug_enter,
-	.fb_debug_leave = drm_fb_helper_debug_leave,
 	.fb_mmap = udl_fb_mmap,
 	.fb_open = udl_fb_open,
 	.fb_release = udl_fb_release,

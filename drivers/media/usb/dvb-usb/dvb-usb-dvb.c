@@ -277,8 +277,7 @@ int dvb_usb_adapter_frontend_init(struct dvb_usb_adapter *adap)
 	for (i = 0; i < adap->props.num_frontends; i++) {
 
 		if (adap->props.fe[i].frontend_attach == NULL) {
-			err("strange: '%s' #%d,%d "
-			    "doesn't want to attach a frontend.",
+			err("strange: '%s' #%d,%d doesn't want to attach a frontend.",
 			    adap->dev->desc->name, adap->id, i);
 
 			return 0;
@@ -320,8 +319,6 @@ int dvb_usb_adapter_frontend_init(struct dvb_usb_adapter *adap)
 
 		adap->num_frontends_initialized++;
 	}
-	if (ret)
-		return ret;
 
 	ret = dvb_create_media_graph(&adap->dvb_adap, true);
 	if (ret)

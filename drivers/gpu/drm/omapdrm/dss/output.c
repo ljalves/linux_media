@@ -21,8 +21,7 @@
 #include <linux/slab.h>
 #include <linux/of.h>
 
-#include <video/omapdss.h>
-
+#include "omapdss.h"
 #include "dss.h"
 
 static LIST_HEAD(output_list);
@@ -202,10 +201,9 @@ void dss_mgr_disconnect(enum omap_channel channel,
 }
 EXPORT_SYMBOL(dss_mgr_disconnect);
 
-void dss_mgr_set_timings(enum omap_channel channel,
-		const struct omap_video_timings *timings)
+void dss_mgr_set_timings(enum omap_channel channel, const struct videomode *vm)
 {
-	dss_mgr_ops->set_timings(channel, timings);
+	dss_mgr_ops->set_timings(channel, vm);
 }
 EXPORT_SYMBOL(dss_mgr_set_timings);
 

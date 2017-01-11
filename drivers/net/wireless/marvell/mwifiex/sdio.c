@@ -49,8 +49,6 @@ static u8 user_rmmod;
 static struct mwifiex_if_ops sdio_ops;
 static unsigned long iface_work_flags;
 
-static struct semaphore add_remove_card_sem;
-
 static struct memory_type_mapping generic_mem_type_map[] = {
 	{"DUMP", NULL, 0, 0xDD},
 };
@@ -79,56 +77,16 @@ static const struct of_device_id mwifiex_sdio_of_match_table[] = {
 	{ }
 };
 
-static irqreturn_t mwifiex_wake_irq_wifi(int irq, void *priv)
-{
-	struct mwifiex_plt_wake_cfg *cfg = priv;
-
-	if (cfg->irq_wifi >= 0) {
-		pr_info("%s: wake by wifi", __func__);
-		cfg->wake_by_wifi = true;
-		disable_irq_nosync(irq);
-	}
-
-	return IRQ_HANDLED;
-}
-
 /* This function parse device tree node using mmc subnode devicetree API.
  * The device node is saved in card->plt_of_node.
  * if the device tree node exist and include interrupts attributes, this
  * function will also request platform specific wakeup interrupt.
  */
-static int mwifiex_sdio_probe_of(struct device *dev, struct sdio_mmc_card *card)
+static int mwifiex_sdio_probe_of(struct device *dev)
 {
-	struct mwifiex_plt_wake_cfg *cfg;
-	int ret;
-
-	if (!dev->of_node ||
-	    !of_match_node(mwifiex_sdio_of_match_table, dev->of_node)) {
-		dev_err(dev, "sdio platform data not available\n");
-		return -1;
-	}
-
-	card->plt_of_node = dev->of_node;
-	card->plt_wake_cfg = devm_kzalloc(dev, sizeof(*card->plt_wake_cfg),
-					  GFP_KERNEL);
-	cfg = card->plt_wake_cfg;
-	if (cfg && card->plt_of_node) {
-		cfg->irq_wifi = irq_of_parse_and_map(card->plt_of_node, 0);
-		if (!cfg->irq_wifi) {
-			dev_err(dev,
-				"fail to parse irq_wifi from device tree\n");
-		} else {
-			ret = devm_request_irq(dev, cfg->irq_wifi,
-					       mwifiex_wake_irq_wifi,
-					       IRQF_TRIGGER_LOW,
-					       "wifi_wake", cfg);
-			if (ret) {
-				dev_err(dev,
-					"Failed to request irq_wifi %d (%d)\n",
-					cfg->irq_wifi, ret);
-			}
-			disable_irq(cfg->irq_wifi);
-		}
+	if (!of_match_node(mwifiex_sdio_of_match_table, dev->of_node)) {
+		dev_err(dev, "required compatible string missing\n");
+		return -EINVAL;
 	}
 
 	return 0;
@@ -151,9 +109,11 @@ mwifiex_sdio_probe(struct sdio_func *func, const struct sdio_device_id *id)
 	pr_debug("info: vendor=0x%4.04X device=0x%4.04X class=%d function=%d\n",
 		 func->vendor, func->device, func->class, func->num);
 
-	card = kzalloc(sizeof(struct sdio_mmc_card), GFP_KERNEL);
+	card = devm_kzalloc(&func->dev, sizeof(*card), GFP_KERNEL);
 	if (!card)
 		return -ENOMEM;
+
+	init_completion(&card->fw_done);
 
 	card->func = func;
 	card->device_id = id;
@@ -183,23 +143,30 @@ mwifiex_sdio_probe(struct sdio_func *func, const struct sdio_device_id *id)
 	sdio_release_host(func);
 
 	if (ret) {
-		pr_err("%s: failed to enable function\n", __func__);
-		kfree(card);
-		return -EIO;
+		dev_err(&func->dev, "failed to enable function\n");
+		return ret;
 	}
 
 	/* device tree node parsing and platform specific configuration*/
-	mwifiex_sdio_probe_of(&func->dev, card);
-
-	if (mwifiex_add_card(card, &add_remove_card_sem, &sdio_ops,
-			     MWIFIEX_SDIO)) {
-		pr_err("%s: add card failed\n", __func__);
-		kfree(card);
-		sdio_claim_host(func);
-		ret = sdio_disable_func(func);
-		sdio_release_host(func);
-		ret = -1;
+	if (func->dev.of_node) {
+		ret = mwifiex_sdio_probe_of(&func->dev);
+		if (ret)
+			goto err_disable;
 	}
+
+	ret = mwifiex_add_card(card, &card->fw_done, &sdio_ops,
+			       MWIFIEX_SDIO, &func->dev);
+	if (ret) {
+		dev_err(&func->dev, "add card failed\n");
+		goto err_disable;
+	}
+
+	return 0;
+
+err_disable:
+	sdio_claim_host(func);
+	sdio_disable_func(func);
+	sdio_release_host(func);
 
 	return ret;
 }
@@ -219,17 +186,10 @@ static int mwifiex_sdio_resume(struct device *dev)
 	struct sdio_func *func = dev_to_sdio_func(dev);
 	struct sdio_mmc_card *card;
 	struct mwifiex_adapter *adapter;
-	mmc_pm_flag_t pm_flag = 0;
 
-	if (func) {
-		pm_flag = sdio_get_host_pm_caps(func);
-		card = sdio_get_drvdata(func);
-		if (!card || !card->adapter) {
-			pr_err("resume: invalid card or adapter\n");
-			return 0;
-		}
-	} else {
-		pr_err("resume: sdio_func is not specified\n");
+	card = sdio_get_drvdata(func);
+	if (!card || !card->adapter) {
+		dev_err(dev, "resume: invalid card or adapter\n");
 		return 0;
 	}
 
@@ -247,12 +207,7 @@ static int mwifiex_sdio_resume(struct device *dev)
 	mwifiex_cancel_hs(mwifiex_get_priv(adapter, MWIFIEX_BSS_ROLE_STA),
 			  MWIFIEX_SYNC_CMD);
 
-	/* Disable platform specific wakeup interrupt */
-	if (card->plt_wake_cfg && card->plt_wake_cfg->irq_wifi >= 0) {
-		disable_irq_wake(card->plt_wake_cfg->irq_wifi);
-		if (!card->plt_wake_cfg->wake_by_wifi)
-			disable_irq(card->plt_wake_cfg->irq_wifi);
-	}
+	mwifiex_disable_wake(adapter);
 
 	return 0;
 }
@@ -273,16 +228,15 @@ mwifiex_sdio_remove(struct sdio_func *func)
 	if (!card)
 		return;
 
+	wait_for_completion(&card->fw_done);
+
 	adapter = card->adapter;
 	if (!adapter || !adapter->priv_num)
 		return;
 
 	mwifiex_dbg(adapter, INFO, "info: SDIO func num=%d\n", func->num);
 
-	if (user_rmmod) {
-		if (adapter->is_suspended)
-			mwifiex_sdio_resume(adapter->dev);
-
+	if (user_rmmod && !adapter->mfg_mode) {
 		mwifiex_deauthenticate_all(adapter);
 
 		priv = mwifiex_get_priv(adapter, MWIFIEX_BSS_ROLE_ANY);
@@ -290,7 +244,7 @@ mwifiex_sdio_remove(struct sdio_func *func)
 		mwifiex_init_shutdown_fw(priv, MWIFIEX_FUNC_SHUTDOWN);
 	}
 
-	mwifiex_remove_card(card->adapter, &add_remove_card_sem);
+	mwifiex_remove_card(adapter);
 }
 
 /*
@@ -311,40 +265,38 @@ static int mwifiex_sdio_suspend(struct device *dev)
 	mmc_pm_flag_t pm_flag = 0;
 	int ret = 0;
 
-	if (func) {
-		pm_flag = sdio_get_host_pm_caps(func);
-		pr_debug("cmd: %s: suspend: PM flag = 0x%x\n",
-			 sdio_func_id(func), pm_flag);
-		if (!(pm_flag & MMC_PM_KEEP_POWER)) {
-			pr_err("%s: cannot remain alive while host is"
-				" suspended\n", sdio_func_id(func));
-			return -ENOSYS;
-		}
+	pm_flag = sdio_get_host_pm_caps(func);
+	pr_debug("cmd: %s: suspend: PM flag = 0x%x\n",
+		 sdio_func_id(func), pm_flag);
+	if (!(pm_flag & MMC_PM_KEEP_POWER)) {
+		dev_err(dev, "%s: cannot remain alive while host is"
+			" suspended\n", sdio_func_id(func));
+		return -ENOSYS;
+	}
 
-		card = sdio_get_drvdata(func);
-		if (!card || !card->adapter) {
-			pr_err("suspend: invalid card or adapter\n");
-			return 0;
-		}
-	} else {
-		pr_err("suspend: sdio_func is not specified\n");
+	card = sdio_get_drvdata(func);
+	if (!card) {
+		dev_err(dev, "suspend: invalid card\n");
 		return 0;
 	}
 
-	adapter = card->adapter;
+	/* Might still be loading firmware */
+	wait_for_completion(&card->fw_done);
 
-	/* Enable platform specific wakeup interrupt */
-	if (card->plt_wake_cfg && card->plt_wake_cfg->irq_wifi >= 0) {
-		card->plt_wake_cfg->wake_by_wifi = false;
-		enable_irq(card->plt_wake_cfg->irq_wifi);
-		enable_irq_wake(card->plt_wake_cfg->irq_wifi);
+	adapter = card->adapter;
+	if (!adapter) {
+		dev_err(dev, "adapter is not valid\n");
+		return 0;
 	}
+
+	mwifiex_enable_wake(adapter);
 
 	/* Enable the Host Sleep */
 	if (!mwifiex_enable_hs(adapter)) {
 		mwifiex_dbg(adapter, ERROR,
 			    "cmd: failed to suspend\n");
 		adapter->hs_enabling = false;
+		mwifiex_disable_wake(adapter);
 		return -EFAULT;
 	}
 
@@ -542,6 +494,19 @@ static int mwifiex_pm_wakeup_card_complete(struct mwifiex_adapter *adapter)
 		    "cmd: wakeup device completed\n");
 
 	return mwifiex_write_reg(adapter, CONFIGURATION_REG, 0);
+}
+
+static int mwifiex_sdio_dnld_fw(struct mwifiex_adapter *adapter,
+			struct mwifiex_fw_image *fw)
+{
+	struct sdio_mmc_card *card = adapter->card;
+	int ret;
+
+	sdio_claim_host(card->func);
+	ret = mwifiex_dnld_fw(adapter, fw);
+	sdio_release_host(card->func);
+
+	return ret;
 }
 
 /*
@@ -1170,7 +1135,6 @@ static void mwifiex_deaggr_sdio_pkt(struct mwifiex_adapter *adapter,
 {
 	u32 total_pkt_len, pkt_len;
 	struct sk_buff *skb_deaggr;
-	u32 pkt_type;
 	u16 blk_size;
 	u8 blk_num;
 	u8 *data;
@@ -1191,8 +1155,6 @@ static void mwifiex_deaggr_sdio_pkt(struct mwifiex_adapter *adapter,
 			break;
 		}
 		pkt_len = le16_to_cpu(*(__le16 *)(data + SDIO_HEADER_OFFSET));
-		pkt_type = le16_to_cpu(*(__le16 *)(data + SDIO_HEADER_OFFSET +
-					 2));
 		if ((pkt_len + SDIO_HEADER_OFFSET) > blk_size) {
 			mwifiex_dbg(adapter, ERROR,
 				    "%s: error in pkt_len,\t"
@@ -1492,7 +1454,7 @@ rx_curr_single:
 		mwifiex_dbg(adapter, INFO, "info: RX: port: %d, rx_len: %d\n",
 			    port, rx_len);
 
-		skb = mwifiex_alloc_dma_align_buf(rx_len, GFP_KERNEL | GFP_DMA);
+		skb = mwifiex_alloc_dma_align_buf(rx_len, GFP_KERNEL);
 		if (!skb) {
 			mwifiex_dbg(adapter, ERROR,
 				    "single skb allocated fail,\t"
@@ -1597,7 +1559,7 @@ static int mwifiex_process_int_status(struct mwifiex_adapter *adapter)
 		rx_len = (u16) (rx_blocks * MWIFIEX_SDIO_BLOCK_SIZE);
 		mwifiex_dbg(adapter, INFO, "info: rx_len = %d\n", rx_len);
 
-		skb = mwifiex_alloc_dma_align_buf(rx_len, GFP_KERNEL | GFP_DMA);
+		skb = mwifiex_alloc_dma_align_buf(rx_len, GFP_KERNEL);
 		if (!skb)
 			return -1;
 
@@ -2041,6 +2003,7 @@ mwifiex_unregister_dev(struct mwifiex_adapter *adapter)
 	struct sdio_mmc_card *card = adapter->card;
 
 	if (adapter->card) {
+		card->adapter = NULL;
 		sdio_claim_host(card->func);
 		sdio_disable_func(card->func);
 		sdio_release_host(card->func);
@@ -2072,9 +2035,6 @@ static int mwifiex_register_dev(struct mwifiex_adapter *adapter)
 			    "cannot set SDIO block size\n");
 		return ret;
 	}
-
-
-	adapter->dev = &func->dev;
 
 	strcpy(adapter->fw_name, card->firmware);
 	if (card->fw_dump_enh) {
@@ -2215,8 +2175,6 @@ static void mwifiex_cleanup_sdio(struct mwifiex_adapter *adapter)
 	kfree(card->mpa_rx.len_arr);
 	kfree(card->mpa_tx.buf);
 	kfree(card->mpa_rx.buf);
-	sdio_set_drvdata(card->func, NULL);
-	kfree(card);
 }
 
 /*
@@ -2265,6 +2223,14 @@ static void mwifiex_recreate_adapter(struct sdio_mmc_card *card)
 	 */
 
 	mwifiex_sdio_remove(func);
+
+	/*
+	 * Normally, we would let the driver core take care of releasing these.
+	 * But we're not letting the driver core handle this one. See above
+	 * TODO.
+	 */
+	sdio_set_drvdata(func, NULL);
+	devm_kfree(&func->dev, card);
 
 	/* power cycle the adapter */
 	sdio_claim_host(func);
@@ -2732,6 +2698,7 @@ static struct mwifiex_if_ops sdio_ops = {
 	.cleanup_mpa_buf = mwifiex_cleanup_mpa_buf,
 	.cmdrsp_complete = mwifiex_sdio_cmdrsp_complete,
 	.event_complete = mwifiex_sdio_event_complete,
+	.dnld_fw = mwifiex_sdio_dnld_fw,
 	.card_reset = mwifiex_sdio_card_reset,
 	.reg_dump = mwifiex_sdio_reg_dump,
 	.device_dump = mwifiex_sdio_device_dump,
@@ -2741,14 +2708,11 @@ static struct mwifiex_if_ops sdio_ops = {
 /*
  * This function initializes the SDIO driver.
  *
- * This initiates the semaphore and registers the device with
- * SDIO bus.
+ * This registers the device with SDIO bus.
  */
 static int
 mwifiex_sdio_init_module(void)
 {
-	sema_init(&add_remove_card_sem, 1);
-
 	/* Clear the flag in case user removes the card. */
 	user_rmmod = 0;
 
@@ -2767,9 +2731,6 @@ mwifiex_sdio_init_module(void)
 static void
 mwifiex_sdio_cleanup_module(void)
 {
-	if (!down_interruptible(&add_remove_card_sem))
-		up(&add_remove_card_sem);
-
 	/* Set the flag as user is removing this module. */
 	user_rmmod = 1;
 	cancel_work_sync(&sdio_work);

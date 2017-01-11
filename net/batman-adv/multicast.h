@@ -20,6 +20,7 @@
 
 #include "main.h"
 
+struct seq_file;
 struct sk_buff;
 
 /**
@@ -38,23 +39,19 @@ enum batadv_forw_mode {
 
 #ifdef CONFIG_BATMAN_ADV_MCAST
 
-void batadv_mcast_mla_update(struct batadv_priv *bat_priv);
-
 enum batadv_forw_mode
 batadv_mcast_forw_mode(struct batadv_priv *bat_priv, struct sk_buff *skb,
 		       struct batadv_orig_node **mcast_single_orig);
 
 void batadv_mcast_init(struct batadv_priv *bat_priv);
 
+int batadv_mcast_flags_seq_print_text(struct seq_file *seq, void *offset);
+
 void batadv_mcast_free(struct batadv_priv *bat_priv);
 
 void batadv_mcast_purge_orig(struct batadv_orig_node *orig_node);
 
 #else
-
-static inline void batadv_mcast_mla_update(struct batadv_priv *bat_priv)
-{
-}
 
 static inline enum batadv_forw_mode
 batadv_mcast_forw_mode(struct batadv_priv *bat_priv, struct sk_buff *skb,

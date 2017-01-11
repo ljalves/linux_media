@@ -15,7 +15,6 @@
 
 / {
 	compatible = "snps,arc";
-	clock-frequency = <750000000>;	/* 750 MHZ */
 	#address-cells = <1>;
 	#size-cells = <1>;
 
@@ -72,7 +71,7 @@
 			reg-io-width = <4>;
 		};
 
-		arcpmu0: pmu {
+		arcpct0: pct {
 			compatible = "snps,arc700-pct";
 		};
 	};

@@ -1,38 +1,39 @@
-/* Copyright 2013-2014 Freescale Semiconductor Inc.
-*
-* Redistribution and use in source and binary forms, with or without
-* modification, are permitted provided that the following conditions are met:
-* * Redistributions of source code must retain the above copyright
-* notice, this list of conditions and the following disclaimer.
-* * Redistributions in binary form must reproduce the above copyright
-* notice, this list of conditions and the following disclaimer in the
-* documentation and/or other materials provided with the distribution.
-* * Neither the name of the above-listed copyright holders nor the
-* names of any contributors may be used to endorse or promote products
-* derived from this software without specific prior written permission.
-*
-*
-* ALTERNATIVELY, this software may be distributed under the terms of the
-* GNU General Public License ("GPL") as published by the Free Software
-* Foundation, either version 2 of that License or (at your option) any
-* later version.
-*
-* THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
-* AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
-* IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
-* ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDERS OR CONTRIBUTORS BE
-* LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
-* CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
-* SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
-* INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
-* CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
-* ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
-* POSSIBILITY OF SUCH DAMAGE.
-*/
+/*
+ * Copyright 2013-2016 Freescale Semiconductor Inc.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions are met:
+ * * Redistributions of source code must retain the above copyright
+ * notice, this list of conditions and the following disclaimer.
+ * * Redistributions in binary form must reproduce the above copyright
+ * notice, this list of conditions and the following disclaimer in the
+ * documentation and/or other materials provided with the distribution.
+ * * Neither the name of the above-listed copyright holders nor the
+ * names of any contributors may be used to endorse or promote products
+ * derived from this software without specific prior written permission.
+ *
+ * ALTERNATIVELY, this software may be distributed under the terms of the
+ * GNU General Public License ("GPL") as published by the Free Software
+ * Foundation, either version 2 of that License or (at your option) any
+ * later version.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+ * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ * ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDERS OR CONTRIBUTORS BE
+ * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+ * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+ * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+ * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+ * POSSIBILITY OF SUCH DAMAGE.
+ */
 #include "../include/mc-sys.h"
 #include "../include/mc-cmd.h"
 #include "../include/dpbp.h"
-#include "../include/dpbp-cmd.h"
+
+#include "dpbp-cmd.h"
 
 /**
  * dpbp_open() - Open a control session for the specified object.
@@ -57,12 +58,14 @@ int dpbp_open(struct fsl_mc_io *mc_io,
 	      u16 *token)
 {
 	struct mc_command cmd = { 0 };
+	struct dpbp_cmd_open *cmd_params;
 	int err;
 
 	/* prepare command */
 	cmd.header = mc_encode_cmd_header(DPBP_CMDID_OPEN,
 					  cmd_flags, 0);
-	cmd.params[0] |= mc_enc(0, 32, dpbp_id);
+	cmd_params = (struct dpbp_cmd_open *)cmd.params;
+	cmd_params->dpbp_id = cpu_to_le32(dpbp_id);
 
 	/* send command to mc*/
 	err = mc_send_command(mc_io, &cmd);
@@ -70,7 +73,7 @@ int dpbp_open(struct fsl_mc_io *mc_io,
 		return err;
 
 	/* retrieve response parameters */
-	*token = MC_CMD_HDR_READ_TOKEN(cmd.header);
+	*token = mc_cmd_hdr_read_token(&cmd);
 
 	return err;
 }
@@ -105,28 +108,26 @@ EXPORT_SYMBOL(dpbp_close);
 /**
  * dpbp_create() - Create the DPBP object.
  * @mc_io:	Pointer to MC portal's I/O object
+ * @dprc_token:	Parent container token; '0' for default container
  * @cmd_flags:	Command flags; one or more of 'MC_CMD_FLAG_'
  * @cfg:	Configuration structure
- * @token:	Returned token; use in subsequent API calls
+ * @obj_id:	Returned object id; use in subsequent API calls
  *
  * Create the DPBP object, allocate required resources and
  * perform required initialization.
  *
- * The object can be created either by declaring it in the
- * DPL file, or by calling this function.
- * This function returns a unique authentication token,
- * associated with the specific object ID and the specific MC
- * portal; this token must be used in all subsequent calls to
- * this specific object. For objects that are created using the
- * DPL file, call dpbp_open function to get an authentication
- * token first.
+ * This function accepts an authentication token of a parent
+ * container that this object should be assigned to and returns
+ * an object id. This object_id will be used in all subsequent calls to
+ * this specific object.
  *
  * Return:	'0' on Success; Error code otherwise.
  */
 int dpbp_create(struct fsl_mc_io *mc_io,
+		u16 dprc_token,
 		u32 cmd_flags,
 		const struct dpbp_cfg *cfg,
-		u16 *token)
+		u32 *obj_id)
 {
 	struct mc_command cmd = { 0 };
 	int err;
@@ -135,7 +136,7 @@ int dpbp_create(struct fsl_mc_io *mc_io,
 
 	/* prepare command */
 	cmd.header = mc_encode_cmd_header(DPBP_CMDID_CREATE,
-					  cmd_flags, 0);
+					  cmd_flags, dprc_token);
 
 	/* send command to mc*/
 	err = mc_send_command(mc_io, &cmd);
@@ -143,7 +144,7 @@ int dpbp_create(struct fsl_mc_io *mc_io,
 		return err;
 
 	/* retrieve response parameters */
-	*token = MC_CMD_HDR_READ_TOKEN(cmd.header);
+	*obj_id = mc_cmd_read_object_id(&cmd);
 
 	return 0;
 }
@@ -151,20 +152,25 @@ int dpbp_create(struct fsl_mc_io *mc_io,
 /**
  * dpbp_destroy() - Destroy the DPBP object and release all its resources.
  * @mc_io:	Pointer to MC portal's I/O object
+ * @dprc_token:	Parent container token; '0' for default container
  * @cmd_flags:	Command flags; one or more of 'MC_CMD_FLAG_'
- * @token:	Token of DPBP object
+ * @obj_id:	ID of DPBP object
  *
  * Return:	'0' on Success; error code otherwise.
  */
 int dpbp_destroy(struct fsl_mc_io *mc_io,
+		 u16 dprc_token,
 		 u32 cmd_flags,
-		 u16 token)
+		 u32 obj_id)
 {
+	struct dpbp_cmd_destroy *cmd_params;
 	struct mc_command cmd = { 0 };
 
 	/* prepare command */
 	cmd.header = mc_encode_cmd_header(DPBP_CMDID_DESTROY,
-					  cmd_flags, token);
+					  cmd_flags, dprc_token);
+	cmd_params = (struct dpbp_cmd_destroy *)cmd.params;
+	cmd_params->object_id = cpu_to_le32(obj_id);
 
 	/* send command to mc*/
 	return mc_send_command(mc_io, &cmd);
@@ -231,6 +237,7 @@ int dpbp_is_enabled(struct fsl_mc_io *mc_io,
 		    int *en)
 {
 	struct mc_command cmd = { 0 };
+	struct dpbp_rsp_is_enabled *rsp_params;
 	int err;
 	/* prepare command */
 	cmd.header = mc_encode_cmd_header(DPBP_CMDID_IS_ENABLED, cmd_flags,
@@ -242,7 +249,8 @@ int dpbp_is_enabled(struct fsl_mc_io *mc_io,
 		return err;
 
 	/* retrieve response parameters */
-	*en = (int)mc_dec(cmd.params[0], 0, 1);
+	rsp_params = (struct dpbp_rsp_is_enabled *)cmd.params;
+	*en = rsp_params->enabled & DPBP_ENABLE;
 
 	return 0;
 }
@@ -286,14 +294,16 @@ int dpbp_set_irq(struct fsl_mc_io *mc_io,
 		 struct dpbp_irq_cfg *irq_cfg)
 {
 	struct mc_command cmd = { 0 };
+	struct dpbp_cmd_set_irq *cmd_params;
 
 	/* prepare command */
 	cmd.header = mc_encode_cmd_header(DPBP_CMDID_SET_IRQ,
 					  cmd_flags, token);
-	cmd.params[0] |= mc_enc(0, 8, irq_index);
-	cmd.params[0] |= mc_enc(32, 32, irq_cfg->val);
-	cmd.params[1] |= mc_enc(0, 64, irq_cfg->addr);
-	cmd.params[2] |= mc_enc(0, 32, irq_cfg->irq_num);
+	cmd_params = (struct dpbp_cmd_set_irq *)cmd.params;
+	cmd_params->irq_index = irq_index;
+	cmd_params->irq_val = cpu_to_le32(irq_cfg->val);
+	cmd_params->irq_addr = cpu_to_le64(irq_cfg->addr);
+	cmd_params->irq_num = cpu_to_le32(irq_cfg->irq_num);
 
 	/* send command to mc*/
 	return mc_send_command(mc_io, &cmd);
@@ -319,12 +329,15 @@ int dpbp_get_irq(struct fsl_mc_io *mc_io,
 		 struct dpbp_irq_cfg *irq_cfg)
 {
 	struct mc_command cmd = { 0 };
+	struct dpbp_cmd_get_irq *cmd_params;
+	struct dpbp_rsp_get_irq *rsp_params;
 	int err;
 
 	/* prepare command */
 	cmd.header = mc_encode_cmd_header(DPBP_CMDID_GET_IRQ,
 					  cmd_flags, token);
-	cmd.params[0] |= mc_enc(32, 8, irq_index);
+	cmd_params = (struct dpbp_cmd_get_irq *)cmd.params;
+	cmd_params->irq_index = irq_index;
 
 	/* send command to mc*/
 	err = mc_send_command(mc_io, &cmd);
@@ -332,10 +345,12 @@ int dpbp_get_irq(struct fsl_mc_io *mc_io,
 		return err;
 
 	/* retrieve response parameters */
-	irq_cfg->val = (u32)mc_dec(cmd.params[0], 0, 32);
-	irq_cfg->addr = (u64)mc_dec(cmd.params[1], 0, 64);
-	irq_cfg->irq_num = (int)mc_dec(cmd.params[2], 0, 32);
-	*type = (int)mc_dec(cmd.params[2], 32, 32);
+	rsp_params = (struct dpbp_rsp_get_irq *)cmd.params;
+	irq_cfg->val = le32_to_cpu(rsp_params->irq_val);
+	irq_cfg->addr = le64_to_cpu(rsp_params->irq_addr);
+	irq_cfg->irq_num = le32_to_cpu(rsp_params->irq_num);
+	*type = le32_to_cpu(rsp_params->type);
+
 	return 0;
 }
 
@@ -361,12 +376,14 @@ int dpbp_set_irq_enable(struct fsl_mc_io *mc_io,
 			u8 en)
 {
 	struct mc_command cmd = { 0 };
+	struct dpbp_cmd_set_irq_enable *cmd_params;
 
 	/* prepare command */
 	cmd.header = mc_encode_cmd_header(DPBP_CMDID_SET_IRQ_ENABLE,
 					  cmd_flags, token);
-	cmd.params[0] |= mc_enc(0, 8, en);
-	cmd.params[0] |= mc_enc(32, 8, irq_index);
+	cmd_params = (struct dpbp_cmd_set_irq_enable *)cmd.params;
+	cmd_params->enable = en & DPBP_ENABLE;
+	cmd_params->irq_index = irq_index;
 
 	/* send command to mc*/
 	return mc_send_command(mc_io, &cmd);
@@ -389,12 +406,15 @@ int dpbp_get_irq_enable(struct fsl_mc_io *mc_io,
 			u8 *en)
 {
 	struct mc_command cmd = { 0 };
+	struct dpbp_cmd_get_irq_enable *cmd_params;
+	struct dpbp_rsp_get_irq_enable *rsp_params;
 	int err;
 
 	/* prepare command */
 	cmd.header = mc_encode_cmd_header(DPBP_CMDID_GET_IRQ_ENABLE,
 					  cmd_flags, token);
-	cmd.params[0] |= mc_enc(32, 8, irq_index);
+	cmd_params = (struct dpbp_cmd_get_irq_enable *)cmd.params;
+	cmd_params->irq_index = irq_index;
 
 	/* send command to mc*/
 	err = mc_send_command(mc_io, &cmd);
@@ -402,7 +422,8 @@ int dpbp_get_irq_enable(struct fsl_mc_io *mc_io,
 		return err;
 
 	/* retrieve response parameters */
-	*en = (u8)mc_dec(cmd.params[0], 0, 8);
+	rsp_params = (struct dpbp_rsp_get_irq_enable *)cmd.params;
+	*en = rsp_params->enabled & DPBP_ENABLE;
 	return 0;
 }
 
@@ -429,12 +450,14 @@ int dpbp_set_irq_mask(struct fsl_mc_io *mc_io,
 		      u32 mask)
 {
 	struct mc_command cmd = { 0 };
+	struct dpbp_cmd_set_irq_mask *cmd_params;
 
 	/* prepare command */
 	cmd.header = mc_encode_cmd_header(DPBP_CMDID_SET_IRQ_MASK,
 					  cmd_flags, token);
-	cmd.params[0] |= mc_enc(0, 32, mask);
-	cmd.params[0] |= mc_enc(32, 8, irq_index);
+	cmd_params = (struct dpbp_cmd_set_irq_mask *)cmd.params;
+	cmd_params->mask = cpu_to_le32(mask);
+	cmd_params->irq_index = irq_index;
 
 	/* send command to mc*/
 	return mc_send_command(mc_io, &cmd);
@@ -460,12 +483,15 @@ int dpbp_get_irq_mask(struct fsl_mc_io *mc_io,
 		      u32 *mask)
 {
 	struct mc_command cmd = { 0 };
+	struct dpbp_cmd_get_irq_mask *cmd_params;
+	struct dpbp_rsp_get_irq_mask *rsp_params;
 	int err;
 
 	/* prepare command */
 	cmd.header = mc_encode_cmd_header(DPBP_CMDID_GET_IRQ_MASK,
 					  cmd_flags, token);
-	cmd.params[0] |= mc_enc(32, 8, irq_index);
+	cmd_params = (struct dpbp_cmd_get_irq_mask *)cmd.params;
+	cmd_params->irq_index = irq_index;
 
 	/* send command to mc*/
 	err = mc_send_command(mc_io, &cmd);
@@ -473,7 +499,9 @@ int dpbp_get_irq_mask(struct fsl_mc_io *mc_io,
 		return err;
 
 	/* retrieve response parameters */
-	*mask = (u32)mc_dec(cmd.params[0], 0, 32);
+	rsp_params = (struct dpbp_rsp_get_irq_mask *)cmd.params;
+	*mask = le32_to_cpu(rsp_params->mask);
+
 	return 0;
 }
 
@@ -497,13 +525,16 @@ int dpbp_get_irq_status(struct fsl_mc_io *mc_io,
 			u32 *status)
 {
 	struct mc_command cmd = { 0 };
+	struct dpbp_cmd_get_irq_status *cmd_params;
+	struct dpbp_rsp_get_irq_status *rsp_params;
 	int err;
 
 	/* prepare command */
 	cmd.header = mc_encode_cmd_header(DPBP_CMDID_GET_IRQ_STATUS,
 					  cmd_flags, token);
-	cmd.params[0] |= mc_enc(0, 32, *status);
-	cmd.params[0] |= mc_enc(32, 8, irq_index);
+	cmd_params = (struct dpbp_cmd_get_irq_status *)cmd.params;
+	cmd_params->status = cpu_to_le32(*status);
+	cmd_params->irq_index = irq_index;
 
 	/* send command to mc*/
 	err = mc_send_command(mc_io, &cmd);
@@ -511,7 +542,9 @@ int dpbp_get_irq_status(struct fsl_mc_io *mc_io,
 		return err;
 
 	/* retrieve response parameters */
-	*status = (u32)mc_dec(cmd.params[0], 0, 32);
+	rsp_params = (struct dpbp_rsp_get_irq_status *)cmd.params;
+	*status = le32_to_cpu(rsp_params->status);
+
 	return 0;
 }
 
@@ -535,12 +568,14 @@ int dpbp_clear_irq_status(struct fsl_mc_io *mc_io,
 			  u32 status)
 {
 	struct mc_command cmd = { 0 };
+	struct dpbp_cmd_clear_irq_status *cmd_params;
 
 	/* prepare command */
 	cmd.header = mc_encode_cmd_header(DPBP_CMDID_CLEAR_IRQ_STATUS,
 					  cmd_flags, token);
-	cmd.params[0] |= mc_enc(0, 32, status);
-	cmd.params[0] |= mc_enc(32, 8, irq_index);
+	cmd_params = (struct dpbp_cmd_clear_irq_status *)cmd.params;
+	cmd_params->status = cpu_to_le32(status);
+	cmd_params->irq_index = irq_index;
 
 	/* send command to mc*/
 	return mc_send_command(mc_io, &cmd);
@@ -562,6 +597,7 @@ int dpbp_get_attributes(struct fsl_mc_io *mc_io,
 			struct dpbp_attr *attr)
 {
 	struct mc_command cmd = { 0 };
+	struct dpbp_rsp_get_attributes *rsp_params;
 	int err;
 
 	/* prepare command */
@@ -574,10 +610,10 @@ int dpbp_get_attributes(struct fsl_mc_io *mc_io,
 		return err;
 
 	/* retrieve response parameters */
-	attr->bpid = (u16)mc_dec(cmd.params[0], 16, 16);
-	attr->id = (int)mc_dec(cmd.params[0], 32, 32);
-	attr->version.major = (u16)mc_dec(cmd.params[1], 0, 16);
-	attr->version.minor = (u16)mc_dec(cmd.params[1], 16, 16);
+	rsp_params = (struct dpbp_rsp_get_attributes *)cmd.params;
+	attr->bpid = le16_to_cpu(rsp_params->bpid);
+	attr->id = le32_to_cpu(rsp_params->id);
+
 	return 0;
 }
 EXPORT_SYMBOL(dpbp_get_attributes);
@@ -597,19 +633,19 @@ int dpbp_set_notifications(struct fsl_mc_io *mc_io,
 			   struct dpbp_notification_cfg	*cfg)
 {
 	struct mc_command cmd = { 0 };
+	struct dpbp_cmd_set_notifications *cmd_params;
 
 	/* prepare command */
 	cmd.header = mc_encode_cmd_header(DPBP_CMDID_SET_NOTIFICATIONS,
-					  cmd_flags,
-					  token);
-
-	cmd.params[0] |= mc_enc(0, 32, cfg->depletion_entry);
-	cmd.params[0] |= mc_enc(32, 32, cfg->depletion_exit);
-	cmd.params[1] |= mc_enc(0, 32, cfg->surplus_entry);
-	cmd.params[1] |= mc_enc(32, 32, cfg->surplus_exit);
-	cmd.params[2] |= mc_enc(0, 16, cfg->options);
-	cmd.params[3] |= mc_enc(0, 64, cfg->message_ctx);
-	cmd.params[4] |= mc_enc(0, 64, cfg->message_iova);
+					  cmd_flags, token);
+	cmd_params = (struct dpbp_cmd_set_notifications *)cmd.params;
+	cmd_params->depletion_entry = cpu_to_le32(cfg->depletion_entry);
+	cmd_params->depletion_exit = cpu_to_le32(cfg->depletion_exit);
+	cmd_params->surplus_entry = cpu_to_le32(cfg->surplus_entry);
+	cmd_params->surplus_exit = cpu_to_le32(cfg->surplus_exit);
+	cmd_params->options = cpu_to_le16(cfg->options);
+	cmd_params->message_ctx = cpu_to_le64(cfg->message_ctx);
+	cmd_params->message_iova = cpu_to_le64(cfg->message_iova);
 
 	/* send command to mc*/
 	return mc_send_command(mc_io, &cmd);
@@ -630,6 +666,7 @@ int dpbp_get_notifications(struct fsl_mc_io *mc_io,
 			   struct dpbp_notification_cfg	*cfg)
 {
 	struct mc_command cmd = { 0 };
+	struct dpbp_rsp_get_notifications *rsp_params;
 	int err;
 
 	/* prepare command */
@@ -643,13 +680,46 @@ int dpbp_get_notifications(struct fsl_mc_io *mc_io,
 		return err;
 
 	/* retrieve response parameters */
-	cfg->depletion_entry = (u32)mc_dec(cmd.params[0], 0, 32);
-	cfg->depletion_exit = (u32)mc_dec(cmd.params[0], 32, 32);
-	cfg->surplus_entry = (u32)mc_dec(cmd.params[1], 0, 32);
-	cfg->surplus_exit = (u32)mc_dec(cmd.params[1], 32, 32);
-	cfg->options = (u16)mc_dec(cmd.params[2], 0, 16);
-	cfg->message_ctx = (u64)mc_dec(cmd.params[3], 0, 64);
-	cfg->message_iova = (u64)mc_dec(cmd.params[4], 0, 64);
+	rsp_params = (struct dpbp_rsp_get_notifications *)cmd.params;
+	cfg->depletion_entry = le32_to_cpu(rsp_params->depletion_entry);
+	cfg->depletion_exit = le32_to_cpu(rsp_params->depletion_exit);
+	cfg->surplus_entry = le32_to_cpu(rsp_params->surplus_entry);
+	cfg->surplus_exit = le32_to_cpu(rsp_params->surplus_exit);
+	cfg->options = le16_to_cpu(rsp_params->options);
+	cfg->message_ctx = le64_to_cpu(rsp_params->message_ctx);
+	cfg->message_iova = le64_to_cpu(rsp_params->message_iova);
+
+	return 0;
+}
+
+/**
+ * dpbp_get_api_version - Get Data Path Buffer Pool API version
+ * @mc_io:	Pointer to Mc portal's I/O object
+ * @cmd_flags:	Command flags; one or more of 'MC_CMD_FLAG_'
+ * @major_ver:	Major version of Buffer Pool API
+ * @minor_ver:	Minor version of Buffer Pool API
+ *
+ * Return:	'0' on Success; Error code otherwise.
+ */
+int dpbp_get_api_version(struct fsl_mc_io *mc_io,
+			 u32 cmd_flags,
+			 u16 *major_ver,
+			 u16 *minor_ver)
+{
+	struct mc_command cmd = { 0 };
+	int err;
+
+	/* prepare command */
+	cmd.header = mc_encode_cmd_header(DPBP_CMDID_GET_API_VERSION,
+					  cmd_flags, 0);
+
+	/* send command to mc */
+	err = mc_send_command(mc_io, &cmd);
+	if (err)
+		return err;
+
+	/* retrieve response parameters */
+	mc_cmd_read_api_version(&cmd, major_ver, minor_ver);
 
 	return 0;
 }

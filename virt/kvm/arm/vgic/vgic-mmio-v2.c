@@ -102,6 +102,7 @@ static void vgic_mmio_write_sgir(struct kvm_vcpu *source_vcpu,
 		irq->source |= 1U << source_vcpu->vcpu_id;
 
 		vgic_queue_irq_unlock(source_vcpu->kvm, irq);
+		vgic_put_irq(source_vcpu->kvm, irq);
 	}
 }
 
@@ -116,6 +117,8 @@ static unsigned long vgic_mmio_read_target(struct kvm_vcpu *vcpu,
 		struct vgic_irq *irq = vgic_get_irq(vcpu->kvm, vcpu, intid + i);
 
 		val |= (u64)irq->targets << (i * 8);
+
+		vgic_put_irq(vcpu->kvm, irq);
 	}
 
 	return val;
@@ -126,6 +129,7 @@ static void vgic_mmio_write_target(struct kvm_vcpu *vcpu,
 				   unsigned long val)
 {
 	u32 intid = VGIC_ADDR_TO_INTID(addr, 8);
+	u8 cpu_mask = GENMASK(atomic_read(&vcpu->kvm->online_vcpus) - 1, 0);
 	int i;
 
 	/* GICD_ITARGETSR[0-7] are read-only */
@@ -138,11 +142,12 @@ static void vgic_mmio_write_target(struct kvm_vcpu *vcpu,
 
 		spin_lock(&irq->irq_lock);
 
-		irq->targets = (val >> (i * 8)) & 0xff;
+		irq->targets = (val >> (i * 8)) & cpu_mask;
 		target = irq->targets ? __ffs(irq->targets) : 0;
 		irq->target_vcpu = kvm_get_vcpu(vcpu->kvm, target);
 
 		spin_unlock(&irq->irq_lock);
+		vgic_put_irq(vcpu->kvm, irq);
 	}
 }
 
@@ -157,6 +162,8 @@ static unsigned long vgic_mmio_read_sgipend(struct kvm_vcpu *vcpu,
 		struct vgic_irq *irq = vgic_get_irq(vcpu->kvm, vcpu, intid + i);
 
 		val |= (u64)irq->source << (i * 8);
+
+		vgic_put_irq(vcpu->kvm, irq);
 	}
 	return val;
 }
@@ -178,6 +185,7 @@ static void vgic_mmio_write_sgipendc(struct kvm_vcpu *vcpu,
 			irq->pending = false;
 
 		spin_unlock(&irq->irq_lock);
+		vgic_put_irq(vcpu->kvm, irq);
 	}
 }
 
@@ -201,6 +209,7 @@ static void vgic_mmio_write_sgipends(struct kvm_vcpu *vcpu,
 		} else {
 			spin_unlock(&irq->irq_lock);
 		}
+		vgic_put_irq(vcpu->kvm, irq);
 	}
 }
 
@@ -429,6 +438,7 @@ int vgic_v2_cpuif_uaccess(struct kvm_vcpu *vcpu, bool is_write,
 	struct vgic_io_device dev = {
 		.regions = vgic_v2_cpu_registers,
 		.nr_regions = ARRAY_SIZE(vgic_v2_cpu_registers),
+		.iodev_type = IODEV_CPUIF,
 	};
 
 	return vgic_uaccess(vcpu, &dev, is_write, offset, val);
@@ -440,6 +450,7 @@ int vgic_v2_dist_uaccess(struct kvm_vcpu *vcpu, bool is_write,
 	struct vgic_io_device dev = {
 		.regions = vgic_v2_dist_registers,
 		.nr_regions = ARRAY_SIZE(vgic_v2_dist_registers),
+		.iodev_type = IODEV_DIST,
 	};
 
 	return vgic_uaccess(vcpu, &dev, is_write, offset, val);

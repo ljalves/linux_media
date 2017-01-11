@@ -42,11 +42,10 @@ struct tua6100_priv {
 	u32 frequency;
 };
 
-static int tua6100_release(struct dvb_frontend *fe)
+static void tua6100_release(struct dvb_frontend *fe)
 {
 	kfree(fe->tuner_priv);
 	fe->tuner_priv = NULL;
-	return 0;
 }
 
 static int tua6100_sleep(struct dvb_frontend *fe)
@@ -157,7 +156,7 @@ static int tua6100_get_frequency(struct dvb_frontend *fe, u32 *frequency)
 	return 0;
 }
 
-static struct dvb_tuner_ops tua6100_tuner_ops = {
+static const struct dvb_tuner_ops tua6100_tuner_ops = {
 	.info = {
 		.name = "Infineon TUA6100",
 		.frequency_min = 950000,

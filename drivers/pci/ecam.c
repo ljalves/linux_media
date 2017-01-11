@@ -19,16 +19,15 @@
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/pci.h>
+#include <linux/pci-ecam.h>
 #include <linux/slab.h>
-
-#include "ecam.h"
 
 /*
  * On 64-bit systems, we do a single ioremap for the whole config space
  * since we have enough virtual address range available.  On 32-bit, we
  * ioremap the config space for each bus individually.
  */
-static const bool per_bus_mapping = !config_enabled(CONFIG_64BIT);
+static const bool per_bus_mapping = !IS_ENABLED(CONFIG_64BIT);
 
 /*
  * Create a PCI config space window
@@ -52,6 +51,7 @@ struct pci_config_window *pci_ecam_create(struct device *dev,
 	if (!cfg)
 		return ERR_PTR(-ENOMEM);
 
+	cfg->parent = dev;
 	cfg->ops = ops;
 	cfg->busr.start = busr->start;
 	cfg->busr.end = busr->end;
@@ -95,7 +95,7 @@ struct pci_config_window *pci_ecam_create(struct device *dev,
 	}
 
 	if (ops->init) {
-		err = ops->init(dev, cfg);
+		err = ops->init(cfg);
 		if (err)
 			goto err_exit;
 	}
@@ -162,3 +162,15 @@ struct pci_ecam_ops pci_generic_ecam_ops = {
 		.write		= pci_generic_config_write,
 	}
 };
+
+#if defined(CONFIG_ACPI) && defined(CONFIG_PCI_QUIRKS)
+/* ECAM ops for 32-bit access only (non-compliant) */
+struct pci_ecam_ops pci_32b_ops = {
+	.bus_shift	= 20,
+	.pci_ops	= {
+		.map_bus	= pci_ecam_map_bus,
+		.read		= pci_generic_config_read32,
+		.write		= pci_generic_config_write32,
+	}
+};
+#endif

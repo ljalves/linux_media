@@ -131,7 +131,7 @@ static int qxl_device_init(struct qxl_device *qdev,
 	mutex_init(&qdev->update_area_mutex);
 	mutex_init(&qdev->release_mutex);
 	mutex_init(&qdev->surf_evict_mutex);
-	INIT_LIST_HEAD(&qdev->gem.objects);
+	qxl_gem_init(qdev);
 
 	qdev->rom_base = pci_resource_start(pdev, 2);
 	qdev->rom_size = pci_resource_len(pdev, 2);
@@ -258,7 +258,6 @@ static int qxl_device_init(struct qxl_device *qdev,
 		 (unsigned long)qdev->surfaceram_size);
 
 
-	qdev->gc_queue = create_singlethread_workqueue("qxl_gc");
 	INIT_WORK(&qdev->gc_work, qxl_gc_work);
 
 	return 0;
@@ -270,13 +269,11 @@ static void qxl_device_fini(struct qxl_device *qdev)
 		qxl_bo_unref(&qdev->current_release_bo[0]);
 	if (qdev->current_release_bo[1])
 		qxl_bo_unref(&qdev->current_release_bo[1]);
-	flush_workqueue(qdev->gc_queue);
-	destroy_workqueue(qdev->gc_queue);
-	qdev->gc_queue = NULL;
-
+	flush_work(&qdev->gc_work);
 	qxl_ring_free(qdev->command_ring);
 	qxl_ring_free(qdev->cursor_ring);
 	qxl_ring_free(qdev->release_ring);
+	qxl_gem_fini(qdev);
 	qxl_bo_fini(qdev);
 	io_mapping_free(qdev->surface_mapping);
 	io_mapping_free(qdev->vram_mapping);
@@ -309,10 +306,6 @@ int qxl_driver_load(struct drm_device *dev, unsigned long flags)
 {
 	struct qxl_device *qdev;
 	int r;
-
-	/* require kms */
-	if (!drm_core_check_feature(dev, DRIVER_MODESET))
-		return -ENODEV;
 
 	qdev = kzalloc(sizeof(struct qxl_device), GFP_KERNEL);
 	if (qdev == NULL)

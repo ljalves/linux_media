@@ -15,11 +15,7 @@
  *
  * You should have received a copy of the GNU General Public License
  * version 2 along with this program; If not, see
- * http://www.sun.com/software/products/lustre/docs/GPLv2.pdf
- *
- * Please contact Sun Microsystems, Inc., 4150 Network Circle, Santa Clara,
- * CA 95054 USA or visit www.sun.com if you need additional information or
- * have any questions.
+ * http://www.gnu.org/licenses/gpl-2.0.html
  *
  * GPL HEADER END
  */
@@ -69,6 +65,7 @@
 #include "../../include/obd_support.h"
 #include "../../include/obd_class.h"
 #include "../../include/lprocfs_status.h"
+#include "../../include/lustre/lustre_ioctl.h"
 #include "../../include/lustre_ver.h"
 
 /* buffer MUST be at least the size of obd_ioctl_hdr */
@@ -161,7 +158,6 @@ int obd_ioctl_popdata(void __user *arg, void *data, int len)
 	err = copy_to_user(arg, data, len) ? -EFAULT : 0;
 	return err;
 }
-EXPORT_SYMBOL(obd_ioctl_popdata);
 
 /*  opening /dev/obd */
 static int obd_class_open(struct inode *inode, struct file *file)
@@ -195,7 +191,7 @@ static long obd_class_ioctl(struct file *filp, unsigned int cmd,
 }
 
 /* declare character device */
-static struct file_operations obd_psdev_fops = {
+static const struct file_operations obd_psdev_fops = {
 	.owner	  = THIS_MODULE,
 	.unlocked_ioctl = obd_class_ioctl, /* unlocked_ioctl */
 	.open	   = obd_class_open,      /* open */
@@ -221,8 +217,8 @@ static ssize_t pinger_show(struct kobject *kobj, struct attribute *attr,
 	return sprintf(buf, "%s\n", "on");
 }
 
-static ssize_t health_show(struct kobject *kobj, struct attribute *attr,
-			   char *buf)
+static ssize_t
+health_check_show(struct kobject *kobj, struct attribute *attr, char *buf)
 {
 	bool healthy = true;
 	int i;
@@ -295,7 +291,7 @@ static ssize_t jobid_name_store(struct kobject *kobj, struct attribute *attr,
 				const char *buffer,
 				size_t count)
 {
-	if (!count || count > JOBSTATS_JOBID_SIZE)
+	if (!count || count > LUSTRE_JOBID_SIZE)
 		return -EINVAL;
 
 	memcpy(obd_jobid_node, buffer, count);
@@ -315,14 +311,14 @@ EXPORT_SYMBOL_GPL(debugfs_lustre_root);
 
 LUSTRE_RO_ATTR(version);
 LUSTRE_RO_ATTR(pinger);
-LUSTRE_RO_ATTR(health);
+LUSTRE_RO_ATTR(health_check);
 LUSTRE_RW_ATTR(jobid_var);
 LUSTRE_RW_ATTR(jobid_name);
 
 static struct attribute *lustre_attrs[] = {
 	&lustre_attr_version.attr,
 	&lustre_attr_pinger.attr,
-	&lustre_attr_health.attr,
+	&lustre_attr_health_check.attr,
 	&lustre_attr_jobid_name.attr,
 	&lustre_attr_jobid_var.attr,
 	NULL,

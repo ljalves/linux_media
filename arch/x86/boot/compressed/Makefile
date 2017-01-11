@@ -25,7 +25,7 @@ KCOV_INSTRUMENT		:= n
 targets := vmlinux vmlinux.bin vmlinux.bin.gz vmlinux.bin.bz2 vmlinux.bin.lzma \
 	vmlinux.bin.xz vmlinux.bin.lzo vmlinux.bin.lz4
 
-KBUILD_CFLAGS := -m$(BITS) -D__KERNEL__ $(LINUX_INCLUDE) -O2
+KBUILD_CFLAGS := -m$(BITS) -D__KERNEL__ -O2
 KBUILD_CFLAGS += -fno-strict-aliasing $(call cc-option, -fPIE, -fPIC)
 KBUILD_CFLAGS += -DDISABLE_BRANCH_PROFILING
 cflags-$(CONFIG_X86_32) := -march=i386
@@ -40,8 +40,8 @@ GCOV_PROFILE := n
 UBSAN_SANITIZE :=n
 
 LDFLAGS := -m elf_$(UTS_MACHINE)
-ifeq ($(CONFIG_RELOCATABLE),y)
-# If kernel is relocatable, build compressed kernel as PIE.
+# Compressed kernel should be built as PIE since it may be loaded at any
+# address by the bootloader.
 ifeq ($(CONFIG_X86_32),y)
 LDFLAGS += $(call ld-option, -pie) $(call ld-option, --no-dynamic-linker)
 else
@@ -50,7 +50,6 @@ else
 # command-line option, -z noreloc-overflow.
 LDFLAGS += $(shell $(LD) --help 2>&1 | grep -q "\-z noreloc-overflow" \
 	&& echo "-z noreloc-overflow -pie --no-dynamic-linker")
-endif
 endif
 LDFLAGS_vmlinux := -T
 
@@ -85,7 +84,25 @@ vmlinux-objs-$(CONFIG_EFI_STUB) += $(obj)/eboot.o $(obj)/efi_stub_$(BITS).o \
 	$(objtree)/drivers/firmware/efi/libstub/lib.a
 vmlinux-objs-$(CONFIG_EFI_MIXED) += $(obj)/efi_thunk_$(BITS).o
 
+# The compressed kernel is built with -fPIC/-fPIE so that a boot loader
+# can place it anywhere in memory and it will still run. However, since
+# it is executed as-is without any ELF relocation processing performed
+# (and has already had all relocation sections stripped from the binary),
+# none of the code can use data relocations (e.g. static assignments of
+# pointer values), since they will be meaningless at runtime. This check
+# will refuse to link the vmlinux if any of these relocations are found.
+quiet_cmd_check_data_rel = DATAREL $@
+define cmd_check_data_rel
+	for obj in $(filter %.o,$^); do \
+		readelf -S $$obj | grep -qF .rel.local && { \
+			echo "error: $$obj has data relocations!" >&2; \
+			exit 1; \
+		} || true; \
+	done
+endef
+
 $(obj)/vmlinux: $(vmlinux-objs-y) FORCE
+	$(call if_changed,check_data_rel)
 	$(call if_changed,ld)
 
 OBJCOPYFLAGS_vmlinux.bin :=  -R .comment -S

@@ -9,16 +9,18 @@
  * the Free Software Foundation.
  */
 
-#include <linux/gpio.h>
+#include <linux/gpio/consumer.h>
 #include <linux/module.h>
 #include <linux/platform_device.h>
 #include <linux/slab.h>
 #include <linux/of.h>
 #include <linux/of_gpio.h>
+#include <linux/regulator/consumer.h>
 
-#include <video/omapdss.h>
 #include <video/omap-panel-data.h>
 #include <video/of_display_timing.h>
+
+#include "../dss/omapdss.h"
 
 struct panel_drv_data {
 	struct omap_dss_device dssdev;
@@ -26,12 +28,13 @@ struct panel_drv_data {
 
 	int data_lines;
 
-	struct omap_video_timings videomode;
+	struct videomode vm;
 
 	/* used for non-DT boot, to be removed */
 	int backlight_gpio;
 
 	struct gpio_desc *enable_gpio;
+	struct regulator *vcc_supply;
 };
 
 #define to_panel_data(p) container_of(p, struct panel_drv_data, dssdev)
@@ -77,11 +80,17 @@ static int panel_dpi_enable(struct omap_dss_device *dssdev)
 
 	if (ddata->data_lines)
 		in->ops.dpi->set_data_lines(in, ddata->data_lines);
-	in->ops.dpi->set_timings(in, &ddata->videomode);
+	in->ops.dpi->set_timings(in, &ddata->vm);
 
 	r = in->ops.dpi->enable(in);
 	if (r)
 		return r;
+
+	r = regulator_enable(ddata->vcc_supply);
+	if (r) {
+		in->ops.dpi->disable(in);
+		return r;
+	}
 
 	gpiod_set_value_cansleep(ddata->enable_gpio, 1);
 
@@ -105,6 +114,7 @@ static void panel_dpi_disable(struct omap_dss_device *dssdev)
 		gpio_set_value_cansleep(ddata->backlight_gpio, 0);
 
 	gpiod_set_value_cansleep(ddata->enable_gpio, 0);
+	regulator_disable(ddata->vcc_supply);
 
 	in->ops.dpi->disable(in);
 
@@ -112,32 +122,32 @@ static void panel_dpi_disable(struct omap_dss_device *dssdev)
 }
 
 static void panel_dpi_set_timings(struct omap_dss_device *dssdev,
-		struct omap_video_timings *timings)
+				  struct videomode *vm)
 {
 	struct panel_drv_data *ddata = to_panel_data(dssdev);
 	struct omap_dss_device *in = ddata->in;
 
-	ddata->videomode = *timings;
-	dssdev->panel.timings = *timings;
+	ddata->vm = *vm;
+	dssdev->panel.vm = *vm;
 
-	in->ops.dpi->set_timings(in, timings);
+	in->ops.dpi->set_timings(in, vm);
 }
 
 static void panel_dpi_get_timings(struct omap_dss_device *dssdev,
-		struct omap_video_timings *timings)
+				  struct videomode *vm)
 {
 	struct panel_drv_data *ddata = to_panel_data(dssdev);
 
-	*timings = ddata->videomode;
+	*vm = ddata->vm;
 }
 
 static int panel_dpi_check_timings(struct omap_dss_device *dssdev,
-		struct omap_video_timings *timings)
+				   struct videomode *vm)
 {
 	struct panel_drv_data *ddata = to_panel_data(dssdev);
 	struct omap_dss_device *in = ddata->in;
 
-	return in->ops.dpi->check_timings(in, timings);
+	return in->ops.dpi->check_timings(in, vm);
 }
 
 static struct omap_dss_driver panel_dpi_ops = {
@@ -159,7 +169,6 @@ static int panel_dpi_probe_pdata(struct platform_device *pdev)
 	const struct panel_dpi_platform_data *pdata;
 	struct panel_drv_data *ddata = platform_get_drvdata(pdev);
 	struct omap_dss_device *dssdev, *in;
-	struct videomode vm;
 	int r;
 
 	pdata = dev_get_platdata(&pdev->dev);
@@ -175,8 +184,7 @@ static int panel_dpi_probe_pdata(struct platform_device *pdev)
 
 	ddata->data_lines = pdata->data_lines;
 
-	videomode_from_timing(pdata->display_timing, &vm);
-	videomode_to_omap_video_timings(&vm, &ddata->videomode);
+	videomode_from_timing(pdata->display_timing, &ddata->vm);
 
 	dssdev = &ddata->dssdev;
 	dssdev->name = pdata->name;
@@ -204,7 +212,6 @@ static int panel_dpi_probe_of(struct platform_device *pdev)
 	struct omap_dss_device *in;
 	int r;
 	struct display_timing timing;
-	struct videomode vm;
 	struct gpio_desc *gpio;
 
 	gpio = devm_gpiod_get_optional(&pdev->dev, "enable", GPIOD_OUT_LOW);
@@ -212,6 +219,20 @@ static int panel_dpi_probe_of(struct platform_device *pdev)
 		return PTR_ERR(gpio);
 
 	ddata->enable_gpio = gpio;
+
+	/*
+	 * Many different panels are supported by this driver and there are
+	 * probably very different needs for their reset pins in regards to
+	 * timing and order relative to the enable gpio. So for now it's just
+	 * ensured that the reset line isn't active.
+	 */
+	gpio = devm_gpiod_get_optional(&pdev->dev, "reset", GPIOD_OUT_LOW);
+	if (IS_ERR(gpio))
+		return PTR_ERR(gpio);
+
+	ddata->vcc_supply = devm_regulator_get(&pdev->dev, "vcc");
+	if (IS_ERR(ddata->vcc_supply))
+		return PTR_ERR(ddata->vcc_supply);
 
 	ddata->backlight_gpio = -ENOENT;
 
@@ -221,8 +242,7 @@ static int panel_dpi_probe_of(struct platform_device *pdev)
 		return r;
 	}
 
-	videomode_from_timing(&timing, &vm);
-	videomode_to_omap_video_timings(&vm, &ddata->videomode);
+	videomode_from_timing(&timing, &ddata->vm);
 
 	in = omapdss_of_find_source_for_first_ep(node);
 	if (IS_ERR(in)) {
@@ -271,7 +291,7 @@ static int panel_dpi_probe(struct platform_device *pdev)
 	dssdev->driver = &panel_dpi_ops;
 	dssdev->type = OMAP_DISPLAY_TYPE_DPI;
 	dssdev->owner = THIS_MODULE;
-	dssdev->panel.timings = ddata->videomode;
+	dssdev->panel.vm = ddata->vm;
 	dssdev->phy.dpi.data_lines = ddata->data_lines;
 
 	r = omapdss_register_display(dssdev);

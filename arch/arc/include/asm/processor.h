@@ -60,14 +60,11 @@ struct task_struct;
 #ifndef CONFIG_EZNPS_MTM_EXT
 
 #define cpu_relax()		barrier()
-#define cpu_relax_lowlatency()	cpu_relax()
 
 #else
 
 #define cpu_relax()     \
 	__asm__ __volatile__ (".word %0" : : "i"(CTOP_INST_SCHD_RW) : "memory")
-
-#define cpu_relax_lowlatency()	barrier()
 
 #endif
 
@@ -78,7 +75,7 @@ struct task_struct;
 #define KSTK_ESP(tsk)   (task_pt_regs(tsk)->sp)
 
 /*
- * Where abouts of Task's sp, fp, blink when it was last seen in kernel mode.
+ * Where about of Task's sp, fp, blink when it was last seen in kernel mode.
  * Look in process.c for details of kernel stack layout
  */
 #define TSK_K_ESP(tsk)		(tsk->thread.ksp)

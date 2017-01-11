@@ -1609,8 +1609,6 @@ way_up_top:
 		__dlm_insert_mle(dlm, mle);
 		response = DLM_MASTER_RESP_NO;
 	} else {
-		// mlog(0, "mle was found\n");
-		set_maybe = 1;
 		spin_lock(&tmpmle->spinlock);
 		if (tmpmle->master == dlm->node_num) {
 			mlog(ML_ERROR, "no lockres, but an mle with this node as master!\n");
@@ -1625,8 +1623,7 @@ way_up_top:
 			response = DLM_MASTER_RESP_NO;
 		} else
 			response = DLM_MASTER_RESP_MAYBE;
-		if (set_maybe)
-			set_bit(request->node_idx, tmpmle->maybe_map);
+		set_bit(request->node_idx, tmpmle->maybe_map);
 		spin_unlock(&tmpmle->spinlock);
 	}
 	spin_unlock(&dlm->master_lock);
@@ -1644,12 +1641,6 @@ send_response:
 	 * dlm_assert_master_worker() isn't called, we drop it here.
 	 */
 	if (dispatch_assert) {
-		if (response != DLM_MASTER_RESP_YES)
-			mlog(ML_ERROR, "invalid response %d\n", response);
-		if (!res) {
-			mlog(ML_ERROR, "bad lockres while trying to assert!\n");
-			BUG();
-		}
 		mlog(0, "%u is the owner of %.*s, cleaning everyone else\n",
 			     dlm->node_num, res->lockname.len, res->lockname.name);
 		spin_lock(&res->spinlock);
@@ -2276,9 +2267,12 @@ int dlm_drop_lockres_ref(struct dlm_ctxt *dlm, struct dlm_lock_resource *res)
 		mlog(ML_ERROR, "%s: res %.*s, DEREF to node %u got %d\n",
 		     dlm->name, namelen, lockname, res->owner, r);
 		dlm_print_one_lock_resource(res);
-		BUG();
-	}
-	return ret ? ret : r;
+		if (r == -ENOMEM)
+			BUG();
+	} else
+		ret = r;
+
+	return ret;
 }
 
 int dlm_deref_lockres_handler(struct o2net_msg *msg, u32 len, void *data,
@@ -2416,48 +2410,26 @@ int dlm_deref_lockres_done_handler(struct o2net_msg *msg, u32 len, void *data,
 	}
 
 	spin_lock(&res->spinlock);
-	BUG_ON(!(res->state & DLM_LOCK_RES_DROPPING_REF));
-	if (!list_empty(&res->purge)) {
-		mlog(0, "%s: Removing res %.*s from purgelist\n",
-			dlm->name, res->lockname.len, res->lockname.name);
-		list_del_init(&res->purge);
-		dlm_lockres_put(res);
-		dlm->purge_count--;
+	if (!(res->state & DLM_LOCK_RES_DROPPING_REF)) {
+		spin_unlock(&res->spinlock);
+		spin_unlock(&dlm->spinlock);
+		mlog(ML_NOTICE, "%s:%.*s: node %u sends deref done "
+			"but it is already derefed!\n", dlm->name,
+			res->lockname.len, res->lockname.name, node);
+		ret = 0;
+		goto done;
 	}
 
-	if (!__dlm_lockres_unused(res)) {
-		mlog(ML_ERROR, "%s: res %.*s in use after deref\n",
-			dlm->name, res->lockname.len, res->lockname.name);
-		__dlm_print_one_lock_resource(res);
-		BUG();
-	}
-
-	__dlm_unhash_lockres(dlm, res);
-
-	spin_lock(&dlm->track_lock);
-	if (!list_empty(&res->tracking))
-		list_del_init(&res->tracking);
-	else {
-		mlog(ML_ERROR, "%s: Resource %.*s not on the Tracking list\n",
-		     dlm->name, res->lockname.len, res->lockname.name);
-		__dlm_print_one_lock_resource(res);
-	}
-	spin_unlock(&dlm->track_lock);
-
-	/* lockres is not in the hash now. drop the flag and wake up
-	 * any processes waiting in dlm_get_lock_resource.
-	 */
-	res->state &= ~DLM_LOCK_RES_DROPPING_REF;
+	__dlm_do_purge_lockres(dlm, res);
 	spin_unlock(&res->spinlock);
 	wake_up(&res->wq);
-
-	dlm_lockres_put(res);
 
 	spin_unlock(&dlm->spinlock);
 
 	ret = 0;
-
 done:
+	if (res)
+		dlm_lockres_put(res);
 	dlm_put(dlm);
 	return ret;
 }
@@ -3206,6 +3178,9 @@ int dlm_migrate_request_handler(struct o2net_msg *msg, u32 len, void *data,
 				    name, namelen,
 				    migrate->new_master,
 				    migrate->master);
+
+	if (ret < 0)
+		kmem_cache_free(dlm_mle_cache, mle);
 
 	spin_unlock(&dlm->master_lock);
 unlock:

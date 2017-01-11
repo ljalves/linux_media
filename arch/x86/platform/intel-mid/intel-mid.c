@@ -16,10 +16,11 @@
 #include <linux/init.h>
 #include <linux/kernel.h>
 #include <linux/interrupt.h>
+#include <linux/regulator/machine.h>
 #include <linux/scatterlist.h>
 #include <linux/sfi.h>
 #include <linux/irq.h>
-#include <linux/module.h>
+#include <linux/export.h>
 #include <linux/notifier.h>
 
 #include <asm/setup.h>
@@ -69,6 +70,11 @@ EXPORT_SYMBOL_GPL(__intel_mid_cpu_chip);
 
 static void intel_mid_power_off(void)
 {
+	/* Shut down South Complex via PWRMU */
+	intel_mid_pwr_power_off();
+
+	/* Only for Tangier, the rest will ignore this command */
+	intel_scu_ipc_simple_command(IPCMSG_COLD_OFF, 1);
 };
 
 static void intel_mid_reboot(void)
@@ -144,12 +150,15 @@ static void intel_mid_arch_setup(void)
 out:
 	if (intel_mid_ops->arch_setup)
 		intel_mid_ops->arch_setup();
-}
 
-/* MID systems don't have i8042 controller */
-static int intel_mid_i8042_detect(void)
-{
-	return 0;
+	/*
+	 * Intel MID platforms are using explicitly defined regulators.
+	 *
+	 * Let the regulator core know that we do not have any additional
+	 * regulators left. This lets it substitute unprovided regulators with
+	 * dummy ones:
+	 */
+	regulator_has_full_constraints();
 }
 
 /*
@@ -182,7 +191,6 @@ void __init x86_intel_mid_early_setup(void)
 	x86_cpuinit.setup_percpu_clockev = apbt_setup_secondary_clock;
 
 	x86_platform.calibrate_tsc = intel_mid_calibrate_tsc;
-	x86_platform.i8042_detect = intel_mid_i8042_detect;
 	x86_init.timers.wallclock_init = intel_mid_rtc_init;
 	x86_platform.get_nmi_reason = intel_mid_get_nmi_reason;
 

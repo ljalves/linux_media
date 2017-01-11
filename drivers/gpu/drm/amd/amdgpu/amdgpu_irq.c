@@ -239,6 +239,7 @@ int amdgpu_irq_init(struct amdgpu_device *adev)
 	if (r) {
 		adev->irq.installed = false;
 		flush_work(&adev->hotplug_work);
+		cancel_work_sync(&adev->reset_work);
 		return r;
 	}
 
@@ -264,6 +265,7 @@ void amdgpu_irq_fini(struct amdgpu_device *adev)
 		if (adev->irq.msi_enabled)
 			pci_disable_msi(adev->pdev);
 		flush_work(&adev->hotplug_work);
+		cancel_work_sync(&adev->reset_work);
 	}
 
 	for (i = 0; i < AMDGPU_MAX_IRQ_SRC_ID; ++i) {
@@ -383,6 +385,18 @@ int amdgpu_irq_update(struct amdgpu_device *adev,
 	return r;
 }
 
+void amdgpu_irq_gpu_reset_resume_helper(struct amdgpu_device *adev)
+{
+	int i, j;
+	for (i = 0; i < AMDGPU_MAX_IRQ_SRC_ID; i++) {
+		struct amdgpu_irq_src *src = adev->irq.sources[i];
+		if (!src)
+			continue;
+		for (j = 0; j < src->num_types; j++)
+			amdgpu_irq_update(adev, src, j);
+	}
+}
+
 /**
  * amdgpu_irq_get - enable interrupt
  *
@@ -408,15 +422,6 @@ int amdgpu_irq_get(struct amdgpu_device *adev, struct amdgpu_irq_src *src,
 		return amdgpu_irq_update(adev, src, type);
 
 	return 0;
-}
-
-bool amdgpu_irq_get_delayed(struct amdgpu_device *adev,
-			struct amdgpu_irq_src *src,
-			unsigned type)
-{
-	if ((type >= src->num_types) || !src->enabled_types)
-		return false;
-	return atomic_inc_return(&src->enabled_types[type]) == 1;
 }
 
 /**

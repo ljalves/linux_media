@@ -506,7 +506,7 @@ int iwpm_add_and_query_mapping_cb(struct sk_buff *skb,
 	if (!nlmsg_request) {
 		pr_info("%s: Could not find a matching request (seq = %u)\n",
 				 __func__, msg_seq);
-			return -EINVAL;
+		return -EINVAL;
 	}
 	pm_msg = nlmsg_request->req_buffer;
 	local_sockaddr = (struct sockaddr_storage *)
@@ -604,7 +604,6 @@ int iwpm_remote_info_cb(struct sk_buff *skb, struct netlink_callback *cb)
 	}
 	rem_info = kzalloc(sizeof(struct iwpm_remote_info), GFP_ATOMIC);
 	if (!rem_info) {
-		pr_err("%s: Unable to allocate a remote info\n", __func__);
 		ret = -ENOMEM;
 		return ret;
 	}

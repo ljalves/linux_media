@@ -23,6 +23,7 @@
 #include <linux/audit.h>
 #include <linux/skbuff.h>
 #include <uapi/linux/mqueue.h>
+#include <linux/tty.h>
 
 /* AUDIT_NAMES is the number of slots we reserve in the audit_context
  * for saving names from getname().  If we get more names we will allocate
@@ -211,7 +212,7 @@ extern void audit_copy_inode(struct audit_names *name,
 extern void audit_log_cap(struct audit_buffer *ab, char *prefix,
 			  kernel_cap_t *cap);
 extern void audit_log_name(struct audit_context *context,
-			   struct audit_names *n, struct path *path,
+			   struct audit_names *n, const struct path *path,
 			   int record_num, int *call_panic);
 
 extern int audit_pid;
@@ -261,6 +262,9 @@ extern struct audit_entry *audit_dupe_rule(struct audit_krule *old);
 
 extern void audit_log_d_path_exe(struct audit_buffer *ab,
 				 struct mm_struct *mm);
+
+extern struct tty_struct *audit_get_tty(struct task_struct *tsk);
+extern void audit_put_tty(struct tty_struct *tty);
 
 /* audit watch functions */
 #ifdef CONFIG_AUDIT_WATCH
@@ -326,6 +330,8 @@ extern char *audit_unpack_string(void **, size_t *, size_t);
 extern pid_t audit_sig_pid;
 extern kuid_t audit_sig_uid;
 extern u32 audit_sig_sid;
+
+extern int audit_filter(int msgtype, unsigned int listtype);
 
 #ifdef CONFIG_AUDITSYSCALL
 extern int __audit_signal_info(int sig, struct task_struct *t);

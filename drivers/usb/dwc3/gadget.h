@@ -62,10 +62,7 @@ struct dwc3;
 
 static inline struct dwc3_request *next_request(struct list_head *list)
 {
-	if (list_empty(list))
-		return NULL;
-
-	return list_first_entry(list, struct dwc3_request, list);
+	return list_first_entry_or_null(list, struct dwc3_request, list);
 }
 
 static inline void dwc3_gadget_move_started_request(struct dwc3_request *req)
@@ -95,11 +92,11 @@ int __dwc3_gadget_ep_set_halt(struct dwc3_ep *dep, int value, int protocol);
  *
  * Caller should take care of locking
  */
-static inline u32 dwc3_gadget_ep_get_transfer_index(struct dwc3 *dwc, u8 number)
+static inline u32 dwc3_gadget_ep_get_transfer_index(struct dwc3_ep *dep)
 {
 	u32			res_id;
 
-	res_id = dwc3_readl(dwc->regs, DWC3_DEPCMD(number));
+	res_id = dwc3_readl(dep->regs, DWC3_DEPCMD);
 
 	return DWC3_DEPCMD_GET_RSC_IDX(res_id);
 }

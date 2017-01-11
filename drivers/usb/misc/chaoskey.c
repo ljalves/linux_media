@@ -55,9 +55,13 @@ MODULE_LICENSE("GPL");
 #define CHAOSKEY_VENDOR_ID	0x1d50	/* OpenMoko */
 #define CHAOSKEY_PRODUCT_ID	0x60c6	/* ChaosKey */
 
+#define ALEA_VENDOR_ID		0x12d8	/* Araneus */
+#define ALEA_PRODUCT_ID		0x0001	/* Alea I */
+
 #define CHAOSKEY_BUF_LEN	64	/* max size of USB full speed packet */
 
-#define NAK_TIMEOUT (HZ)		/* stall/wait timeout for device */
+#define NAK_TIMEOUT (HZ)		/* normal stall/wait timeout */
+#define ALEA_FIRST_TIMEOUT (HZ*3)	/* first stall/wait timeout for Alea */
 
 #ifdef CONFIG_USB_DYNAMIC_MINORS
 #define USB_CHAOSKEY_MINOR_BASE 0
@@ -69,6 +73,7 @@ MODULE_LICENSE("GPL");
 
 static const struct usb_device_id chaoskey_table[] = {
 	{ USB_DEVICE(CHAOSKEY_VENDOR_ID, CHAOSKEY_PRODUCT_ID) },
+	{ USB_DEVICE(ALEA_VENDOR_ID, ALEA_PRODUCT_ID) },
 	{ },
 };
 MODULE_DEVICE_TABLE(usb, chaoskey_table);
@@ -84,6 +89,7 @@ struct chaoskey {
 	int open;			/* open count */
 	bool present;			/* device not disconnected */
 	bool reading;			/* ongoing IO */
+	bool reads_started;		/* track first read for Alea */
 	int size;			/* size of buf */
 	int valid;			/* bytes of buf read */
 	int used;			/* bytes of buf consumed */
@@ -188,6 +194,9 @@ static int chaoskey_probe(struct usb_interface *interface,
 
 	dev->in_ep = in_ep;
 
+	if (udev->descriptor.idVendor != ALEA_VENDOR_ID)
+		dev->reads_started = 1;
+
 	dev->size = size;
 	dev->present = 1;
 
@@ -206,19 +215,7 @@ static int chaoskey_probe(struct usb_interface *interface,
 
 	dev->hwrng.name = dev->name ? dev->name : chaoskey_driver.name;
 	dev->hwrng.read = chaoskey_rng_read;
-
-	/* Set the 'quality' metric.  Quality is measured in units of
-	 * 1/1024's of a bit ("mills"). This should be set to 1024,
-	 * but there is a bug in the hwrng core which masks it with
-	 * 1023.
-	 *
-	 * The patch that has been merged to the crypto development
-	 * tree for that bug limits the value to 1024 at most, so by
-	 * setting this to 1024 + 1023, we get 1023 before the fix is
-	 * merged and 1024 afterwards. We'll patch this driver once
-	 * both bits of code are in the same tree.
-	 */
-	dev->hwrng.quality = 1024 + 1023;
+	dev->hwrng.quality = 1024;
 
 	dev->hwrng_registered = (hwrng_register(&dev->hwrng) == 0);
 	if (!dev->hwrng_registered)
@@ -357,6 +354,7 @@ static int _chaoskey_fill(struct chaoskey *dev)
 {
 	DEFINE_WAIT(wait);
 	int result;
+	bool started;
 
 	usb_dbg(dev->interface, "fill");
 
@@ -389,10 +387,17 @@ static int _chaoskey_fill(struct chaoskey *dev)
 		goto out;
 	}
 
+	/* The first read on the Alea takes a little under 2 seconds.
+	 * Reads after the first read take only a few microseconds
+	 * though.  Presumably the entropy-generating circuit needs
+	 * time to ramp up.  So, we wait longer on the first read.
+	 */
+	started = dev->reads_started;
+	dev->reads_started = true;
 	result = wait_event_interruptible_timeout(
 		dev->wait_q,
 		!dev->reading,
-		NAK_TIMEOUT);
+		(started ? NAK_TIMEOUT : ALEA_FIRST_TIMEOUT) );
 
 	if (result < 0)
 		goto out;

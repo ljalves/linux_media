@@ -118,8 +118,6 @@
 #define	PREFETCH_STATUS_FIFO_CNT(val)	((val >> 24) & 0x7F)
 #define	STATUS_BUFF_EMPTY		0x00000001
 
-#define OMAP24XX_DMA_GPMC		4
-
 #define SECTOR_BYTES		512
 /* 4 bit padding to make byte aligned, 56 = 52 + 4 */
 #define BCH4_BIT_PAD		4
@@ -1657,8 +1655,11 @@ static int omap_get_dt_info(struct device *dev, struct omap_nand_info *info)
 
 	/* detect availability of ELM module. Won't be present pre-OMAP4 */
 	info->elm_of_node = of_parse_phandle(child, "ti,elm-id", 0);
-	if (!info->elm_of_node)
-		dev_dbg(dev, "ti,elm-id not in DT\n");
+	if (!info->elm_of_node) {
+		info->elm_of_node = of_parse_phandle(child, "elm_id", 0);
+		if (!info->elm_of_node)
+			dev_dbg(dev, "ti,elm-id not in DT\n");
+	}
 
 	/* select ecc-scheme for NAND */
 	if (of_property_read_string(child, "ti,nand-ecc-opt", &s)) {
@@ -1808,7 +1809,6 @@ static int omap_nand_probe(struct platform_device *pdev)
 	struct nand_chip		*nand_chip;
 	int				err;
 	dma_cap_mask_t			mask;
-	unsigned			sig;
 	struct resource			*res;
 	struct device			*dev = &pdev->dev;
 	int				min_oobbytes = BADBLOCK_MARKER_LENGTH;
@@ -1895,10 +1895,10 @@ static int omap_nand_probe(struct platform_device *pdev)
 
 	/* scan NAND device connected to chip controller */
 	nand_chip->options |= info->devsize & NAND_BUSWIDTH_16;
-	if (nand_scan_ident(mtd, 1, NULL)) {
+	err = nand_scan_ident(mtd, 1, NULL);
+	if (err) {
 		dev_err(&info->pdev->dev,
 			"scan failed, may be bus-width mismatch\n");
-		err = -ENXIO;
 		goto return_error;
 	}
 
@@ -1921,11 +1921,11 @@ static int omap_nand_probe(struct platform_device *pdev)
 	case NAND_OMAP_PREFETCH_DMA:
 		dma_cap_zero(mask);
 		dma_cap_set(DMA_SLAVE, mask);
-		sig = OMAP24XX_DMA_GPMC;
-		info->dma = dma_request_channel(mask, omap_dma_filter_fn, &sig);
-		if (!info->dma) {
+		info->dma = dma_request_chan(pdev->dev.parent, "rxtx");
+
+		if (IS_ERR(info->dma)) {
 			dev_err(&pdev->dev, "DMA engine request failed\n");
-			err = -ENXIO;
+			err = PTR_ERR(info->dma);
 			goto return_error;
 		} else {
 			struct dma_slave_config cfg;
@@ -2154,10 +2154,9 @@ static int omap_nand_probe(struct platform_device *pdev)
 
 scan_tail:
 	/* second phase scan */
-	if (nand_scan_tail(mtd)) {
-		err = -ENXIO;
+	err = nand_scan_tail(mtd);
+	if (err)
 		goto return_error;
-	}
 
 	if (dev->of_node)
 		mtd_device_register(mtd, NULL, 0);
@@ -2169,7 +2168,7 @@ scan_tail:
 	return 0;
 
 return_error:
-	if (info->dma)
+	if (!IS_ERR_OR_NULL(info->dma))
 		dma_release_channel(info->dma);
 	if (nand_chip->ecc.priv) {
 		nand_bch_free(nand_chip->ecc.priv);
@@ -2197,6 +2196,7 @@ static const struct of_device_id omap_nand_ids[] = {
 	{ .compatible = "ti,omap2-nand", },
 	{},
 };
+MODULE_DEVICE_TABLE(of, omap_nand_ids);
 
 static struct platform_driver omap_nand_driver = {
 	.probe		= omap_nand_probe,

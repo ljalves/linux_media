@@ -20,6 +20,8 @@
 #include <linux/slab.h>
 #include <linux/ath9k_platform.h>
 #include <linux/module.h>
+#include <linux/of.h>
+#include <linux/of_net.h>
 #include <linux/relay.h>
 #include <net/ieee80211_radiotap.h>
 
@@ -358,7 +360,6 @@ static int ath9k_init_queues(struct ath_softc *sc)
 	for (i = 0; i < IEEE80211_NUM_ACS; i++) {
 		sc->tx.txq_map[i] = ath_txq_setup(sc, ATH9K_TX_QUEUE_DATA, i);
 		sc->tx.txq_map[i]->mac80211_qnum = i;
-		sc->tx.txq_max_pending[i] = ATH_MAX_QDEPTH;
 	}
 	return 0;
 }
@@ -372,7 +373,7 @@ static void ath9k_init_misc(struct ath_softc *sc)
 
 	common->last_rssi = ATH_RSSI_DUMMY_MARKER;
 	memcpy(common->bssidmask, ath_bcast_mac, ETH_ALEN);
-	sc->beacon.slottime = ATH9K_SLOT_TIME_9;
+	sc->beacon.slottime = 9;
 
 	for (i = 0; i < ARRAY_SIZE(sc->beacon.bslot); i++)
 		sc->beacon.bslot[i] = NULL;
@@ -512,14 +513,30 @@ static void ath9k_eeprom_release(struct ath_softc *sc)
 	release_firmware(sc->sc_ah->eeprom_blob);
 }
 
-static int ath9k_init_soc_platform(struct ath_softc *sc)
+static int ath9k_init_platform(struct ath_softc *sc)
 {
 	struct ath9k_platform_data *pdata = sc->dev->platform_data;
 	struct ath_hw *ah = sc->sc_ah;
-	int ret = 0;
+	struct ath_common *common = ath9k_hw_common(ah);
+	int ret;
 
 	if (!pdata)
 		return 0;
+
+	if (!pdata->use_eeprom) {
+		ah->ah_flags &= ~AH_USE_EEPROM;
+		ah->gpio_mask = pdata->gpio_mask;
+		ah->gpio_val = pdata->gpio_val;
+		ah->led_pin = pdata->led_pin;
+		ah->is_clk_25mhz = pdata->is_clk_25mhz;
+		ah->get_mac_revision = pdata->get_mac_revision;
+		ah->external_reset = pdata->external_reset;
+		ah->disable_2ghz = pdata->disable_2ghz;
+		ah->disable_5ghz = pdata->disable_5ghz;
+
+		if (!pdata->endian_check)
+			ah->ah_flags |= AH_NO_EEP_SWAP;
+	}
 
 	if (pdata->eeprom_name) {
 		ret = ath9k_eeprom_request(sc, pdata->eeprom_name);
@@ -527,16 +544,57 @@ static int ath9k_init_soc_platform(struct ath_softc *sc)
 			return ret;
 	}
 
+	if (pdata->led_active_high)
+		ah->config.led_active_high = true;
+
 	if (pdata->tx_gain_buffalo)
 		ah->config.tx_gain_buffalo = true;
 
-	return ret;
+	if (pdata->macaddr)
+		ether_addr_copy(common->macaddr, pdata->macaddr);
+
+	return 0;
+}
+
+static int ath9k_of_init(struct ath_softc *sc)
+{
+	struct device_node *np = sc->dev->of_node;
+	struct ath_hw *ah = sc->sc_ah;
+	struct ath_common *common = ath9k_hw_common(ah);
+	enum ath_bus_type bus_type = common->bus_ops->ath_bus_type;
+	const char *mac;
+	char eeprom_name[100];
+	int ret;
+
+	if (!of_device_is_available(np))
+		return 0;
+
+	ath_dbg(common, CONFIG, "parsing configuration from OF node\n");
+
+	if (of_property_read_bool(np, "qca,no-eeprom")) {
+		/* ath9k-eeprom-<bus>-<id>.bin */
+		scnprintf(eeprom_name, sizeof(eeprom_name),
+			  "ath9k-eeprom-%s-%s.bin",
+			  ath_bus_type_to_string(bus_type), dev_name(ah->dev));
+
+		ret = ath9k_eeprom_request(sc, eeprom_name);
+		if (ret)
+			return ret;
+	}
+
+	mac = of_get_mac_address(np);
+	if (mac)
+		ether_addr_copy(common->macaddr, mac);
+
+	ah->ah_flags &= ~AH_USE_EEPROM;
+	ah->ah_flags |= AH_NO_EEP_SWAP;
+
+	return 0;
 }
 
 static int ath9k_init_softc(u16 devid, struct ath_softc *sc,
 			    const struct ath_bus_ops *bus_ops)
 {
-	struct ath9k_platform_data *pdata = sc->dev->platform_data;
 	struct ath_hw *ah = NULL;
 	struct ath9k_hw_capabilities *pCap;
 	struct ath_common *common;
@@ -550,6 +608,8 @@ static int ath9k_init_softc(u16 devid, struct ath_softc *sc,
 	ah->dev = sc->dev;
 	ah->hw = sc->hw;
 	ah->hw_version.devid = devid;
+	ah->ah_flags |= AH_USE_EEPROM;
+	ah->led_pin = -1;
 	ah->reg_ops.read = ath9k_ioread32;
 	ah->reg_ops.multi_read = ath9k_multi_ioread32;
 	ah->reg_ops.write = ath9k_iowrite32;
@@ -569,22 +629,6 @@ static int ath9k_init_softc(u16 devid, struct ath_softc *sc,
 	if (!ath9k_is_chanctx_enabled())
 		sc->cur_chan->hw_queue_base = 0;
 
-	if (!pdata || pdata->use_eeprom) {
-		ah->ah_flags |= AH_USE_EEPROM;
-		sc->sc_ah->led_pin = -1;
-	} else {
-		sc->sc_ah->gpio_mask = pdata->gpio_mask;
-		sc->sc_ah->gpio_val = pdata->gpio_val;
-		sc->sc_ah->led_pin = pdata->led_pin;
-		ah->is_clk_25mhz = pdata->is_clk_25mhz;
-		ah->get_mac_revision = pdata->get_mac_revision;
-		ah->external_reset = pdata->external_reset;
-		ah->disable_2ghz = pdata->disable_2ghz;
-		ah->disable_5ghz = pdata->disable_5ghz;
-		if (!pdata->endian_check)
-			ah->ah_flags |= AH_NO_EEP_SWAP;
-	}
-
 	common->ops = &ah->reg_ops;
 	common->bus_ops = bus_ops;
 	common->ps_ops = &ath9k_ps_ops;
@@ -600,7 +644,11 @@ static int ath9k_init_softc(u16 devid, struct ath_softc *sc,
 	 */
 	ath9k_init_pcoem_platform(sc);
 
-	ret = ath9k_init_soc_platform(sc);
+	ret = ath9k_init_platform(sc);
+	if (ret)
+		return ret;
+
+	ret = ath9k_of_init(sc);
 	if (ret)
 		return ret;
 
@@ -645,9 +693,6 @@ static int ath9k_init_softc(u16 devid, struct ath_softc *sc,
 	ret = ath9k_hw_init(ah);
 	if (ret)
 		goto err_hw;
-
-	if (pdata && pdata->macaddr)
-		memcpy(common->macaddr, pdata->macaddr, ETH_ALEN);
 
 	ret = ath9k_init_queues(sc);
 	if (ret)
@@ -730,9 +775,11 @@ static const struct ieee80211_iface_limit if_limits[] = {
 				 BIT(NL80211_IFTYPE_P2P_GO) },
 };
 
+#ifdef CONFIG_WIRELESS_WDS
 static const struct ieee80211_iface_limit wds_limits[] = {
 	{ .max = 2048,	.types = BIT(NL80211_IFTYPE_WDS) },
 };
+#endif
 
 #ifdef CONFIG_ATH9K_CHANNEL_CONTEXT
 
@@ -770,6 +817,7 @@ static const struct ieee80211_iface_combination if_comb[] = {
 					BIT(NL80211_CHAN_WIDTH_40),
 #endif
 	},
+#ifdef CONFIG_WIRELESS_WDS
 	{
 		.limits = wds_limits,
 		.n_limits = ARRAY_SIZE(wds_limits),
@@ -777,6 +825,7 @@ static const struct ieee80211_iface_combination if_comb[] = {
 		.num_different_channels = 1,
 		.beacon_int_infra_match = true,
 	},
+#endif
 };
 
 #ifdef CONFIG_ATH9K_CHANNEL_CONTEXT
@@ -839,7 +888,7 @@ static void ath9k_set_hw_capab(struct ath_softc *sc, struct ieee80211_hw *hw)
 			       NL80211_FEATURE_AP_MODE_CHAN_WIDTH_CHANGE |
 			       NL80211_FEATURE_P2P_GO_CTWIN;
 
-	if (!config_enabled(CONFIG_ATH9K_TX99)) {
+	if (!IS_ENABLED(CONFIG_ATH9K_TX99)) {
 		hw->wiphy->interface_modes =
 			BIT(NL80211_IFTYPE_P2P_GO) |
 			BIT(NL80211_IFTYPE_P2P_CLIENT) |
@@ -847,7 +896,9 @@ static void ath9k_set_hw_capab(struct ath_softc *sc, struct ieee80211_hw *hw)
 			BIT(NL80211_IFTYPE_STATION) |
 			BIT(NL80211_IFTYPE_ADHOC) |
 			BIT(NL80211_IFTYPE_MESH_POINT) |
+#ifdef CONFIG_WIRELESS_WDS
 			BIT(NL80211_IFTYPE_WDS) |
+#endif
 			BIT(NL80211_IFTYPE_OCB);
 
 		if (ath9k_is_chanctx_enabled())
@@ -873,6 +924,7 @@ static void ath9k_set_hw_capab(struct ath_softc *sc, struct ieee80211_hw *hw)
 	hw->max_rate_tries = 10;
 	hw->sta_data_size = sizeof(struct ath_node);
 	hw->vif_data_size = sizeof(struct ath_vif);
+	hw->txq_data_size = sizeof(struct ath_atx_tid);
 	hw->extra_tx_headroom = 4;
 
 	hw->wiphy->available_antennas_rx = BIT(ah->caps.max_rxchains) - 1;

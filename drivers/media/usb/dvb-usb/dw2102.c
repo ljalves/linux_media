@@ -88,8 +88,7 @@ MODULE_PARM_DESC(debug, "set debugging level (1=info 2=xfer 4=rc(or-able))."
 /* demod probe */
 static int demod_probe = 1;
 module_param_named(demod, demod_probe, int, 0644);
-MODULE_PARM_DESC(demod, "demod to probe (1=cx24116 2=stv0903+stv6110 "
-			"4=stv0903+stb6100(or-able)).");
+MODULE_PARM_DESC(demod, "demod to probe (1=cx24116 2=stv0903+stv6110 4=stv0903+stb6100(or-able)).");
 
 DVB_DEFINE_MOD_OPT_ADAPTER_NR(adapter_nr);
 
@@ -849,12 +848,12 @@ static int su3000_power_ctrl(struct dvb_usb_device *d, int i)
 	struct dw2102_state *state = (struct dw2102_state *)d->priv;
 	u8 obuf[] = {0xde, 0};
 
-	info("%s: %d, initialized %d\n", __func__, i, state->initialized);
+	info("%s: %d, initialized %d", __func__, i, state->initialized);
 
 	if (i && !state->initialized) {
 		state->initialized = 1;
 		/* reset board */
-		dvb_usb_generic_rw(d, obuf, 2, NULL, 0, 0);
+		return dvb_usb_generic_rw(d, obuf, 2, NULL, 0, 0);
 	}
 
 	return 0;
@@ -896,7 +895,7 @@ static int su3000_identify_state(struct usb_device *udev,
 				 struct dvb_usb_device_description **desc,
 				 int *cold)
 {
-	info("%s\n", __func__);
+	info("%s", __func__);
 
 	*cold = 0;
 	return 0;
@@ -1134,7 +1133,7 @@ static int dw2104_frontend_attach(struct dvb_usb_adapter *d)
 				tuner_ops->set_bandwidth = stb6100_set_bandw;
 				tuner_ops->get_bandwidth = stb6100_get_bandw;
 				d->fe_adap[0].fe->ops.set_voltage = dw210x_set_voltage;
-				info("Attached STV0900+STB6100!\n");
+				info("Attached STV0900+STB6100!");
 				return 0;
 			}
 		}
@@ -1148,7 +1147,7 @@ static int dw2104_frontend_attach(struct dvb_usb_adapter *d)
 					&dw2104_stv6110_config,
 					&d->dev->i2c_adap)) {
 				d->fe_adap[0].fe->ops.set_voltage = dw210x_set_voltage;
-				info("Attached STV0900+STV6110A!\n");
+				info("Attached STV0900+STV6110A!");
 				return 0;
 			}
 		}
@@ -1159,7 +1158,7 @@ static int dw2104_frontend_attach(struct dvb_usb_adapter *d)
 				&d->dev->i2c_adap);
 		if (d->fe_adap[0].fe != NULL) {
 			d->fe_adap[0].fe->ops.set_voltage = dw210x_set_voltage;
-			info("Attached cx24116!\n");
+			info("Attached cx24116!");
 			return 0;
 		}
 	}
@@ -1170,7 +1169,7 @@ static int dw2104_frontend_attach(struct dvb_usb_adapter *d)
 		dvb_attach(ts2020_attach, d->fe_adap[0].fe,
 			&dw2104_ts2020_config, &d->dev->i2c_adap);
 		d->fe_adap[0].fe->ops.set_voltage = dw210x_set_voltage;
-		info("Attached DS3000!\n");
+		info("Attached DS3000!");
 		return 0;
 	}
 
@@ -1189,7 +1188,7 @@ static int dw2102_frontend_attach(struct dvb_usb_adapter *d)
 					&d->dev->i2c_adap);
 		if (d->fe_adap[0].fe != NULL) {
 			d->fe_adap[0].fe->ops.set_voltage = dw210x_set_voltage;
-			info("Attached si21xx!\n");
+			info("Attached si21xx!");
 			return 0;
 		}
 	}
@@ -1201,7 +1200,7 @@ static int dw2102_frontend_attach(struct dvb_usb_adapter *d)
 			if (dvb_attach(stb6000_attach, d->fe_adap[0].fe, 0x61,
 					&d->dev->i2c_adap)) {
 				d->fe_adap[0].fe->ops.set_voltage = dw210x_set_voltage;
-				info("Attached stv0288!\n");
+				info("Attached stv0288!");
 				return 0;
 			}
 		}
@@ -1213,7 +1212,7 @@ static int dw2102_frontend_attach(struct dvb_usb_adapter *d)
 					&d->dev->i2c_adap);
 		if (d->fe_adap[0].fe != NULL) {
 			d->fe_adap[0].fe->ops.set_voltage = dw210x_set_voltage;
-			info("Attached stv0299!\n");
+			info("Attached stv0299!");
 			return 0;
 		}
 	}
@@ -1225,7 +1224,7 @@ static int dw3101_frontend_attach(struct dvb_usb_adapter *d)
 	d->fe_adap[0].fe = dvb_attach(tda10023_attach, &dw3101_tda10023_config,
 				&d->dev->i2c_adap, 0x48);
 	if (d->fe_adap[0].fe != NULL) {
-		info("Attached tda10023!\n");
+		info("Attached tda10023!");
 		return 0;
 	}
 	return -EIO;
@@ -1239,7 +1238,7 @@ static int zl100313_frontend_attach(struct dvb_usb_adapter *d)
 		if (dvb_attach(zl10039_attach, d->fe_adap[0].fe, 0x60,
 				&d->dev->i2c_adap)) {
 			d->fe_adap[0].fe->ops.set_voltage = dw210x_set_voltage;
-			info("Attached zl100313+zl10039!\n");
+			info("Attached zl100313+zl10039!");
 			return 0;
 		}
 	}
@@ -1264,7 +1263,7 @@ static int stv0288_frontend_attach(struct dvb_usb_adapter *d)
 
 	dw210x_op_rw(d->dev->udev, 0x8a, 0, 0, obuf, 2, DW210X_WRITE_MSG);
 
-	info("Attached stv0288+stb6000!\n");
+	info("Attached stv0288+stb6000!");
 
 	return 0;
 
@@ -1289,7 +1288,7 @@ static int ds3000_frontend_attach(struct dvb_usb_adapter *d)
 
 	dw210x_op_rw(d->dev->udev, 0x8a, 0, 0, obuf, 2, DW210X_WRITE_MSG);
 
-	info("Attached ds3000+ts2020!\n");
+	info("Attached ds3000+ts2020!");
 
 	return 0;
 }
@@ -1307,7 +1306,7 @@ static int prof_7500_frontend_attach(struct dvb_usb_adapter *d)
 
 	dw210x_op_rw(d->dev->udev, 0x8a, 0, 0, obuf, 2, DW210X_WRITE_MSG);
 
-	info("Attached STV0900+STB6100A!\n");
+	info("Attached STV0900+STB6100A!");
 
 	return 0;
 }
@@ -1355,11 +1354,11 @@ static int su3000_frontend_attach(struct dvb_usb_adapter *d)
 	if (dvb_attach(ts2020_attach, d->fe_adap[0].fe,
 				&dw2104_ts2020_config,
 				&d->dev->i2c_adap)) {
-		info("Attached DS3000/TS2020!\n");
+		info("Attached DS3000/TS2020!");
 		return 0;
 	}
 
-	info("Failed to attach DS3000/TS2020!\n");
+	info("Failed to attach DS3000/TS2020!");
 	return -EIO;
 }
 
@@ -1404,7 +1403,7 @@ static int t220_frontend_attach(struct dvb_usb_adapter *d)
 	if (d->fe_adap[0].fe != NULL) {
 		if (dvb_attach(tda18271_attach, d->fe_adap[0].fe, 0x60,
 					&d->dev->i2c_adap, &tda18271_config)) {
-			info("Attached TDA18271HD/CXD2820R!\n");
+			info("Attached TDA18271HD/CXD2820R!");
 			return 0;
 		}
 	}
@@ -1480,11 +1479,11 @@ static int m88rs2000_frontend_attach(struct dvb_usb_adapter *d)
 	if (dvb_attach(ts2020_attach, d->fe_adap[0].fe,
 				&dw2104_ts2020_config,
 				&d->dev->i2c_adap)) {
-		info("Attached RS2000/TS2020!\n");
+		info("Attached RS2000/TS2020!");
 		return 0;
 	}
 
-	info("Failed to attach RS2000/TS2020!\n");
+	info("Failed to attach RS2000/TS2020!");
 	return -EIO;
 }
 
@@ -1693,6 +1692,8 @@ enum dw2102_table_entry {
 	TEVII_S421,
 	TEVII_S632,
 	TERRATEC_CINERGY_S2_R2,
+	TERRATEC_CINERGY_S2_R3,
+	TERRATEC_CINERGY_S2_R4,
 	GOTVIEW_SAT_HD,
 	GENIATECH_T220,
 	GENIATECH_T220A,
@@ -1722,6 +1723,8 @@ static struct usb_device_id dw2102_table[] = {
 	[TEVII_S421] = {USB_DEVICE(0x9022, USB_PID_TEVII_S421)},
 	[TEVII_S632] = {USB_DEVICE(0x9022, USB_PID_TEVII_S632)},
 	[TERRATEC_CINERGY_S2_R2] = {USB_DEVICE(USB_VID_TERRATEC, USB_PID_TERRATEC_CINERGY_S2_R2)},
+	[TERRATEC_CINERGY_S2_R3] = {USB_DEVICE(USB_VID_TERRATEC, USB_PID_TERRATEC_CINERGY_S2_R3)},
+	[TERRATEC_CINERGY_S2_R4] = {USB_DEVICE(USB_VID_TERRATEC, USB_PID_TERRATEC_CINERGY_S2_R4)},
 	[GOTVIEW_SAT_HD] = {USB_DEVICE(0x1FE1, USB_PID_GOTVIEW_SAT_HD)},
 	[GENIATECH_T220] = {USB_DEVICE(0x1f4d, 0xD220)},
 	[GENIATECH_T220A] = {USB_DEVICE(0x0572, 0xC686)},
@@ -2137,7 +2140,7 @@ static struct dvb_usb_device_properties su3000_properties = {
 		}},
 		}
 	},
-	.num_device_descs = 5,
+	.num_device_descs = 6,
 	.devices = {
 		{ "SU3000HD DVB-S USB2.0",
 			{ &dw2102_table[GENIATECH_SU3000], NULL },
@@ -2153,6 +2156,10 @@ static struct dvb_usb_device_properties su3000_properties = {
 		},
 		{ "Terratec Cinergy S2 USB HD Rev.2",
 			{ &dw2102_table[TERRATEC_CINERGY_S2_R2], NULL },
+			{ NULL },
+		},
+		{ "Terratec Cinergy S2 USB HD Rev.3",
+			{ &dw2102_table[TERRATEC_CINERGY_S2_R3], NULL },
 			{ NULL },
 		},
 		{ "GOTVIEW Satellite HD",
@@ -2442,16 +2449,7 @@ static struct usb_driver dw2102_driver = {
 module_usb_driver(dw2102_driver);
 
 MODULE_AUTHOR("Igor M. Liplianin (c) liplianin@me.by");
-MODULE_DESCRIPTION("Driver for DVBWorld DVB-S 2101, 2102, DVB-S2 2104,"
-			" DVB-C 3101 USB2.0,"
-			" TeVii S421, S480, S482, S600, S630, S632, S650, S660"
-			" TeVii S660, S662, Prof 1100, 7500 USB2.0,"
-			" Prof 1100, 7500 USB2.0,"
-			" Geniatech SU3000, T220, T220A,"
-			" TechnoTrend S2-4600, Terratec Cinergy S2 devices");
-
-
-
+MODULE_DESCRIPTION("Driver for DVBWorld DVB-S 2101, 2102, DVB-S2 2104, DVB-C 3101 USB2.0, TeVii S421, S480, S482, S600, S630, S632, S650, TeVii S660, S662, Prof 1100, 7500 USB2.0, Geniatech SU3000, T220, TechnoTrend S2-4600, Terratec Cinergy S2 devices");
 MODULE_VERSION("0.1");
 MODULE_LICENSE("GPL");
 MODULE_FIRMWARE(DW2101_FIRMWARE);

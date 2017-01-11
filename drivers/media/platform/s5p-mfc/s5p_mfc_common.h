@@ -25,6 +25,8 @@
 #include "regs-mfc.h"
 #include "regs-mfc-v8.h"
 
+#define S5P_MFC_NAME		"s5p-mfc"
+
 /* Definitions related to MFC memory */
 
 /* Offset base used to differentiate between CAPTURE and OUTPUT
@@ -101,6 +103,8 @@ static inline dma_addr_t s5p_mfc_mem_cookie(void *a, void *b)
 #define S5P_MFC_R2H_CMD_SLICE_DONE_RET		15
 #define S5P_MFC_R2H_CMD_ENC_BUFFER_FUL_RET	16
 #define S5P_MFC_R2H_CMD_ERR_RET			32
+
+#define MFC_MAX_CLOCKS		4
 
 #define mfc_read(dev, offset)		readl(dev->regs_base + (offset))
 #define mfc_write(dev, data, offset)	writel((data), dev->regs_base + \
@@ -195,9 +199,12 @@ struct s5p_mfc_buf {
  * struct s5p_mfc_pm - power management data structure
  */
 struct s5p_mfc_pm {
-	struct clk	*clock;
 	struct clk	*clock_gate;
-	atomic_t	power;
+	const char	**clk_names;
+	struct clk	*clocks[MFC_MAX_CLOCKS];
+	int		num_clocks;
+	bool		use_clock_gating;
+
 	struct device	*device;
 };
 
@@ -233,6 +240,9 @@ struct s5p_mfc_variant {
 	struct s5p_mfc_buf_size *buf_size;
 	struct s5p_mfc_buf_align *buf_align;
 	char	*fw_name[MFC_FW_MAX_VERSIONS];
+	const char	*clk_names[MFC_MAX_CLOCKS];
+	int		num_clocks;
+	bool		use_clock_gating;
 };
 
 /**
@@ -285,13 +295,14 @@ struct s5p_mfc_priv_buf {
  * @watchdog_cnt:	counter for the watchdog
  * @watchdog_workqueue:	workqueue for the watchdog
  * @watchdog_work:	worker for the watchdog
- * @alloc_ctx:		videobuf2 allocator contexts for two memory banks
  * @enter_suspend:	flag set when entering suspend
  * @ctx_buf:		common context memory (MFCv6)
  * @warn_start:		hardware error code from which warnings start
  * @mfc_ops:		ops structure holding HW operation function pointers
  * @mfc_cmds:		cmd structure holding HW commands function pointers
+ * @mfc_regs:		structure holding MFC registers
  * @fw_ver:		loaded firmware sub-version
+ * risc_on:		flag indicates RISC is on or off
  *
  */
 struct s5p_mfc_dev {
@@ -328,7 +339,6 @@ struct s5p_mfc_dev {
 	struct timer_list watchdog_timer;
 	struct workqueue_struct *watchdog_workqueue;
 	struct work_struct watchdog_work;
-	void *alloc_ctx[2];
 	unsigned long enter_suspend;
 
 	struct s5p_mfc_priv_buf ctx_buf;

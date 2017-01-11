@@ -72,7 +72,7 @@ struct sisl_ioarcb {
 	u16 timeout;		/* in units specified by req_flags */
 	u32 rsvd1;
 	u8 cdb[16];		/* must be in big endian */
-	struct scsi_cmnd *scp;
+	u64 reserved;		/* Reserved area */
 } __packed;
 
 struct sisl_rc {
@@ -310,6 +310,12 @@ struct sisl_global_regs {
 #define SISL_FC_INTERNAL_UNMASK	0x0000000300000000ULL	/* 1 means unmasked */
 #define SISL_FC_INTERNAL_MASK	~(SISL_FC_INTERNAL_UNMASK)
 #define SISL_FC_INTERNAL_SHIFT	32
+
+#define SISL_FC_SHUTDOWN_NORMAL		0x0000000000000010ULL
+#define SISL_FC_SHUTDOWN_ABRUPT		0x0000000000000020ULL
+
+#define SISL_STATUS_SHUTDOWN_ACTIVE	0x0000000000000010ULL
+#define SISL_STATUS_SHUTDOWN_COMPLETE	0x0000000000000020ULL
 
 #define SISL_ASTATUS_UNMASK	0xFFFFULL		/* 1 means unmasked */
 #define SISL_ASTATUS_MASK	~(SISL_ASTATUS_UNMASK)	/* 1 means masked */

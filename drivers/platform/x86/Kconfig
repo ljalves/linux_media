@@ -103,7 +103,6 @@ config DELL_SMBIOS
 
 config DELL_LAPTOP
 	tristate "Dell Laptop Extras"
-	depends on X86
 	depends on DELL_SMBIOS
 	depends on DMI
 	depends on BACKLIGHT_CLASS_DEVICE
@@ -364,6 +363,18 @@ config IDEAPAD_LAPTOP
 	  This is a driver for Lenovo IdeaPad netbooks contains drivers for
 	  rfkill switch, hotkey, fan control and backlight control.
 
+config SURFACE3_WMI
+	tristate "Surface 3 WMI Driver"
+	depends on ACPI_WMI
+	depends on DMI
+	depends on INPUT
+	depends on SPI
+	---help---
+	  Say Y here if you have a Surface 3.
+
+	  To compile this driver as a module, choose M here: the module will
+	  be called surface3-wmi.
+
 config THINKPAD_ACPI
 	tristate "ThinkPad ACPI Laptop Extras"
 	depends on ACPI
@@ -505,7 +516,7 @@ config THINKPAD_ACPI_HOTKEY_POLL
 
 config SENSORS_HDAPS
 	tristate "Thinkpad Hard Drive Active Protection System (hdaps)"
-	depends on INPUT && X86
+	depends on INPUT
 	select INPUT_POLLDEV
 	default n
 	help
@@ -577,6 +588,7 @@ config ASUS_WMI
 config ASUS_NB_WMI
 	tristate "Asus Notebook WMI Driver"
 	depends on ASUS_WMI
+	depends on SERIO_I8042 || SERIO_I8042 = n
 	---help---
 	  This is a driver for newer Asus notebooks. It adds extra features
 	  like wireless radio and bluetooth control, leds, hotkeys, backlight...
@@ -604,6 +616,8 @@ config ASUS_WIRELESS
 	tristate "Asus Wireless Radio Control Driver"
 	depends on ACPI
 	depends on INPUT
+	select NEW_LEDS
+	select LEDS_CLASS
 	---help---
 	  The Asus Wireless Radio Control handles the airplane mode hotkey
 	  present on some Asus laptops.
@@ -669,6 +683,7 @@ config ACPI_TOSHIBA
 	depends on SERIO_I8042 || SERIO_I8042 = n
 	depends on ACPI_VIDEO || ACPI_VIDEO = n
 	depends on RFKILL || RFKILL = n
+	depends on IIO
 	select INPUT_POLLDEV
 	select INPUT_SPARSEKMAP
 	---help---
@@ -749,7 +764,7 @@ config TOSHIBA_WMI
 
 config ACPI_CMPC
 	tristate "CMPC Laptop Extras"
-	depends on X86 && ACPI
+	depends on ACPI
 	depends on RFKILL || RFKILL=n
 	select INPUT
 	select BACKLIGHT_CLASS_DEVICE
@@ -770,6 +785,18 @@ config INTEL_HID_EVENT
 
 	  To compile this driver as a module, choose M here: the module will
 	  be called intel_hid.
+
+config INTEL_VBTN
+	tristate "INTEL VIRTUAL BUTTON"
+	depends on ACPI
+	depends on INPUT
+	select INPUT_SPARSEKMAP
+	help
+	  This driver provides support for the Intel Virtual Button interface.
+	  Some laptops require this driver for power button support.
+
+	  To compile this driver as a module, choose M here: the module will
+	  be called intel_vbtn.
 
 config INTEL_SCU_IPC
 	bool "Intel SCU IPC Support"
@@ -848,7 +875,7 @@ config INTEL_IMR
 
 config INTEL_PMC_CORE
 	bool "Intel PMC Core driver"
-	depends on X86 && PCI
+	depends on PCI
 	---help---
 	  The Intel Platform Controller Hub for Intel Core SoCs provides access
 	  to Power Management Controller registers via a PCI interface. This
@@ -860,7 +887,7 @@ config INTEL_PMC_CORE
 
 config IBM_RTL
 	tristate "Device driver to enable PRTL support"
-	depends on X86 && PCI
+	depends on PCI
 	---help---
 	 Enable support for IBM Premium Real Time Mode (PRTM).
 	 This module will allow you the enter and exit PRTM in the BIOS via
@@ -894,7 +921,6 @@ config XO15_EBOOK
 
 config SAMSUNG_LAPTOP
 	tristate "Samsung Laptop driver"
-	depends on X86
 	depends on RFKILL || RFKILL = n
 	depends on ACPI_VIDEO || ACPI_VIDEO = n
 	depends on BACKLIGHT_CLASS_DEVICE
@@ -991,11 +1017,26 @@ config INTEL_PMC_IPC
 	The PMC is an ARC processor which defines IPC commands for communication
 	with other entities in the CPU.
 
+config INTEL_BXTWC_PMIC_TMU
+	tristate "Intel BXT Whiskey Cove TMU Driver"
+	depends on REGMAP
+	depends on INTEL_SOC_PMIC && INTEL_PMC_IPC
+	---help---
+	  Select this driver to use Intel BXT Whiskey Cove PMIC TMU feature.
+	  This driver enables the alarm wakeup functionality in the TMU unit
+	  of Whiskey Cove PMIC.
+
 config SURFACE_PRO3_BUTTON
 	tristate "Power/home/volume buttons driver for Microsoft Surface Pro 3/4 tablet"
 	depends on ACPI && INPUT
 	---help---
 	  This driver handles the power/home/volume buttons on the Microsoft Surface Pro 3/4 tablet.
+
+config SURFACE_3_BUTTON
+	tristate "Power/home/volume buttons driver for Microsoft Surface 3 tablet"
+	depends on ACPI && KEYBOARD_GPIO
+	---help---
+	  This driver handles the power/home/volume buttons on the Microsoft Surface 3 tablet.
 
 config INTEL_PUNIT_IPC
 	tristate "Intel P-Unit IPC Driver"
@@ -1013,4 +1054,26 @@ config INTEL_TELEMETRY
 	  used to get various SoC events and parameters
 	  directly via debugfs files. Various tools may use
 	  this interface for SoC state monitoring.
+
+config MLX_PLATFORM
+	tristate "Mellanox Technologies platform support"
+	depends on X86_64
+	---help---
+	  This option enables system support for the Mellanox Technologies
+	  platform. The Mellanox systems provide data center networking
+	  solutions based on Virtual Protocol Interconnect (VPI) technology
+	  enable seamless connectivity to 56/100Gb/s InfiniBand or 10/40/56GbE
+	  connection.
+
+	  If you have a Mellanox system, say Y or M here.
+
+config MLX_CPLD_PLATFORM
+	tristate "Mellanox platform hotplug driver support"
+	default n
+	select HWMON
+	select I2C
+	---help---
+	  This driver handles hot-plug events for the power suppliers, power
+	  cables and fans on the wide range Mellanox IB and Ethernet systems.
+
 endif # X86_PLATFORM_DEVICES

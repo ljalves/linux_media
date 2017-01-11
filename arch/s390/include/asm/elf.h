@@ -193,7 +193,7 @@ extern char elf_platform[];
 do {								\
 	set_personality(PER_LINUX |				\
 		(current->personality & (~PER_MASK)));		\
-	current_thread_info()->sys_call_table = 		\
+	current->thread.sys_call_table =			\
 		(unsigned long) &sys_call_table;		\
 } while (0)
 #else /* CONFIG_COMPAT */
@@ -204,11 +204,11 @@ do {								\
 			(current->personality & ~PER_MASK));	\
 	if ((ex).e_ident[EI_CLASS] == ELFCLASS32) {		\
 		set_thread_flag(TIF_31BIT);			\
-		current_thread_info()->sys_call_table =		\
+		current->thread.sys_call_table =		\
 			(unsigned long)	&sys_call_table_emu;	\
 	} else {						\
 		clear_thread_flag(TIF_31BIT);			\
-		current_thread_info()->sys_call_table =		\
+		current->thread.sys_call_table =		\
 			(unsigned long) &sys_call_table;	\
 	}							\
 } while (0)
@@ -225,6 +225,7 @@ do {								\
 #define MMAP_ALIGN_MASK	(is_compat_task() ? 0 : 0x7fUL)
 #define STACK_RND_MASK	MMAP_RND_MASK
 
+/* update AT_VECTOR_SIZE_ARCH if the number of NEW_AUX_ENT entries changes */
 #define ARCH_DLINFO							    \
 do {									    \
 	if (vdso_enabled)						    \

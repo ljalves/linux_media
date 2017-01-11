@@ -15,11 +15,7 @@
  *
  * You should have received a copy of the GNU General Public License
  * version 2 along with this program; If not, see
- * http://www.sun.com/software/products/lustre/docs/GPLv2.pdf
- *
- * Please contact Sun Microsystems, Inc., 4150 Network Circle, Santa Clara,
- * CA 95054 USA or visit www.sun.com if you need additional information or
- * have any questions.
+ * http://www.gnu.org/licenses/gpl-2.0.html
  *
  * GPL HEADER END
  */
@@ -49,8 +45,8 @@
 sigset_t
 cfs_block_allsigs(void)
 {
-	unsigned long	  flags;
-	sigset_t	old;
+	unsigned long flags;
+	sigset_t old;
 
 	spin_lock_irqsave(&current->sighand->siglock, flags);
 	old = current->blocked;
@@ -64,8 +60,8 @@ EXPORT_SYMBOL(cfs_block_allsigs);
 
 sigset_t cfs_block_sigs(unsigned long sigs)
 {
-	unsigned long  flags;
-	sigset_t	old;
+	unsigned long flags;
+	sigset_t old;
 
 	spin_lock_irqsave(&current->sighand->siglock, flags);
 	old = current->blocked;
@@ -95,7 +91,7 @@ EXPORT_SYMBOL(cfs_block_sigsinv);
 void
 cfs_restore_sigs(sigset_t old)
 {
-	unsigned long  flags;
+	unsigned long flags;
 
 	spin_lock_irqsave(&current->sighand->siglock, flags);
 	current->blocked = old;

@@ -104,7 +104,8 @@ struct hws_basic_entry {
 	unsigned int P:1;	    /* 28 PSW Problem state		 */
 	unsigned int AS:2;	    /* 29-30 PSW address-space control	 */
 	unsigned int I:1;	    /* 31 entry valid or invalid	 */
-	unsigned int:16;
+	unsigned int CL:2;	    /* 32-33 Configuration Level	 */
+	unsigned int:14;
 	unsigned int prim_asn:16;   /* primary ASN			 */
 	unsigned long long ia;	    /* Instruction Address		 */
 	unsigned long long gpp;     /* Guest Program Parameter		 */
@@ -169,16 +170,27 @@ static inline int lcctl(u64 ctl)
 }
 
 /* Extract CPU counter */
-static inline int ecctr(u64 ctr, u64 *val)
+static inline int __ecctr(u64 ctr, u64 *content)
 {
-	register u64 content asm("4") = 0;
+	register u64 _content asm("4") = 0;
 	int cc;
 
 	asm volatile (
 		"	.insn	rre,0xb2e40000,%0,%2\n"
 		"	ipm	%1\n"
 		"	srl	%1,28\n"
-		: "=d" (content), "=d" (cc) : "d" (ctr) : "cc");
+		: "=d" (_content), "=d" (cc) : "d" (ctr) : "cc");
+	*content = _content;
+	return cc;
+}
+
+/* Extract CPU counter */
+static inline int ecctr(u64 ctr, u64 *val)
+{
+	u64 content;
+	int cc;
+
+	cc = __ecctr(ctr, &content);
 	if (!cc)
 		*val = content;
 	return cc;
@@ -201,18 +213,14 @@ static inline int stcctm5(u64 num, u64 *val)
 /* Query sampling information */
 static inline int qsi(struct hws_qsi_info_block *info)
 {
-	int cc;
-	cc = 1;
+	int cc = 1;
 
 	asm volatile(
-		"0:	.insn	s,0xb2860000,0(%1)\n"
+		"0:	.insn	s,0xb2860000,%1\n"
 		"1:	lhi	%0,0\n"
 		"2:\n"
 		EX_TABLE(0b, 2b) EX_TABLE(1b, 2b)
-		: "=d" (cc), "+a" (info)
-		: "m" (*info)
-		: "cc", "memory");
-
+		: "+d" (cc), "+Q" (*info));
 	return cc ? -EINVAL : 0;
 }
 

@@ -15,11 +15,7 @@
  *
  * You should have received a copy of the GNU General Public License
  * version 2 along with this program; If not, see
- * http://www.sun.com/software/products/lustre/docs/GPLv2.pdf
- *
- * Please contact Sun Microsystems, Inc., 4150 Network Circle, Santa Clara,
- * CA 95054 USA or visit www.sun.com if you need additional information or
- * have any questions.
+ * http://www.gnu.org/licenses/gpl-2.0.html
  *
  * GPL HEADER END
  */
@@ -135,7 +131,8 @@ sfw_find_test_case(int id)
 }
 
 static int
-sfw_register_test(struct srpc_service *service, struct sfw_test_client_ops *cliops)
+sfw_register_test(struct srpc_service *service,
+		  struct sfw_test_client_ops *cliops)
 {
 	struct sfw_test_case *tsc;
 
@@ -258,7 +255,7 @@ sfw_session_expired(void *data)
 
 static inline void
 sfw_init_session(struct sfw_session *sn, lst_sid_t sid,
-		 unsigned features, const char *name)
+		 unsigned int features, const char *name)
 {
 	struct stt_timer *timer = &sn->sn_timer;
 
@@ -473,7 +470,8 @@ sfw_make_session(struct srpc_mksn_reqst *request, struct srpc_mksn_reply *reply)
 }
 
 static int
-sfw_remove_session(struct srpc_rmsn_reqst *request, struct srpc_rmsn_reply *reply)
+sfw_remove_session(struct srpc_rmsn_reqst *request,
+		   struct srpc_rmsn_reply *reply)
 {
 	struct sfw_session *sn = sfw_data.fw_session;
 
@@ -505,7 +503,8 @@ sfw_remove_session(struct srpc_rmsn_reqst *request, struct srpc_rmsn_reply *repl
 }
 
 static int
-sfw_debug_session(struct srpc_debug_reqst *request, struct srpc_debug_reply *reply)
+sfw_debug_session(struct srpc_debug_reqst *request,
+		  struct srpc_debug_reply *reply)
 {
 	struct sfw_session *sn = sfw_data.fw_session;
 
@@ -788,8 +787,8 @@ sfw_add_test_instance(struct sfw_batch *tsb, struct srpc_server_rpc *rpc)
 		lnet_process_id_packed_t id;
 		int j;
 
-		dests = page_address(bk->bk_iovs[i / SFW_ID_PER_PAGE].kiov_page);
-		LASSERT(dests);		/* my pages are within KVM always */
+		dests = page_address(bk->bk_iovs[i / SFW_ID_PER_PAGE].bv_page);
+		LASSERT(dests);  /* my pages are within KVM always */
 		id = dests[i % SFW_ID_PER_PAGE];
 		if (msg->msg_magic != SRPC_MSG_MAGIC)
 			sfw_unpack_id(id);
@@ -901,7 +900,7 @@ sfw_test_rpc_done(struct srpc_client_rpc *rpc)
 
 int
 sfw_create_test_rpc(struct sfw_test_unit *tsu, lnet_process_id_t peer,
-		    unsigned features, int nblk, int blklen,
+		    unsigned int features, int nblk, int blklen,
 		    struct srpc_client_rpc **rpcpp)
 {
 	struct srpc_client_rpc *rpc = NULL;
@@ -1068,7 +1067,8 @@ sfw_stop_batch(struct sfw_batch *tsb, int force)
 }
 
 static int
-sfw_query_batch(struct sfw_batch *tsb, int testidx, struct srpc_batch_reply *reply)
+sfw_query_batch(struct sfw_batch *tsb, int testidx,
+		struct srpc_batch_reply *reply)
 {
 	struct sfw_test_instance *tsi;
 
@@ -1105,7 +1105,7 @@ sfw_alloc_pages(struct srpc_server_rpc *rpc, int cpt, int npages, int len,
 	LASSERT(!rpc->srpc_bulk);
 	LASSERT(npages > 0 && npages <= LNET_MAX_IOV);
 
-	rpc->srpc_bulk = srpc_alloc_bulk(cpt, npages, len, sink);
+	rpc->srpc_bulk = srpc_alloc_bulk(cpt, 0, npages, len, sink);
 	if (!rpc->srpc_bulk)
 		return -ENOMEM;
 
@@ -1183,7 +1183,8 @@ sfw_add_test(struct srpc_server_rpc *rpc)
 }
 
 static int
-sfw_control_batch(struct srpc_batch_reqst *request, struct srpc_batch_reply *reply)
+sfw_control_batch(struct srpc_batch_reqst *request,
+		  struct srpc_batch_reply *reply)
 {
 	struct sfw_session *sn = sfw_data.fw_session;
 	int rc = 0;
@@ -1229,7 +1230,7 @@ sfw_handle_server_rpc(struct srpc_server_rpc *rpc)
 	struct srpc_service *sv = rpc->srpc_scd->scd_svc;
 	struct srpc_msg *reply = &rpc->srpc_replymsg;
 	struct srpc_msg *request = &rpc->srpc_reqstbuf->buf_msg;
-	unsigned features = LST_FEATS_MASK;
+	unsigned int features = LST_FEATS_MASK;
 	int rc = 0;
 
 	LASSERT(!sfw_data.fw_active_srpc);
@@ -1379,7 +1380,7 @@ sfw_bulk_ready(struct srpc_server_rpc *rpc, int status)
 
 struct srpc_client_rpc *
 sfw_create_rpc(lnet_process_id_t peer, int service,
-	       unsigned features, int nbulkiov, int bulklen,
+	       unsigned int features, int nbulkiov, int bulklen,
 	       void (*done)(struct srpc_client_rpc *), void *priv)
 {
 	struct srpc_client_rpc *rpc = NULL;

@@ -1,6 +1,7 @@
-#include <linux/module.h>
-#include <asm/uaccess.h>
+#include <linux/extable.h>
+#include <linux/uaccess.h>
 #include <asm/traps.h>
+#include <asm/kdebug.h>
 
 typedef bool (*ex_handler_t)(const struct exception_table_entry *,
 			    struct pt_regs *, int);
@@ -37,7 +38,7 @@ bool ex_handler_ext(const struct exception_table_entry *fixup,
 		   struct pt_regs *regs, int trapnr)
 {
 	/* Special hack for uaccess_err */
-	current_thread_info()->uaccess_err = 1;
+	current->thread.uaccess_err = 1;
 	regs->ip = ex_fixup_addr(fixup);
 	return true;
 }
@@ -46,8 +47,9 @@ EXPORT_SYMBOL(ex_handler_ext);
 bool ex_handler_rdmsr_unsafe(const struct exception_table_entry *fixup,
 			     struct pt_regs *regs, int trapnr)
 {
-	WARN_ONCE(1, "unchecked MSR access error: RDMSR from 0x%x\n",
-		  (unsigned int)regs->cx);
+	if (pr_warn_once("unchecked MSR access error: RDMSR from 0x%x at rIP: 0x%lx (%pF)\n",
+			 (unsigned int)regs->cx, regs->ip, (void *)regs->ip))
+		show_stack_regs(regs);
 
 	/* Pretend that the read succeeded and returned 0. */
 	regs->ip = ex_fixup_addr(fixup);
@@ -60,9 +62,10 @@ EXPORT_SYMBOL(ex_handler_rdmsr_unsafe);
 bool ex_handler_wrmsr_unsafe(const struct exception_table_entry *fixup,
 			     struct pt_regs *regs, int trapnr)
 {
-	WARN_ONCE(1, "unchecked MSR access error: WRMSR to 0x%x (tried to write 0x%08x%08x)\n",
-		  (unsigned int)regs->cx,
-		  (unsigned int)regs->dx, (unsigned int)regs->ax);
+	if (pr_warn_once("unchecked MSR access error: WRMSR to 0x%x (tried to write 0x%08x%08x) at rIP: 0x%lx (%pF)\n",
+			 (unsigned int)regs->cx, (unsigned int)regs->dx,
+			 (unsigned int)regs->ax,  regs->ip, (void *)regs->ip))
+		show_stack_regs(regs);
 
 	/* Pretend that the write succeeded. */
 	regs->ip = ex_fixup_addr(fixup);
@@ -132,7 +135,12 @@ void __init early_fixup_exception(struct pt_regs *regs, int trapnr)
 	if (early_recursion_flag > 2)
 		goto halt_loop;
 
-	if (regs->cs != __KERNEL_CS)
+	/*
+	 * Old CPUs leave the high bits of CS on the stack
+	 * undefined.  I'm not sure which CPUs do this, but at least
+	 * the 486 DX works this way.
+	 */
+	if ((regs->cs & 0xFFFF) != __KERNEL_CS)
 		goto fail;
 
 	/*

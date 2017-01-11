@@ -609,14 +609,7 @@ static const struct v4l2_subdev_internal_ops v4l2_flash_subdev_internal_ops = {
 	.close = v4l2_flash_close,
 };
 
-static const struct v4l2_subdev_core_ops v4l2_flash_core_ops = {
-	.queryctrl = v4l2_subdev_queryctrl,
-	.querymenu = v4l2_subdev_querymenu,
-};
-
-static const struct v4l2_subdev_ops v4l2_flash_subdev_ops = {
-	.core = &v4l2_flash_core_ops,
-};
+static const struct v4l2_subdev_ops v4l2_flash_subdev_ops;
 
 struct v4l2_flash *v4l2_flash_init(
 	struct device *dev, struct device_node *of_node,
@@ -645,7 +638,7 @@ struct v4l2_flash *v4l2_flash_init(
 	v4l2_flash->iled_cdev = iled_cdev;
 	v4l2_flash->ops = ops;
 	sd->dev = dev;
-	sd->of_node = of_node;
+	sd->of_node = of_node ? of_node : led_cdev->dev->of_node;
 	v4l2_subdev_init(sd, &v4l2_flash_subdev_ops);
 	sd->internal_ops = &v4l2_flash_subdev_internal_ops;
 	sd->flags |= V4L2_SUBDEV_FL_HAS_DEVNODE;
@@ -661,10 +654,7 @@ struct v4l2_flash *v4l2_flash_init(
 	if (ret < 0)
 		goto err_init_controls;
 
-	if (sd->of_node)
-		of_node_get(sd->of_node);
-	else
-		of_node_get(led_cdev->dev->of_node);
+	of_node_get(sd->of_node);
 
 	ret = v4l2_async_register_subdev(sd);
 	if (ret < 0)
@@ -673,7 +663,7 @@ struct v4l2_flash *v4l2_flash_init(
 	return v4l2_flash;
 
 err_async_register_sd:
-	of_node_put(led_cdev->dev->of_node);
+	of_node_put(sd->of_node);
 	v4l2_ctrl_handler_free(sd->ctrl_handler);
 err_init_controls:
 	media_entity_cleanup(&sd->entity);
@@ -685,20 +675,15 @@ EXPORT_SYMBOL_GPL(v4l2_flash_init);
 void v4l2_flash_release(struct v4l2_flash *v4l2_flash)
 {
 	struct v4l2_subdev *sd;
-	struct led_classdev *led_cdev;
 
 	if (IS_ERR_OR_NULL(v4l2_flash))
 		return;
 
 	sd = &v4l2_flash->sd;
-	led_cdev = &v4l2_flash->fled_cdev->led_cdev;
 
 	v4l2_async_unregister_subdev(sd);
 
-	if (sd->of_node)
-		of_node_put(sd->of_node);
-	else
-		of_node_put(led_cdev->dev->of_node);
+	of_node_put(sd->of_node);
 
 	v4l2_ctrl_handler_free(sd->ctrl_handler);
 	media_entity_cleanup(&sd->entity);

@@ -1,4 +1,5 @@
-/* Copyright 2013-2015 Freescale Semiconductor Inc.
+/*
+ * Copyright 2013-2016 Freescale Semiconductor Inc.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are met:
@@ -34,22 +35,27 @@
 
 #define MC_CMD_NUM_OF_PARAMS	7
 
-#define MAKE_UMASK64(_width) \
-	((u64)((_width) < 64 ? ((u64)1 << (_width)) - 1 : -1))
-
-static inline u64 mc_enc(int lsoffset, int width, u64 val)
-{
-	return (u64)(((u64)val & MAKE_UMASK64(width)) << lsoffset);
-}
-
-static inline u64 mc_dec(u64 val, int lsoffset, int width)
-{
-	return (u64)((val >> lsoffset) & MAKE_UMASK64(width));
-}
+struct mc_cmd_header {
+	u8 src_id;
+	u8 flags_hw;
+	u8 status;
+	u8 flags_sw;
+	__le16 token;
+	__le16 cmd_id;
+};
 
 struct mc_command {
 	u64 header;
 	u64 params[MC_CMD_NUM_OF_PARAMS];
+};
+
+struct mc_rsp_create {
+	__le32 object_id;
+};
+
+struct mc_rsp_api_ver {
+	__le16 major_ver;
+	__le16 minor_ver;
 };
 
 enum mc_cmd_status {
@@ -72,60 +78,53 @@ enum mc_cmd_status {
  */
 
 /* High priority flag */
-#define MC_CMD_FLAG_PRI		0x00008000
+#define MC_CMD_FLAG_PRI		0x80
 /* Command completion flag */
-#define MC_CMD_FLAG_INTR_DIS	0x01000000
-
-/*
- * TODO Remove following two defines after completion of flib 8.0.0
- * integration
- */
-#define MC_CMD_PRI_LOW		0 /*!< Low Priority command indication */
-#define MC_CMD_PRI_HIGH		1 /*!< High Priority command indication */
-
-#define MC_CMD_HDR_CMDID_O	52	/* Command ID field offset */
-#define MC_CMD_HDR_CMDID_S	12	/* Command ID field size */
-#define MC_CMD_HDR_TOKEN_O	38	/* Token field offset */
-#define MC_CMD_HDR_TOKEN_S	10	/* Token field size */
-#define MC_CMD_HDR_STATUS_O	16	/* Status field offset */
-#define MC_CMD_HDR_STATUS_S	8	/* Status field size*/
-#define MC_CMD_HDR_FLAGS_O	0	/* Flags field offset */
-#define MC_CMD_HDR_FLAGS_S	32	/* Flags field size*/
-#define MC_CMD_HDR_FLAGS_MASK	0xFF00FF00 /* Command flags mask */
-
-#define MC_CMD_HDR_READ_STATUS(_hdr) \
-	((enum mc_cmd_status)mc_dec((_hdr), \
-		MC_CMD_HDR_STATUS_O, MC_CMD_HDR_STATUS_S))
-
-#define MC_CMD_HDR_READ_TOKEN(_hdr) \
-	((u16)mc_dec((_hdr), MC_CMD_HDR_TOKEN_O, MC_CMD_HDR_TOKEN_S))
-
-#define MC_CMD_HDR_READ_FLAGS(_hdr) \
-	((u32)mc_dec((_hdr), MC_CMD_HDR_FLAGS_O, MC_CMD_HDR_FLAGS_S))
-
-#define MC_EXT_OP(_ext, _param, _offset, _width, _type, _arg) \
-	((_ext)[_param] |= mc_enc((_offset), (_width), _arg))
-
-#define MC_CMD_OP(_cmd, _param, _offset, _width, _type, _arg) \
-	((_cmd).params[_param] |= mc_enc((_offset), (_width), _arg))
-
-#define MC_RSP_OP(_cmd, _param, _offset, _width, _type, _arg) \
-	(_arg = (_type)mc_dec(_cmd.params[_param], (_offset), (_width)))
+#define MC_CMD_FLAG_INTR_DIS	0x01
 
 static inline u64 mc_encode_cmd_header(u16 cmd_id,
 				       u32 cmd_flags,
 				       u16 token)
 {
-	u64 hdr;
+	u64 header = 0;
+	struct mc_cmd_header *hdr = (struct mc_cmd_header *)&header;
 
-	hdr = mc_enc(MC_CMD_HDR_CMDID_O, MC_CMD_HDR_CMDID_S, cmd_id);
-	hdr |= mc_enc(MC_CMD_HDR_FLAGS_O, MC_CMD_HDR_FLAGS_S,
-		       (cmd_flags & MC_CMD_HDR_FLAGS_MASK));
-	hdr |= mc_enc(MC_CMD_HDR_TOKEN_O, MC_CMD_HDR_TOKEN_S, token);
-	hdr |= mc_enc(MC_CMD_HDR_STATUS_O, MC_CMD_HDR_STATUS_S,
-		       MC_CMD_STATUS_READY);
+	hdr->cmd_id = cpu_to_le16(cmd_id);
+	hdr->token  = cpu_to_le16(token);
+	hdr->status = MC_CMD_STATUS_READY;
+	if (cmd_flags & MC_CMD_FLAG_PRI)
+		hdr->flags_hw = MC_CMD_FLAG_PRI;
+	if (cmd_flags & MC_CMD_FLAG_INTR_DIS)
+		hdr->flags_sw = MC_CMD_FLAG_INTR_DIS;
 
-	return hdr;
+	return header;
+}
+
+static inline u16 mc_cmd_hdr_read_token(struct mc_command *cmd)
+{
+	struct mc_cmd_header *hdr = (struct mc_cmd_header *)&cmd->header;
+	u16 token = le16_to_cpu(hdr->token);
+
+	return token;
+}
+
+static inline u32 mc_cmd_read_object_id(struct mc_command *cmd)
+{
+	struct mc_rsp_create *rsp_params;
+
+	rsp_params = (struct mc_rsp_create *)cmd->params;
+	return le32_to_cpu(rsp_params->object_id);
+}
+
+static inline void mc_cmd_read_api_version(struct mc_command *cmd,
+					   u16 *major_ver,
+					   u16 *minor_ver)
+{
+	struct mc_rsp_api_ver *rsp_params;
+
+	rsp_params = (struct mc_rsp_api_ver *)cmd->params;
+	*major_ver = le16_to_cpu(rsp_params->major_ver);
+	*minor_ver = le16_to_cpu(rsp_params->minor_ver);
 }
 
 #endif /* __FSL_MC_CMD_H */

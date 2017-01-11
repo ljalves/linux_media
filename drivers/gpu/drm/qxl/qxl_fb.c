@@ -24,7 +24,6 @@
  *     David Airlie
  */
 #include <linux/module.h>
-#include <linux/fb.h>
 
 #include "drmP.h"
 #include "drm/drm.h"
@@ -73,23 +72,19 @@ static void qxl_fb_image_init(struct qxl_fb_image *qxl_fb_image,
 	}
 }
 
+#ifdef CONFIG_DRM_FBDEV_EMULATION
 static struct fb_deferred_io qxl_defio = {
 	.delay		= QXL_DIRTY_DELAY,
 	.deferred_io	= drm_fb_helper_deferred_io,
 };
+#endif
 
 static struct fb_ops qxlfb_ops = {
 	.owner = THIS_MODULE,
-	.fb_check_var = drm_fb_helper_check_var,
-	.fb_set_par = drm_fb_helper_set_par, /* TODO: copy vmwgfx */
+	DRM_FB_HELPER_DEFAULT_OPS,
 	.fb_fillrect = drm_fb_helper_sys_fillrect,
 	.fb_copyarea = drm_fb_helper_sys_copyarea,
 	.fb_imageblit = drm_fb_helper_sys_imageblit,
-	.fb_pan_display = drm_fb_helper_pan_display,
-	.fb_blank = drm_fb_helper_blank,
-	.fb_setcmap = drm_fb_helper_setcmap,
-	.fb_debug_enter = drm_fb_helper_debug_enter,
-	.fb_debug_leave = drm_fb_helper_debug_leave,
 };
 
 static void qxlfb_destroy_pinned_object(struct drm_gem_object *gobj)
@@ -131,10 +126,6 @@ static int qxlfb_create_pinned_object(struct qxl_fbdev *qfbdev,
 	int ret;
 	int aligned_size, size;
 	int height = mode_cmd->height;
-	int bpp;
-	int depth;
-
-	drm_fb_get_bpp_depth(mode_cmd->pixel_format, &bpp, &depth);
 
 	size = mode_cmd->pitches[0] * height;
 	aligned_size = ALIGN(size, PAGE_SIZE);
@@ -200,7 +191,7 @@ static int qxlfb_framebuffer_dirty(struct drm_framebuffer *fb,
 	/*
 	 * we are using a shadow draw buffer, at qdev->surface0_shadow
 	 */
-	qxl_io_log(qdev, "dirty x[%d, %d], y[%d, %d]", clips->x1, clips->x2,
+	qxl_io_log(qdev, "dirty x[%d, %d], y[%d, %d]\n", clips->x1, clips->x2,
 		   clips->y1, clips->y2);
 	image->dx = clips->x1;
 	image->dy = clips->y1;
@@ -317,8 +308,10 @@ static int qxlfb_create(struct qxl_fbdev *qfbdev,
 		goto out_destroy_fbi;
 	}
 
+#ifdef CONFIG_DRM_FBDEV_EMULATION
 	info->fbdefio = &qxl_defio;
 	fb_deferred_io_init(info);
+#endif
 
 	qdev->fbdev_info = info;
 	qdev->fbdev_qfb = &qfbdev->qfb;

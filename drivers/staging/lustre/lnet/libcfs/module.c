@@ -15,11 +15,7 @@
  *
  * You should have received a copy of the GNU General Public License
  * version 2 along with this program; If not, see
- * http://www.sun.com/software/products/lustre/docs/GPLv2.pdf
- *
- * Please contact Sun Microsystems, Inc., 4150 Network Circle, Santa Clara,
- * CA 95054 USA or visit www.sun.com if you need additional information or
- * have any questions.
+ * http://www.gnu.org/licenses/gpl-2.0.html
  *
  * GPL HEADER END
  */
@@ -187,12 +183,12 @@ EXPORT_SYMBOL(lprocfs_call_handler);
 static int __proc_dobitmasks(void *data, int write,
 			     loff_t pos, void __user *buffer, int nob)
 {
-	const int     tmpstrlen = 512;
-	char	 *tmpstr;
-	int	   rc;
+	const int tmpstrlen = 512;
+	char *tmpstr;
+	int rc;
 	unsigned int *mask = data;
-	int	   is_subsys = (mask == &libcfs_subsystem_debug) ? 1 : 0;
-	int	   is_printk = (mask == &libcfs_printk) ? 1 : 0;
+	int is_subsys = (mask == &libcfs_subsystem_debug) ? 1 : 0;
+	int is_printk = (mask == &libcfs_printk) ? 1 : 0;
 
 	rc = cfs_trace_allocate_string_buffer(&tmpstr, tmpstrlen);
 	if (rc < 0)
@@ -297,8 +293,8 @@ static int __proc_cpt_table(void *data, int write,
 			    loff_t pos, void __user *buffer, int nob)
 {
 	char *buf = NULL;
-	int   len = 4096;
-	int   rc  = 0;
+	int len = 4096;
+	int rc  = 0;
 
 	if (write)
 		return -EPERM;
@@ -368,14 +364,6 @@ static struct ctl_table lnet_table[] = {
 		.maxlen   = 128,
 		.mode     = 0444,
 		.proc_handler = &proc_cpt_table,
-	},
-
-	{
-		.procname = "upcall",
-		.data     = lnet_upcall,
-		.maxlen   = sizeof(lnet_upcall),
-		.mode     = 0644,
-		.proc_handler = &proc_dostring,
 	},
 	{
 		.procname = "debug_log_upcall",
@@ -551,7 +539,7 @@ static int libcfs_init(void)
 	}
 
 	rc = cfs_cpu_init();
-	if (rc != 0)
+	if (rc)
 		goto cleanup_debug;
 
 	rc = misc_register(&libcfs_dev);
@@ -570,7 +558,7 @@ static int libcfs_init(void)
 	rc = min(cfs_cpt_weight(cfs_cpt_table, CFS_CPT_ANY), 4);
 	rc = cfs_wi_sched_create("cfs_rh", cfs_cpt_table, CFS_CPT_ANY,
 				 rc, &cfs_sched_rehash);
-	if (rc != 0) {
+	if (rc) {
 		CERROR("Startup workitem scheduler: error: %d\n", rc);
 		goto cleanup_deregister;
 	}

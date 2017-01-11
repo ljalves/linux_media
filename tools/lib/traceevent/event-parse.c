@@ -23,6 +23,7 @@
  *  Frederic Weisbecker gave his permission to relicense the code to
  *  the Lesser General Public License.
  */
+#include <inttypes.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -31,8 +32,10 @@
 #include <errno.h>
 #include <stdint.h>
 #include <limits.h>
+#include <linux/string.h>
+#include <linux/time64.h>
 
-#include <netinet/ip6.h>
+#include <netinet/in.h>
 #include "event-parse.h"
 #include "event-utils.h"
 
@@ -5189,15 +5192,41 @@ struct event_format *pevent_data_event_from_type(struct pevent *pevent, int type
 }
 
 /**
- * pevent_data_pid - parse the PID from raw data
+ * pevent_data_pid - parse the PID from record
  * @pevent: a handle to the pevent
  * @rec: the record to parse
  *
- * This returns the PID from a raw data.
+ * This returns the PID from a record.
  */
 int pevent_data_pid(struct pevent *pevent, struct pevent_record *rec)
 {
 	return parse_common_pid(pevent, rec->data);
+}
+
+/**
+ * pevent_data_prempt_count - parse the preempt count from the record
+ * @pevent: a handle to the pevent
+ * @rec: the record to parse
+ *
+ * This returns the preempt count from a record.
+ */
+int pevent_data_prempt_count(struct pevent *pevent, struct pevent_record *rec)
+{
+	return parse_common_pc(pevent, rec->data);
+}
+
+/**
+ * pevent_data_flags - parse the latency flags from the record
+ * @pevent: a handle to the pevent
+ * @rec: the record to parse
+ *
+ * This returns the latency flags from a record.
+ *
+ *  Use trace_flag_type enum for the flags (see event-parse.h).
+ */
+int pevent_data_flags(struct pevent *pevent, struct pevent_record *rec)
+{
+	return parse_common_flags(pevent, rec->data);
 }
 
 /**
@@ -5422,8 +5451,8 @@ void pevent_print_event_time(struct pevent *pevent, struct trace_seq *s,
 	use_usec_format = is_timestamp_in_us(pevent->trace_clock,
 							use_trace_clock);
 	if (use_usec_format) {
-		secs = record->ts / NSECS_PER_SEC;
-		nsecs = record->ts - secs * NSECS_PER_SEC;
+		secs = record->ts / NSEC_PER_SEC;
+		nsecs = record->ts - secs * NSEC_PER_SEC;
 	}
 
 	if (pevent->latency_format) {
@@ -5435,10 +5464,10 @@ void pevent_print_event_time(struct pevent *pevent, struct trace_seq *s,
 			usecs = nsecs;
 			p = 9;
 		} else {
-			usecs = (nsecs + 500) / NSECS_PER_USEC;
+			usecs = (nsecs + 500) / NSEC_PER_USEC;
 			/* To avoid usecs larger than 1 sec */
-			if (usecs >= 1000000) {
-				usecs -= 1000000;
+			if (usecs >= USEC_PER_SEC) {
+				usecs -= USEC_PER_SEC;
 				secs++;
 			}
 			p = 6;
@@ -6131,12 +6160,7 @@ int pevent_strerror(struct pevent *pevent __maybe_unused,
 	const char *msg;
 
 	if (errnum >= 0) {
-		msg = strerror_r(errnum, buf, buflen);
-		if (msg != buf) {
-			size_t len = strlen(msg);
-			memcpy(buf, msg, min(buflen - 1, len));
-			*(buf + min(buflen - 1, len)) = '\0';
-		}
+		str_error_r(errnum, buf, buflen);
 		return 0;
 	}
 
