@@ -335,6 +335,7 @@ static int tbsecp3_frontend_attach(struct tbsecp3_adapter *adapter)
 
 	switch (pci->subsystem_vendor) {
 	case 0x6205:
+	case 0x6281:
 		/* attach demod */
 		memset(&si2168_config, 0, sizeof(si2168_config));
 		si2168_config.i2c_adapter = &i2c;

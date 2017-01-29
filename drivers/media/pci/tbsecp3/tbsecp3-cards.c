@@ -292,5 +292,25 @@ struct tbsecp3_board tbsecp3_boards[] = {
 			},
 		}
 	},
+	[TBSECP3_BOARD_TBS6281SE] = {
+		.name		= "TurboSight TBS 6281SE (Dual DVB-T/T2/C)",
+		.adapters	= 2,
+		.i2c_speed	= 39,
+		.eeprom_i2c	= 1,
+		.adap_config	= {
+			{
+				.ts_in = 1,
+				.i2c_bus_nr = 1,
+				.gpio.demod_reset.lvl = TBSECP3_GPIODEF_LOW,
+				.gpio.demod_reset.nr  = TBSECP3_GPIO_PIN(0, 0),
+			},
+			{
+				.ts_in = 2,
+				.i2c_bus_nr = 2,
+				.gpio.demod_reset.lvl = TBSECP3_GPIODEF_LOW,
+				.gpio.demod_reset.nr  = TBSECP3_GPIO_PIN(2, 0),
+			},
+		}
+	},
 };
 
