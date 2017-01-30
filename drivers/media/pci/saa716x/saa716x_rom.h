@@ -249,5 +249,6 @@ struct saa716x_streamdev_info {
 
 extern int saa716x_dump_eeprom(struct saa716x_dev *saa716x);
 extern int saa716x_eeprom_data(struct saa716x_dev *saa716x);
+extern int saa716x_tbs_mac(struct saa716x_dev *saa716x, int count, u8 *proposed_mac);
 
 #endif /* __SAA716x_ROM_H */

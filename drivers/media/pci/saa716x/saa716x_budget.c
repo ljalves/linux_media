@@ -114,7 +114,7 @@ static int saa716x_budget_pci_probe(struct pci_dev *pdev, const struct pci_devic
 	}
 
 	saa716x_gpio_init(saa716x);
-#if 0
+
 	err = saa716x_dump_eeprom(saa716x);
 	if (err) {
 		dprintk(SAA716x_ERROR, 1, "SAA716x EEPROM dump failed");
@@ -125,6 +125,7 @@ static int saa716x_budget_pci_probe(struct pci_dev *pdev, const struct pci_devic
 		dprintk(SAA716x_ERROR, 1, "SAA716x EEPROM read failed");
 	}
 
+#if 0
 	/* set default port mapping */
 	SAA716x_EPWR(GREG, GREG_VI_CTRL, 0x04080FA9);
 	/* enable FGPI3 and FGPI1 for TS input from Port 2 and 6 */
@@ -725,6 +726,9 @@ static int saa716x_tbs6284_frontend_attach(struct saa716x_adapter *adapter, int 
 	if (!adapter->fe)
 		goto err;
 
+	if (saa716x_tbs_mac(dev, count, adapter->dvb_adapter.proposed_mac) < 0)
+		goto err;
+
 	/* attach tuner */
 	board_info.addr = (count & 1) ? 0x63 : 0x60;
 	tda18212_config[count & 1].fe = adapter->fe;
@@ -821,6 +825,9 @@ static int saa716x_tbs6280_frontend_attach(struct saa716x_adapter *adapter, int 
 	adapter->fe = dvb_attach(cxd2820r_attach, &cxd2820r_config[count],
 				 &i2c->i2c_adapter, NULL);
 	if (!adapter->fe)
+		goto err;
+
+	if (saa716x_tbs_mac(dev, count, adapter->dvb_adapter.proposed_mac) < 0)
 		goto err;
 
 	/* attach tuner */
@@ -920,6 +927,9 @@ static int saa716x_tbs6281_frontend_attach(struct saa716x_adapter *adapter, int 
 	}
 	adapter->i2c_client_demod = client;
 
+	if (saa716x_tbs_mac(dev, count, adapter->dvb_adapter.proposed_mac) < 0)
+		goto err;
+
 	/* attach tuner */
 	memset(&si2157_config, 0, sizeof(si2157_config));
 	si2157_config.fe = adapter->fe;
@@ -1016,6 +1026,9 @@ static int saa716x_tbs6285_frontend_attach(struct saa716x_adapter *adapter, int 
 	}
 	adapter->i2c_client_demod = client;
 
+	if (saa716x_tbs_mac(dev, count, adapter->dvb_adapter.proposed_mac) < 0)
+		goto err;
+
 	/* attach tuner */
 	memset(&si2157_config, 0, sizeof(si2157_config));
 	si2157_config.fe = adapter->fe;
@@ -1108,6 +1121,9 @@ static int saa716x_tbs6220_frontend_attach(struct saa716x_adapter *adapter, int 
 	adapter->fe = dvb_attach(cxd2820r_attach, &cxd2820r_config[0],
 				 &i2c->i2c_adapter, NULL);
 	if (!adapter->fe)
+		goto err;
+
+	if (saa716x_tbs_mac(dev, count, adapter->dvb_adapter.proposed_mac) < 0)
 		goto err;
 
 	/* attach tuner */
@@ -1213,6 +1229,9 @@ static int saa716x_tbs6922_frontend_attach(
 	if (adapter->fe == NULL)
 		goto err;
 
+	if (saa716x_tbs_mac(dev, count, adapter->dvb_adapter.proposed_mac) < 0)
+		goto err;
+
 	if (dvb_attach(av201x_attach, adapter->fe, &tbs6922_av201x_cfg,
 			tas2101_get_i2c_adapter(adapter->fe, 2)) == NULL) {
 		dvb_frontend_detach(adapter->fe);
@@ -1304,6 +1323,9 @@ static int saa716x_tbs6923_frontend_attach(
 	adapter->fe = dvb_attach(tas2101_attach, &tbs6923_cfg,
 				&dev->i2c[SAA716x_I2C_BUS_A].i2c_adapter);
 	if (adapter->fe == NULL)
+		goto err;
+
+	if (saa716x_tbs_mac(dev, count, adapter->dvb_adapter.proposed_mac) < 0)
 		goto err;
 
 	if (dvb_attach(av201x_attach, adapter->fe, &tbs6923_av201x_cfg,
@@ -1429,6 +1451,9 @@ static int tbs6925_frontend_attach(struct saa716x_adapter *adapter,
 		dprintk(SAA716x_NOTICE, 1, "found STV0900 @0x%02x",
 			tbs6925_stv090x_cfg.address);
 	else
+		goto err;
+
+	if (saa716x_tbs_mac(saa716x, count, adapter->dvb_adapter.proposed_mac) < 0)
 		goto err;
 
 	adapter->fe->ops.set_voltage   = tbs6925_set_voltage;
@@ -1573,6 +1598,9 @@ static int saa716x_tbs6982_frontend_attach(
 	if (adapter->fe == NULL)
 		goto err;
 
+	if (saa716x_tbs_mac(dev, count, adapter->dvb_adapter.proposed_mac) < 0)
+		goto err;
+
 	if (dvb_attach(av201x_attach, adapter->fe, &tbs6982_av201x_cfg,
 			tas2101_get_i2c_adapter(adapter->fe, 2)) == NULL) {
 		dvb_frontend_detach(adapter->fe);
@@ -1707,6 +1735,9 @@ static int saa716x_tbs6982se_frontend_attach(
 	adapter->fe = dvb_attach(tas2101_attach, &tbs6982se_cfg[count],
 				&dev->i2c[count].i2c_adapter);
 	if (adapter->fe == NULL)
+		goto err;
+
+	if (saa716x_tbs_mac(dev, count, adapter->dvb_adapter.proposed_mac) < 0)
 		goto err;
 
 	if (dvb_attach(av201x_attach, adapter->fe, &tbs6982se_av201x_cfg,
@@ -1883,6 +1914,9 @@ static int saa716x_tbs6984_frontend_attach(
 	adapter->fe = dvb_attach(cx24117_attach, &tbs6984_cx24117_cfg[count >> 1],
 			&i2c->i2c_adapter);
 	if (adapter->fe == NULL)
+		goto err;
+
+	if (saa716x_tbs_mac(dev, count, adapter->dvb_adapter.proposed_mac) < 0)
 		goto err;
 
 	if (dvb_attach(isl6422_attach, adapter->fe, &i2c->i2c_adapter,
@@ -2074,6 +2108,9 @@ static int saa716x_tbs6985_frontend_attach(struct saa716x_adapter *adapter, int 
 	if (adapter->fe == NULL)
 		goto err;
 
+	if (saa716x_tbs_mac(dev, count, adapter->dvb_adapter.proposed_mac) < 0)
+		goto err;
+
 	if (dvb_attach(av201x_attach, adapter->fe, &tbs6985_av201x_cfg,
 			tas2101_get_i2c_adapter(adapter->fe, 2)) == NULL) {
 		dvb_frontend_detach(adapter->fe);
@@ -2231,6 +2268,9 @@ static int saa716x_tbs6991_frontend_attach(
 	if (adapter->fe == NULL)
 		goto err;
 
+	if (saa716x_tbs_mac(dev, count, adapter->dvb_adapter.proposed_mac) < 0)
+		goto err;
+
 	if (dvb_attach(av201x_attach, adapter->fe, &tbs6991_av201x_cfg,
 			tas2101_get_i2c_adapter(adapter->fe, 2)) == NULL) {
 		dvb_frontend_detach(adapter->fe);
@@ -2310,6 +2350,9 @@ static int saa716x_tbs6991se_frontend_attach(
 	adapter->fe = dvb_attach(tas2101_attach, &tbs6991se_cfg[count],
 				&dev->i2c[1-count].i2c_adapter);
 	if (adapter->fe == NULL)
+		goto err;
+
+	if (saa716x_tbs_mac(dev, count, adapter->dvb_adapter.proposed_mac) < 0)
 		goto err;
 
 	if (dvb_attach(av201x_attach, adapter->fe, &tbs6991_av201x_cfg,
